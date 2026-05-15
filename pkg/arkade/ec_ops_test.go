@@ -258,6 +258,24 @@ func ecAddSpec() *opcodeSpec {
 				expectedStack: [][]byte{zero, zero},
 			},
 			{
+				name: "secp256r1_infinity_plus_infinity",
+				inputStack: [][]byte{
+					zero, zero,
+					zero, zero,
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "secp256r1_infinity_plus_G_is_G",
+				inputStack: [][]byte{
+					zero, zero,
+					bnBytes(p1x), bnBytes(p1y),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{bnBytes(p1x), bnBytes(p1y)},
+			},
+			{
 				name: "alt_bn128_G_plus_G",
 				inputStack: [][]byte{
 					bnBytes(bnGx), bnBytes(bnGy),
@@ -396,6 +414,16 @@ func ecMulSpec() *opcodeSpec {
 	nBN254 := gnarkbn254fr.Modulus()
 	pSecp256k1 := gnarksecp256k1fp.Modulus()
 
+	// (order - 1) * G = -G. Last valid scalar — confirms the boundary
+	// check on the scalar is `<` and not `<=`.
+	one := big.NewInt(1)
+	nSecp256k1Minus1 := new(big.Int).Sub(nSecp256k1, one)
+	nP256Minus1 := new(big.Int).Sub(nP256, one)
+	nBN254Minus1 := new(big.Int).Sub(nBN254, one)
+	g1negY := secp256k1NegY(g1y)
+	p1negY := secp256r1NegY(p1y)
+	bnGnegY := bn254G1NegY(bnGy)
+
 	var zero []byte
 
 	return &opcodeSpec{
@@ -439,6 +467,15 @@ func ecMulSpec() *opcodeSpec {
 				expectedStack: [][]byte{zero, zero},
 			},
 			{
+				name: "secp256k1_k_eq_order_minus_one_is_negG",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					bnBytes(nSecp256k1Minus1),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedStack: [][]byte{bnBytes(g1x), bnBytes(g1negY)},
+			},
+			{
 				name: "secp256r1_k_one",
 				inputStack: [][]byte{
 					bnBytes(p1x), bnBytes(p1y),
@@ -466,6 +503,24 @@ func ecMulSpec() *opcodeSpec {
 				expectedStack: [][]byte{zero, zero},
 			},
 			{
+				name: "secp256r1_infinity_times_anything",
+				inputStack: [][]byte{
+					zero, zero,
+					bnBytesUint(42),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "secp256r1_k_eq_order_minus_one_is_negG",
+				inputStack: [][]byte{
+					bnBytes(p1x), bnBytes(p1y),
+					bnBytes(nP256Minus1),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{bnBytes(p1x), bnBytes(p1negY)},
+			},
+			{
 				name: "alt_bn128_k_two",
 				inputStack: [][]byte{
 					bnBytes(bnGx), bnBytes(bnGy),
@@ -482,6 +537,15 @@ func ecMulSpec() *opcodeSpec {
 					bnBytesUint(uint64(CurveAltBN128)),
 				},
 				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "alt_bn128_k_eq_order_minus_one_is_negG",
+				inputStack: [][]byte{
+					bnBytes(bnGx), bnBytes(bnGy),
+					bnBytes(nBN254Minus1),
+					bnBytesUint(uint64(CurveAltBN128)),
+				},
+				expectedStack: [][]byte{bnBytes(bnGx), bnBytes(bnGnegY)},
 			},
 		},
 		invalidVectors: []opcodeVector{
@@ -869,6 +933,39 @@ func TestECPairingNegativeG2Coordinate(t *testing.T) {
 			requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
 		})
 	}
+}
+
+// TestECPairingPairCountAtMax verifies that pair_count == maxECPairingCount
+// is accepted. Confirms the bound is `>` and not `>=`. The bundle of 16
+// pairs is 8 copies of {(G, G2), (-G, G2)} so the product is the identity
+// in GT and the opcode returns true.
+func TestECPairingPairCountAtMax(t *testing.T) {
+	g1x, g1y := bn254G1Gen()
+	negY := bn254G1NegY(g1y)
+	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
+	pair := func(x, y *big.Int) [][]byte {
+		return [][]byte{
+			bnBytes(x), bnBytes(y),
+			bnBytes(g2xC1), bnBytes(g2xC0),
+			bnBytes(g2yC1), bnBytes(g2yC0),
+		}
+	}
+	var stack [][]byte
+	for i := 0; i < maxECPairingCount/2; i++ {
+		stack = append(stack, pair(g1x, g1y)...)
+		stack = append(stack, pair(g1x, negY)...)
+	}
+	stack = append(stack,
+		bnBytesUint(uint64(maxECPairingCount)),
+		bnBytesUint(uint64(CurveAltBN128)),
+	)
+
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(stack)
+	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
+	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
 }
 
 // TestECPairingG2InfinityIsIdentity verifies that pairs containing the G2
