@@ -283,9 +283,9 @@ const (
 	OP_UNKNOWN221                    = 0xdd // 221
 	OP_UNKNOWN222                    = 0xde // 222
 	OP_UNKNOWN223                    = 0xdf // 223
-	OP_UNKNOWN224                    = 0xe0 // 224
-	OP_UNKNOWN225                    = 0xe1 // 225
-	OP_UNKNOWN226                    = 0xe2 // 226
+	OP_ECADD                         = 0xe0 // 224
+	OP_ECMUL                         = 0xe1 // 225
+	OP_ECPAIRING                     = 0xe2 // 226
 	OP_ECMULSCALARVERIFY             = 0xe3 // 227
 	OP_TWEAKVERIFY                   = 0xe4 // 228
 	OP_INSPECTNUMASSETGROUPS         = 0xe5 // 229
@@ -305,9 +305,9 @@ const (
 	OP_TXID                          = 0xf3 // 243
 	OP_INSPECTPACKET                 = 0xf4 // 244
 	OP_INSPECTINPUTPACKET            = 0xf5 // 245
-	OP_ECADD                         = 0xf6 // 246
-	OP_ECMUL                         = 0xf7 // 247
-	OP_ECPAIRING                     = 0xf8 // 248
+	OP_UNKNOWN246                    = 0xf6 // 246
+	OP_UNKNOWN247                    = 0xf7 // 247
+	OP_UNKNOWN248                    = 0xf8 // 248
 	OP_UNKNOWN249                    = 0xf9 // 249
 	OP_SMALLINTEGER                  = 0xfa // 250 - bitcoin core internal
 	OP_PUBKEYS                       = 0xfb // 251 - bitcoin core internal
@@ -584,9 +584,9 @@ var opcodeArray = [256]opcode{
 	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
 	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
 	OP_UNKNOWN223:                    {OP_UNKNOWN223, "OP_UNKNOWN223", 1, opcodeInvalid},
-	OP_UNKNOWN224:                    {OP_UNKNOWN224, "OP_UNKNOWN224", 1, opcodeInvalid},
-	OP_UNKNOWN225:                    {OP_UNKNOWN225, "OP_UNKNOWN225", 1, opcodeInvalid},
-	OP_UNKNOWN226:                    {OP_UNKNOWN226, "OP_UNKNOWN226", 1, opcodeInvalid},
+	OP_ECADD:                         {OP_ECADD, "OP_ECADD", 1, opcodeECAdd},
+	OP_ECMUL:                         {OP_ECMUL, "OP_ECMUL", 1, opcodeECMul},
+	OP_ECPAIRING:                     {OP_ECPAIRING, "OP_ECPAIRING", 1, opcodeECPairing},
 	OP_ECMULSCALARVERIFY:             {OP_ECMULSCALARVERIFY, "OP_ECMULSCALARVERIFY", 1, opcodeECMulScalarVerify},
 	OP_TWEAKVERIFY:                   {OP_TWEAKVERIFY, "OP_TWEAKVERIFY", 1, opcodeTweakVerify},
 	OP_INSPECTNUMASSETGROUPS:         {OP_INSPECTNUMASSETGROUPS, "OP_INSPECTNUMASSETGROUPS", 1, opcodeInspectNumAssetGroups},
@@ -606,9 +606,9 @@ var opcodeArray = [256]opcode{
 	OP_TXID:                          {OP_TXID, "OP_TXID", 1, opcodeTxId},
 	OP_INSPECTPACKET:                 {OP_INSPECTPACKET, "OP_INSPECTPACKET", 1, opcodeInspectPacket},
 	OP_INSPECTINPUTPACKET:            {OP_INSPECTINPUTPACKET, "OP_INSPECTINPUTPACKET", 1, opcodeInspectInputPacket},
-	OP_ECADD:                         {OP_ECADD, "OP_ECADD", 1, opcodeECAdd},
-	OP_ECMUL:                         {OP_ECMUL, "OP_ECMUL", 1, opcodeECMul},
-	OP_ECPAIRING:                     {OP_ECPAIRING, "OP_ECPAIRING", 1, opcodeECPairing},
+	OP_UNKNOWN246:                    {OP_UNKNOWN246, "OP_UNKNOWN246", 1, opcodeInvalid},
+	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
+	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
 	OP_UNKNOWN249:                    {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},
 
 	// Bitcoin Core internal use opcode.  Defined here for completeness.
