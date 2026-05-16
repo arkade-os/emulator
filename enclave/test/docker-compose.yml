@@ -1,0 +1,115 @@
+# QEMU integration test stack for introspector inside an enclave.
+#
+# Services:
+#   local-kms / kms-proxy / localstack  — AWS mocks the framework's
+#       StaticSecrets subsystem needs to generate INTROSPECTOR_SECRET_KEY.
+#   mock-imds                           — IMDSv2 token stub.
+#   mock-arkd                           — answers introspector's startup
+#                                         GetInfo() RPC (loopback at :8081).
+#   test-runner                         — QEMU + vhost-vsock + grpc-client;
+#                                         boots the EIF and runs the suite.
+
+services:
+  local-kms:
+    image: nsmithuk/local-kms
+    ports:
+      - "8080:8080"
+    environment:
+      KMS_REGION: us-east-1
+      KMS_ACCOUNT_ID: "123456789012"
+    volumes:
+      - ./seed.yaml:/init/seed.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ || exit 0"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  kms-proxy:
+    build:
+      context: /home/joshua/introspector-enclave
+      dockerfile: test/local-kms-proxy/Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      UPSTREAM_KMS_URL: "http://local-kms:8080"
+      LISTEN_ADDR: ":4000"
+    depends_on:
+      local-kms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/ || exit 0"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:4.14
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: ssm,sts,s3,cloudformation,iam,logs
+      LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mock-imds:
+    build:
+      context: /home/joshua/introspector-enclave
+      dockerfile: test/mock-imds/Dockerfile
+    ports:
+      - "1338:1338"
+    environment:
+      LISTEN_ADDR: ":1338"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:1338/latest/api/token || exit 0"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mock-arkd:
+    build:
+      context: ../../
+      dockerfile: enclave/test/mock-arkd/Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      MOCK_ARKD_ADDR: ":8081"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/grpcurl", "-plaintext", "-max-time", "2", "localhost:8081", "list"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  test-runner:
+    profiles: ["test"]
+    build:
+      context: ../../
+      dockerfile: enclave/test/Dockerfile.runner
+      additional_contexts:
+        introspector-enclave: /home/joshua/introspector-enclave
+    privileged: true
+    network_mode: host
+    volumes:
+      - .:/test
+      # Map introspector's actual paths into run.sh's expected /test/app/ layout
+      # (run.sh was lifted from introspector-enclave/test/ which keeps its app
+      # under test/app/). enclave.yaml and the EIF live one level up in this repo.
+      - ../enclave.yaml:/test/app/enclave/enclave.yaml
+      - ../../.enclave:/test/app/.enclave
+    depends_on:
+      localstack:
+        condition: service_healthy
+      mock-imds:
+        condition: service_healthy
+      kms-proxy:
+        condition: service_healthy
+      mock-arkd:
+        condition: service_healthy
+    environment:
+      SKIP_MOCK_SERVICES: "1"
+      ENCLAVE_APP_NAME: "introspector"
+    command: ["./run.sh", "app/.enclave/artifacts/image.eif"]

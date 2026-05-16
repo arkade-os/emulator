@@ -52,5 +52,32 @@ build-all:
 lint:
 	golangci-lint run --fix
 
+# === QEMU enclave integration test (introspector inside Nitro enclave) ===
+# Builds the introspector EIF against the local working tree of
+# introspector-enclave (RUNTIME_LOCAL_PATH) so the test exercises the
+# in-development http2/gRPC framework changes.
+.PHONY: enclave-test enclave-test-build enclave-test-run
+
+enclave-test: enclave-test-cli enclave-test-build enclave-test-run
+
+# Rebuild the enclave CLI from the local introspector-enclave checkout so
+# the EIF build picks up any in-development CLI changes (e.g. new flake
+# inputs). Without this step we would silently use a stale /tmp/enclave.
+enclave-test-cli:
+	@echo "Building enclave CLI from /home/joshua/introspector-enclave..."
+	@cd /home/joshua/introspector-enclave && \
+	  go build -o /tmp/enclave ./cli/cmd/enclave
+
+enclave-test-build:
+	@echo "Building introspector EIF from local source..."
+	@RUNTIME_LOCAL_PATH=/home/joshua/introspector-enclave \
+	  SUPERVISOR_LOCAL_PATH=/home/joshua/introspector-enclave \
+	  APP_LOCAL_PATH=$(CURDIR) \
+	  /tmp/enclave build
+
+enclave-test-run:
+	@cd enclave/test && docker compose --profile test down -v
+	@cd enclave/test && docker compose --profile test run --build test-runner
+
 format:
 	@go fmt ./...

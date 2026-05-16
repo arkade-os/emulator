@@ -42,7 +42,19 @@ app:
   env:
     INTROSPECTOR_PORT: "7074"
     INTROSPECTOR_NO_TLS: "true"
-    INTROSPECTOR_ARKD_URL: "{{arkd_url}}"
+    # In production this is set by tofu via {{arkd_url}}. The integration
+    # test under enclave/test/ overrides it via env_values to point at the
+    # mock-arkd container reached through gvproxy's TAP.
+    INTROSPECTOR_ARKD_URL: "host.containers.internal:8081"
+    # AWS endpoints for the localstack-based test stack (kms-proxy, ssm, sts,
+    # s3, logs). gvproxy forwards host.containers.internal to the host net.
+    AWS_ENDPOINT_URL_KMS: "http://host.containers.internal:4000"
+    AWS_ENDPOINT_URL_SSM: "http://host.containers.internal:4566"
+    AWS_ENDPOINT_URL_STS: "http://host.containers.internal:4566"
+    AWS_ENDPOINT_URL_S3: "http://host.containers.internal:4566"
+    AWS_ENDPOINT_URL_LOGS: "http://host.containers.internal:4566"
+    AWS_ACCESS_KEY_ID: "test"
+    AWS_SECRET_ACCESS_KEY: "test"
 
 secrets:
   - name: signing_key

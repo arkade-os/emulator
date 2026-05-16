@@ -37,19 +37,32 @@
         # Enclave supervisor — built from the runtime repo.
         # Handles attestation, secrets, PCR extension, reverse proxy with
         # signing middleware. The user's app is just a plain HTTP server.
+        #
+        # Test-local override: when RUNTIME_LOCAL_PATH is set, build from the
+        # working tree instead of fetching the pinned release. Used by the
+        # in-repo enclave integration test (see enclave/test/) to exercise
+        # framework changes that haven't been published yet. In production
+        # the env var is unset, so the published runtime is used.
+        runtimeLocal = builtins.getEnv "RUNTIME_LOCAL_PATH" != "";
+        runtimeSrc = let localPath = builtins.getEnv "RUNTIME_LOCAL_PATH"; in
+          if runtimeLocal then
+            builtins.path { path = localPath; name = "source"; }
+          else
+            eifPkgs.fetchFromGitHub {
+              owner = "ArkLabsHQ";
+              repo = "introspector-enclave";
+              rev = runtimeCfg.rev;
+              hash = runtimeCfg.hash;
+            };
+
         runtime = eifBuildGoModule {
           pname = "runtime";
           version = buildCfg.version;
 
-          src = eifPkgs.fetchFromGitHub {
-            owner = "ArkLabsHQ";
-            repo = "introspector-enclave";
-            rev = runtimeCfg.rev;
-            hash = runtimeCfg.hash;
-          };
+          src = runtimeSrc;
 
           sourceRoot = "source/runtime";
-          vendorHash = runtimeCfg.vendor_hash;
+          vendorHash = if runtimeLocal then null else runtimeCfg.vendor_hash;
           subPackages = [ "cmd/runtime" ];
           env.CGO_ENABLED = "0";
           ldflags = [
@@ -61,18 +74,30 @@
         };
 
         # User's app — fetched from GitHub. No runtime dependency needed.
+        #
+        # Test-local override: when APP_LOCAL_PATH is set, build from the
+        # working tree instead of a pinned commit. Mirrors RUNTIME_LOCAL_PATH.
+        appLocal = builtins.getEnv "APP_LOCAL_PATH" != "";
+        appSrc = let localPath = builtins.getEnv "APP_LOCAL_PATH"; in
+          if appLocal then
+            builtins.path { path = localPath; name = "source"; }
+          else
+            eifPkgs.fetchFromGitHub {
+              owner = appCfg.nix_owner;
+              repo = appCfg.nix_repo;
+              rev = appCfg.nix_rev;
+              hash = appCfg.nix_hash;
+            };
+
         upstream-app = eifBuildGoModule ({
           pname = appCfg.binary_name;
           version = buildCfg.version;
 
-          src = eifPkgs.fetchFromGitHub {
-            owner = appCfg.nix_owner;
-            repo = appCfg.nix_repo;
-            rev = appCfg.nix_rev;
-            hash = appCfg.nix_hash;
-          };
+          src = appSrc;
 
-          vendorHash = if appCfg.nix_vendor_hash == "" then null else appCfg.nix_vendor_hash;
+          vendorHash = if appLocal then null
+                       else if appCfg.nix_vendor_hash == "" then null
+                       else appCfg.nix_vendor_hash;
           proxyVendor = true;
 
           subPackages = appCfg.nix_sub_packages;
@@ -160,12 +185,7 @@
         vendor-hash-check = eifBuildGoModule ({
           pname = "vendor-hash-check";
           version = buildCfg.version;
-          src = eifPkgs.fetchFromGitHub {
-            owner = appCfg.nix_owner;
-            repo = appCfg.nix_repo;
-            rev = appCfg.nix_rev;
-            hash = appCfg.nix_hash;
-          };
+          src = appSrc;
           vendorHash = "";
           proxyVendor = true;
           subPackages = appCfg.nix_sub_packages;
