@@ -2,4 +2,13 @@
 .claude
 build/
 bin/
+.enclave/
 docs/plans/
+
+# Go module vendor dir — only materialized by `enclave/test/` for the
+# local-tree Nix EIF build; source of truth is go.mod/go.sum.
+vendor/
+
+# enclave-test scratch artifacts.
+enclave/test/app/
+enclave/test/tofu-*.log

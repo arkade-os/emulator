@@ -229,6 +229,45 @@ make docker-run
 make integrationtest
 ```
 
+### Enclave integration test
+
+Boots the introspector EIF inside a QEMU-emulated Nitro Enclave with mock AWS
+services + mock-arkd, then runs the 6-test driver
+(`enclave/test/integration-test.sh`: health, HTTP/2 ALPN, native gRPC `GetInfo`
+with attestation, wrong-PCR0 reject, `SubmitTx` with a real PSBT, HTTP/1.1
+compat). Requires the `enclave` CLI from
+[introspector-enclave](https://github.com/ArkLabsHQ/introspector-enclave) on
+`$PATH`, plus Docker.
+
+```bash
+enclave test build       # auto-picks enclave/enclave_test.yaml
+enclave test init        # writes enclave/test/docker-compose.yml
+```
+
+Append the mock-arkd block once, below the
+`# === user services below this line ===` marker (4-space indent matters):
+
+```yaml
+    mock-arkd:
+        build:
+            context: ../../
+            dockerfile: enclave/test/mock-arkd/Dockerfile
+        network_mode: host
+        environment:
+            MOCK_ARKD_ADDR: ":8081"
+        healthcheck:
+            test: ["CMD-SHELL", "/usr/local/bin/grpcurl -plaintext -max-time 2 localhost:8081 list"]
+            interval: 5s
+            timeout: 3s
+            retries: 5
+```
+
+```bash
+enclave test start                    # boots the stack, waits for /health 200
+./enclave/test/integration-test.sh    # runs the 6-test driver
+enclave test down                     # tear down + remove volumes
+```
+
 ## Supported Opcodes
 
 The following opcodes are supported by the Arkade script engine. They extend Bitcoin Script with additional introspection, data manipulation, and cryptographic operations.
