@@ -15,9 +15,9 @@ is_kms_key_locked: false         # false (default): grant AWS root kms:PutKeyPol
 # The supervisor handles attestation, secrets, PCR extension, and signing
 # middleware automatically. Your app is a plain HTTP server with zero runtime imports.
 runtime:
-  rev: "v0.0.72"
-  hash: "sha256-l1Zz4Bzz/lUI5dw267UoFgtUarYhABjKKnornzcEGA0="
-  vendor_hash: "sha256-2ZX9x2voIwVkUsmrZvhJssAQqnCh8/HLwopL5HpiaOg="
+  rev: "v0.0.76"
+  hash: "sha256-J/gbggHP7VD2uZT+itYH/x09uATJY2OHgte10N22VLM="
+  vendor_hash: "sha256-kkgp+uxc9pohZiCnz84nyXroUzsPhhtb0VgGa3dQgUo="
 
 app:
   language: "go"                 # App language: go, nodejs, dotnet, rust
@@ -37,24 +37,11 @@ app:
   nix_subdir: ""                 # Subdirectory for monorepo (e.g. "server")
   release_tag: "eif-latest"      # GitHub Release tag used by 'enclave tofu --remote'
 
-  # Environment variables baked into the EIF.
-  # Template vars: {{region}}, {{prefix}}, {{version}}
+  # INTROSPECTOR_ARKD_URL is injected by tofu at deploy time;
+  # AWS credentials come from the EC2 role via IMDS.
   env:
     INTROSPECTOR_PORT: "7074"
     INTROSPECTOR_NO_TLS: "true"
-    # In production this is set by tofu via {{arkd_url}}. The integration
-    # test under enclave/test/ overrides it via env_values to point at the
-    # mock-arkd container reached through gvproxy's TAP.
-    INTROSPECTOR_ARKD_URL: "host.containers.internal:8081"
-    # AWS endpoints for the localstack-based test stack (kms-proxy, ssm, sts,
-    # s3, logs). gvproxy forwards host.containers.internal to the host net.
-    AWS_ENDPOINT_URL_KMS: "http://host.containers.internal:4000"
-    AWS_ENDPOINT_URL_SSM: "http://host.containers.internal:4566"
-    AWS_ENDPOINT_URL_STS: "http://host.containers.internal:4566"
-    AWS_ENDPOINT_URL_S3: "http://host.containers.internal:4566"
-    AWS_ENDPOINT_URL_LOGS: "http://host.containers.internal:4566"
-    AWS_ACCESS_KEY_ID: "test"
-    AWS_SECRET_ACCESS_KEY: "test"
 
 secrets:
   - name: signing_key

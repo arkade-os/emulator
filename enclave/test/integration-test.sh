@@ -14,7 +14,18 @@ set -euo pipefail
 
 HOST_TLS_PORT="${HOST_TLS_PORT:-8443}"
 BASE_URL="${ENCLAVE_URL:-https://localhost:${HOST_TLS_PORT}}"
-PCR_FILE="${PCR_FILE:-/test/app/.enclave/artifacts/pcr.json}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PCR_FILE="${PCR_FILE:-$REPO_ROOT/.enclave/artifacts/pcr.json}"
+GRPC_CLIENT="${GRPC_CLIENT:-$SCRIPT_DIR/grpc-client/grpc-client}"
+
+if [ ! -x "$GRPC_CLIENT" ]; then
+  echo "Building grpc-client at $GRPC_CLIENT ..."
+  (cd "$SCRIPT_DIR/grpc-client" && go build -o grpc-client . ) || {
+    echo "Error: failed to build grpc-client; install Go or pre-build the binary" >&2
+    exit 1
+  }
+fi
 
 CURL="curl -sk --max-time 10"
 PASSED=0
@@ -52,7 +63,7 @@ if [ ! -f "$PCR_FILE" ]; then
   fail "enclave-client GetInfo" "PCR file not found at $PCR_FILE"
 else
   PCR0=$(jq -r '.PCR0' "$PCR_FILE")
-  INFO_OUT=$(/usr/local/bin/grpc-client \
+  INFO_OUT=$("$GRPC_CLIENT" \
     -url "${BASE_URL}" \
     -pcr0 "${PCR0}" \
     -insecure-skip-cose 2>&1 || true)
@@ -67,7 +78,7 @@ fi
 # Test 4: attestation rejection with wrong PCR0.
 echo "[4/6] enclave-client rejects wrong PCR0"
 WRONG_PCR0="00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-REJECT_OUT=$(/usr/local/bin/grpc-client \
+REJECT_OUT=$("$GRPC_CLIENT" \
   -url "${BASE_URL}" \
   -pcr0 "${WRONG_PCR0}" \
   -insecure-skip-cose 2>&1 || echo "EXITED_NONZERO")
@@ -85,7 +96,7 @@ if [ ! -f "$PCR_FILE" ]; then
   fail "enclave-client SubmitTx" "PCR file not found at $PCR_FILE"
 else
   PCR0=$(jq -r '.PCR0' "$PCR_FILE")
-  SUBMIT_OUT=$(/usr/local/bin/grpc-client \
+  SUBMIT_OUT=$("$GRPC_CLIENT" \
     -url "${BASE_URL}" \
     -pcr0 "${PCR0}" \
     -insecure-skip-cose \
