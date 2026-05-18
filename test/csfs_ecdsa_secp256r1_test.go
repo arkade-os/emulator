@@ -85,7 +85,8 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 	r, s := signOracleMessage(t, priv, message)
 	u1, u2 := ecdsaHints(t, message, r, s)
 
-	arkadeScript := ecdsaSecp256r1VerifyScript(t, priv.PublicKey.X, priv.PublicKey.Y)
+	px, py := p256PubKeyCoords(t, &priv.PublicKey)
+	arkadeScript := ecdsaSecp256r1VerifyScript(t, px, py)
 	arkadeScriptHash := arkade.ArkadeScriptHash(arkadeScript)
 
 	vtxoScript := createArkadeOnlyVtxoScript(aliceAddr.Signer, introspectorPubKey, arkadeScriptHash)
@@ -189,6 +190,19 @@ func ecdsaHintsExplicit(t *testing.T, m []byte, r, s *big.Int) (u1, u2 *big.Int)
 	u1 = new(big.Int).Mod(new(big.Int).Mul(z, sInv), n)
 	u2 = new(big.Int).Mod(new(big.Int).Mul(r, sInv), n)
 	return u1, u2
+}
+
+// p256PubKeyCoords pulls (X, Y) out of an ECDSA P-256 public key via the
+// new SEC1 uncompressed encoding API. Direct access to `pub.X` / `pub.Y` is
+// deprecated since Go 1.26.
+func p256PubKeyCoords(t *testing.T, pub *ecdsa.PublicKey) (px, py *big.Int) {
+	t.Helper()
+	enc, err := pub.Bytes()
+	require.NoError(t, err)
+	// SEC1 uncompressed: 0x04 || X (32 bytes) || Y (32 bytes) for P-256.
+	require.Len(t, enc, 65)
+	require.Equal(t, byte(0x04), enc[0])
+	return new(big.Int).SetBytes(enc[1:33]), new(big.Int).SetBytes(enc[33:65])
 }
 
 // leDigest returns SHA256(m) byte-reversed, so when fed to ecdsa.Sign /
