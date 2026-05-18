@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"slices"
 	"strings"
 	"testing"
@@ -1184,4 +1185,26 @@ func debugScriptExecution(t *testing.T) arkade.ExecuteOption {
 			return nil
 		},
 	)
+}
+
+// bnBytes returns the canonical Arkade BigNum encoding of v
+// (sign-magnitude little-endian, with a 0x00/0x80 sign-extension byte added
+// only when the high bit of the magnitude's MSB would otherwise collide with
+// the sign bit). Zero encodes as the empty slice.
+func bnBytes(v *big.Int) []byte {
+	if v.Sign() == 0 {
+		return nil
+	}
+	out := new(big.Int).Abs(v).Bytes()
+	slices.Reverse(out)
+	if out[len(out)-1]&0x80 != 0 {
+		extra := byte(0x00)
+		if v.Sign() < 0 {
+			extra = 0x80
+		}
+		out = append(out, extra)
+	} else if v.Sign() < 0 {
+		out[len(out)-1] |= 0x80
+	}
+	return out
 }
