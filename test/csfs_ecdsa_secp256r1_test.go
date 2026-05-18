@@ -226,55 +226,55 @@ func ecdsaSecp256r1VerifyScript(t *testing.T, px, py *big.Int) []byte {
 		// Stack: [r, u1, u2, s, m]
 		//
 		// A) Envelope checks on the oracle message.
-		AddOp(arkade.OP_SIZE).                       // [..., m, len(m)]
-		AddInt64(oracleMessageLen).                  // [..., m, len(m), 16]
-		AddOp(arkade.OP_EQUALVERIFY).                // [..., m]
-		AddOp(arkade.OP_DUP).                        // [..., m, m]
-		AddInt64(int64(len(oracleMessageMagic))).    // [..., m, m, 4]
-		AddOp(arkade.OP_LEFT).                       // [..., m, m[:4]]
-		AddData(oracleMessageMagic).                 // [..., m, m[:4], "ORCL"]
-		AddOp(arkade.OP_EQUALVERIFY).                // [..., m]
+		AddOp(arkade.OP_SIZE).                    // [..., m, len(m)]
+		AddInt64(oracleMessageLen).               // [..., m, len(m), 16]
+		AddOp(arkade.OP_EQUALVERIFY).             // [..., m]
+		AddOp(arkade.OP_DUP).                     // [..., m, m]
+		AddInt64(int64(len(oracleMessageMagic))). // [..., m, m, 4]
+		AddOp(arkade.OP_LEFT).                    // [..., m, m[:4]]
+		AddData(oracleMessageMagic).              // [..., m, m[:4], "ORCL"]
+		AddOp(arkade.OP_EQUALVERIFY).             // [..., m]
 		//
 		// B) Hash the message and convert to a positive BigNum digest z.
 		// 0x00 sign-extension byte makes BIN2NUM treat the result as positive
 		// regardless of the high bit of SHA-256's last byte.
-		AddOp(arkade.OP_SHA256).                     // [..., h]            (32 BE bytes)
-		AddData([]byte{0x00}).                       // [..., h, 0x00]
-		AddOp(arkade.OP_CAT).                        // [..., h‖0x00]       (33 bytes, positive)
-		AddOp(arkade.OP_BIN2NUM).                    // [r, u1, u2, s, z]
+		AddOp(arkade.OP_SHA256).  // [..., h]            (32 BE bytes)
+		AddData([]byte{0x00}).    // [..., h, 0x00]
+		AddOp(arkade.OP_CAT).     // [..., h‖0x00]       (33 bytes, positive)
+		AddOp(arkade.OP_BIN2NUM). // [r, u1, u2, s, z]
 		//
 		// C) Verify u1·s ≡ z (mod n).
-		AddOp(arkade.OP_OVER).                       // [..., s, z, s]
-		AddOp(arkade.OP_4).AddOp(arkade.OP_PICK).    // [..., s, z, s, u1]
-		AddOp(arkade.OP_MUL).                        // [..., s, z, u1·s]
-		AddData(nBytes).AddOp(arkade.OP_MOD).        // [..., s, z, (u1·s) mod n]
-		AddOp(arkade.OP_SWAP).                       // [..., s, (u1·s) mod n, z]
-		AddData(nBytes).AddOp(arkade.OP_MOD).        // [..., s, (u1·s) mod n, z mod n]
-		AddOp(arkade.OP_EQUALVERIFY).                // [r, u1, u2, s]
+		AddOp(arkade.OP_OVER).                    // [..., s, z, s]
+		AddOp(arkade.OP_4).AddOp(arkade.OP_PICK). // [..., s, z, s, u1]
+		AddOp(arkade.OP_MUL).                     // [..., s, z, u1·s]
+		AddData(nBytes).AddOp(arkade.OP_MOD).     // [..., s, z, (u1·s) mod n]
+		AddOp(arkade.OP_SWAP).                    // [..., s, (u1·s) mod n, z]
+		AddData(nBytes).AddOp(arkade.OP_MOD).     // [..., s, (u1·s) mod n, z mod n]
+		AddOp(arkade.OP_EQUALVERIFY).             // [r, u1, u2, s]
 		//
 		// D) Verify u2·s ≡ r (mod n).
-		AddOp(arkade.OP_OVER).                       // [..., u2, s, u2]
-		AddOp(arkade.OP_MUL).                        // [..., u2, u2·s]
-		AddData(nBytes).AddOp(arkade.OP_MOD).        // [..., u2, (u2·s) mod n]
-		AddOp(arkade.OP_3).AddOp(arkade.OP_PICK).    // [..., u2, (u2·s) mod n, r]
-		AddData(nBytes).AddOp(arkade.OP_MOD).        // [..., u2, (u2·s) mod n, r mod n]
-		AddOp(arkade.OP_EQUALVERIFY).                // [r, u1, u2]
+		AddOp(arkade.OP_OVER).                    // [..., u2, s, u2]
+		AddOp(arkade.OP_MUL).                     // [..., u2, u2·s]
+		AddData(nBytes).AddOp(arkade.OP_MOD).     // [..., u2, (u2·s) mod n]
+		AddOp(arkade.OP_3).AddOp(arkade.OP_PICK). // [..., u2, (u2·s) mod n, r]
+		AddData(nBytes).AddOp(arkade.OP_MOD).     // [..., u2, (u2·s) mod n, r mod n]
+		AddOp(arkade.OP_EQUALVERIFY).             // [r, u1, u2]
 		//
 		// E) u1·G on secp256r1.
-		AddData(gxBytes).AddData(gyBytes).           // [..., r, u1, u2, Gx, Gy]
-		AddOp(arkade.OP_3).AddOp(arkade.OP_ROLL).    // [..., r, u2, Gx, Gy, u1]
-		AddOp(arkade.OP_1).AddOp(arkade.OP_ECMUL).   // [r, u2, u1Gx, u1Gy]
+		AddData(gxBytes).AddData(gyBytes).         // [..., r, u1, u2, Gx, Gy]
+		AddOp(arkade.OP_3).AddOp(arkade.OP_ROLL).  // [..., r, u2, Gx, Gy, u1]
+		AddOp(arkade.OP_1).AddOp(arkade.OP_ECMUL). // [r, u2, u1Gx, u1Gy]
 		//
 		// F) u2·P on secp256r1 (Px, Py committed in the script).
-		AddData(pxBytes).AddData(pyBytes).           // [..., r, u2, u1Gx, u1Gy, Px, Py]
-		AddOp(arkade.OP_4).AddOp(arkade.OP_ROLL).    // [..., r, u1Gx, u1Gy, Px, Py, u2]
-		AddOp(arkade.OP_1).AddOp(arkade.OP_ECMUL).   // [r, u1Gx, u1Gy, u2Px, u2Py]
+		AddData(pxBytes).AddData(pyBytes).         // [..., r, u2, u1Gx, u1Gy, Px, Py]
+		AddOp(arkade.OP_4).AddOp(arkade.OP_ROLL).  // [..., r, u1Gx, u1Gy, Px, Py, u2]
+		AddOp(arkade.OP_1).AddOp(arkade.OP_ECMUL). // [r, u1Gx, u1Gy, u2Px, u2Py]
 		//
 		// G) R = u1·G + u2·P, accept iff R.x mod n == r.
-		AddOp(arkade.OP_1).AddOp(arkade.OP_ECADD).   // [r, Rx, Ry]
-		AddOp(arkade.OP_DROP).                       // [r, Rx]
-		AddData(nBytes).AddOp(arkade.OP_MOD).        // [r, Rx mod n]
-		AddOp(arkade.OP_EQUAL).                      // [bool]
+		AddOp(arkade.OP_1).AddOp(arkade.OP_ECADD). // [r, Rx, Ry]
+		AddOp(arkade.OP_DROP).                     // [r, Rx]
+		AddData(nBytes).AddOp(arkade.OP_MOD).      // [r, Rx mod n]
+		AddOp(arkade.OP_EQUAL).                    // [bool]
 		Script()
 	require.NoError(t, err)
 	return out
