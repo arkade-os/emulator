@@ -21,8 +21,10 @@ const maxBigNumLen = txscript.MaxScriptElementSize
 const int64ByteCap = 8
 
 var (
-	ErrBigNumDivisionByZero = errors.New("division by zero")
-	ErrBigNumModuloByZero   = errors.New("modulo by zero")
+	ErrBigNumDivisionByZero     = errors.New("division by zero")
+	ErrBigNumModuloByZero       = errors.New("modulo by zero")
+	ErrBigNumModulusNotPositive = errors.New("modulus must be positive")
+	ErrBigNumNegativeExponent   = errors.New("negative exponent")
 )
 
 // BigNum is the unified numeric type used by the arkade VM. It is a tagged
@@ -208,6 +210,23 @@ func (n BigNum) Mod(m BigNum) (BigNum, error) {
 		}
 	}
 	return BigNum{big: new(big.Int).Rem(n.BigInt(), m.BigInt()), useBig: true}, nil
+}
+
+// Modexp returns n^exp mod modulus in the canonical range [0, modulus).
+// Returns ErrBigNumModulusNotPositive if modulus <= 0.
+// Returns ErrBigNumNegativeExponent if exp is negative.
+//
+// The result is always carried on the big.Int path; no demotion to the
+// int64 fast path is performed (consistent with the file-level policy).
+func (n BigNum) Modexp(exp, modulus BigNum) (BigNum, error) {
+	if modulus.Sign() <= 0 {
+		return BigNum{}, ErrBigNumModulusNotPositive
+	}
+	if exp.Sign() < 0 {
+		return BigNum{}, ErrBigNumNegativeExponent
+	}
+	res := new(big.Int).Exp(n.BigInt(), exp.BigInt(), modulus.BigInt())
+	return BigNum{big: res, useBig: true}, nil
 }
 
 // Negate returns -n. Promotes on int64 min.

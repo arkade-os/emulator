@@ -435,3 +435,122 @@ func TestMinimallyEncode(t *testing.T) {
 		require.Equal(t, want, got, "case %d: minimallyEncode(%x)", i, tc.in)
 	}
 }
+
+func TestBigNumModexp(t *testing.T) {
+	t.Parallel()
+
+	t.Run("small", func(t *testing.T) {
+		got, err := BigNumFromInt64(2).Modexp(
+			BigNumFromInt64(10),
+			BigNumFromInt64(1000),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(24).Cmp(got))
+	})
+
+	t.Run("exp_zero_nonzero_base", func(t *testing.T) {
+		got, err := BigNumFromInt64(5).Modexp(
+			BigNumFromInt64(0),
+			BigNumFromInt64(7),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(1).Cmp(got))
+	})
+
+	t.Run("exp_zero_base_zero", func(t *testing.T) {
+		got, err := BigNumFromInt64(0).Modexp(
+			BigNumFromInt64(0),
+			BigNumFromInt64(7),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(1).Cmp(got))
+	})
+
+	t.Run("base_zero_exp_positive", func(t *testing.T) {
+		got, err := BigNumFromInt64(0).Modexp(
+			BigNumFromInt64(5),
+			BigNumFromInt64(7),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(0).Cmp(got))
+	})
+
+	t.Run("modulus_one", func(t *testing.T) {
+		got, err := BigNumFromInt64(123456789).Modexp(
+			BigNumFromInt64(42),
+			BigNumFromInt64(1),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(0).Cmp(got))
+	})
+
+	t.Run("negative_base_reduces_canonically", func(t *testing.T) {
+		got, err := BigNumFromInt64(-3).Modexp(
+			BigNumFromInt64(2),
+			BigNumFromInt64(5),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(4).Cmp(got))
+
+		got, err = BigNumFromInt64(-2).Modexp(
+			BigNumFromInt64(3),
+			BigNumFromInt64(5),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(2).Cmp(got))
+	})
+
+	t.Run("fermat_inverse", func(t *testing.T) {
+		inv, err := BigNumFromInt64(3).Modexp(
+			BigNumFromInt64(5),
+			BigNumFromInt64(7),
+		)
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(5).Cmp(inv))
+
+		product, err := BigNumFromInt64(3).Mul(inv).Mod(BigNumFromInt64(7))
+		require.NoError(t, err)
+		require.Zero(t, BigNumFromInt64(1).Cmp(product))
+	})
+
+	t.Run("rsa_sized_matches_bigint", func(t *testing.T) {
+		p, ok := new(big.Int).SetString(
+			"ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+			16,
+		)
+		require.True(t, ok)
+		base := mustBigNumFromBigInt(big.NewInt(65537))
+		exp := mustBigNumFromBigInt(new(big.Int).Sub(p, big.NewInt(2)))
+		mod := mustBigNumFromBigInt(p)
+
+		got, err := base.Modexp(exp, mod)
+		require.NoError(t, err)
+
+		want := new(big.Int).Exp(big.NewInt(65537), new(big.Int).Sub(p, big.NewInt(2)), p)
+		require.Equal(t, 0, want.Cmp(got.BigInt()))
+	})
+
+	t.Run("modulus_zero_rejected", func(t *testing.T) {
+		_, err := BigNumFromInt64(2).Modexp(
+			BigNumFromInt64(3),
+			BigNumFromInt64(0),
+		)
+		require.ErrorIs(t, err, ErrBigNumModulusNotPositive)
+	})
+
+	t.Run("modulus_negative_rejected", func(t *testing.T) {
+		_, err := BigNumFromInt64(2).Modexp(
+			BigNumFromInt64(3),
+			BigNumFromInt64(-7),
+		)
+		require.ErrorIs(t, err, ErrBigNumModulusNotPositive)
+	})
+
+	t.Run("negative_exponent_rejected", func(t *testing.T) {
+		_, err := BigNumFromInt64(2).Modexp(
+			BigNumFromInt64(-1),
+			BigNumFromInt64(7),
+		)
+		require.ErrorIs(t, err, ErrBigNumNegativeExponent)
+	})
+}
