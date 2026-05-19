@@ -12,6 +12,60 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+/**
+F: introspector public key
+f:      "       secret key
+t: script_hash
+G: generator (F = f * G)
+
+VtxoArkadeScript = F + t*G = (f + t) * G
+
+to migrate from "f" private key to "s", we compute migration scalar m = f - s
+
+then to sign the VtxoArkadeScript:
+we use the private key (s' = s + m + t) instead of (f' = f + t)
+**/
+func TestTweakMigrate(t *testing.T) {
+	scriptHash := ArkadeScriptHash([]byte("OP_TRUE"))
+	first, err := secp256k1.GeneratePrivateKey()
+	require.NoError(t, err)
+
+	// first_introspector_pubkey + scriptHash = contract_key
+	// we assume some funds are locked into this key
+	firstContractKey := ComputeArkadeScriptPublicKey(first.PubKey(), scriptHash)
+
+
+	// introspector operator wants to migrate to a new key
+	second, err := secp256k1.GeneratePrivateKey()
+	require.NoError(t, err)
+	
+	// introspector computes the migration tweak = (first key - second key) modulo curve order
+	tweakScalar := new(btcec.ModNScalar).NegateVal(&second.Key)
+	tweakScalar.Add(&first.Key)
+	tweakBytes := tweakScalar.Bytes()
+	migrationTweak := tweakBytes[:]
+
+	// applying the migration tweak then the scriptHash to the second pubkey reproduces the first contract key
+	migrated := ComputeArkadeScriptPublicKey(second.PubKey(), migrationTweak)
+	secondContractKey := ComputeArkadeScriptPublicKey(migrated, scriptHash)
+
+	// first = second so no need to move the funds to a new address
+	require.Equal(t,
+		schnorr.SerializePubKey(firstContractKey),
+		schnorr.SerializePubKey(secondContractKey),
+	)
+
+	// if someone pass the "old" firstContractKey to introspector
+	// the signer can sign using privkey = second_privkey + script_hash + migration_tweak
+	seckeyForOldContract := ComputeArkadeScriptPrivateKey(ComputeArkadeScriptPrivateKey(second, migrationTweak), scriptHash)
+
+	require.Equal(
+		t,
+		schnorr.SerializePubKey(firstContractKey),
+		schnorr.SerializePubKey(seckeyForOldContract.PubKey()),
+	)
+}
+
 func TestArkadeScriptKeyTweaking(t *testing.T) {
 	testVector := []struct {
 		name                string
