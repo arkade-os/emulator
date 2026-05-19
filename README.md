@@ -305,7 +305,7 @@ and can be up to the maximum script element size. `OP_NUM2BIN` and
 | OP_RSHIFT | 153 | 0x99 | x n | x>>n | Logical right shift by n bits. Sign data is discarded. |
 | OP_NUM2BIN | 215 | 0xd7 | num size | bytes | Pads a BigNum to exactly size bytes. Fails if the number does not fit or size is negative or greater than the maximum script element size. |
 | OP_BIN2NUM | 216 | 0xd8 | bytes | num | Normalizes a byte string into a minimally encoded BigNum. |
-| OP_MODEXP | 217 | 0xd9 | base exp modulus | result | Pushes `base^exp mod modulus` in the canonical range `[0, modulus)`. Fails if `modulus <= 0` or `exp < 0`. For modular inverse over a prime `p`, pass `exp = p-2` (Fermat's little theorem). |
+| OP_MODEXP | 217 | 0xd9 | base exp modulus | result | Pushes `base^exp mod modulus` in the canonical range `[0, modulus)`. Each operand is capped at 64 bytes. Fails if `modulus <= 0`, `exp < 0`, or any operand exceeds 64 bytes. For modular inverse over a prime `p`, pass `exp = p-2` (Fermat's little theorem). |
 
 ### Cryptography
 

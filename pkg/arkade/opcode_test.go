@@ -2412,6 +2412,15 @@ func modexpSpec() *opcodeSpec {
 			"unexpected modexp error: %T: %v", err, err,
 		)
 	}
+	// Largest positive value that fits in exactly maxModexpOperandLen bytes:
+	// 2^(8*maxModexpOperandLen - 1) - 1.
+	maxAtCap := new(big.Int).Lsh(big.NewInt(1), uint(8*maxModexpOperandLen-1))
+	maxAtCap.Sub(maxAtCap, big.NewInt(1))
+	modAtCap := mustBigNumFromBigInt(maxAtCap)
+	// One byte above the cap (encoded as 8 more bits of magnitude).
+	aboveCap := new(big.Int).Lsh(big.NewInt(1), uint(8*(maxModexpOperandLen+1)-1))
+	aboveCap.Sub(aboveCap, big.NewInt(1))
+	modAboveCap := mustBigNumFromBigInt(aboveCap)
 	return &opcodeSpec{
 		opcode: OP_MODEXP,
 		checkProperties: ternaryArithmeticBigNumPropertyChecker(
@@ -2491,9 +2500,45 @@ func modexpSpec() *opcodeSpec {
 					out:  BigNumFromInt64(5),
 				},
 			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "modulus_at_operand_cap",
+					a:    BigNumFromInt64(2),
+					b:    BigNumFromInt64(10),
+					c:    modAtCap,
+					out:  BigNumFromInt64(1024),
+				},
+			),
 		},
 		invalidVectors: []opcodeVector{
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name: "modulus_above_operand_cap",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(BigNumFromInt64(10)),
+					mustBigNumBytes(modAboveCap),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name: "base_above_operand_cap",
+				inputStack: [][]byte{
+					mustBigNumBytes(modAboveCap),
+					mustBigNumBytes(BigNumFromInt64(10)),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name: "exp_above_operand_cap",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(modAboveCap),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
 			{
 				name: "modulus_zero",
 				inputStack: [][]byte{
