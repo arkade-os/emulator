@@ -303,7 +303,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_TXWEIGHT:                      txWeightSpec(),
 	OP_NUM2BIN:                       num2BinSpec(),
 	OP_BIN2NUM:                       bin2NumSpec(),
-	OP_UNKNOWN217:                    invalidSpec(OP_UNKNOWN217),
+	OP_REVERSEBYTES:                  reverseBytesSpec(),
 	OP_UNKNOWN218:                    invalidSpec(OP_UNKNOWN218),
 	OP_UNKNOWN219:                    invalidSpec(OP_UNKNOWN219),
 	OP_UNKNOWN220:                    invalidSpec(OP_UNKNOWN220),
@@ -3681,6 +3681,89 @@ func bin2NumSpec() *opcodeSpec {
 			},
 		},
 	}
+}
+
+// reverseBytesSpec verifies OP_REVERSEBYTES pops the top stack item and
+// pushes its bytes in reverse order without changing stack depth.
+func reverseBytesSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_REVERSEBYTES,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+
+			beforeDepth := len(c.before.GetStack())
+			afterDepth := len(c.after.GetStack())
+			if c.execErr != nil {
+				requireScriptErrorCodeIn(t, c.execErr,
+					txscript.ErrInvalidStackOperation,
+				)
+				require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+				return
+			}
+
+			require.Equal(t, beforeDepth, afterDepth)
+			src := c.before.GetStack()[beforeDepth-1]
+			want := slices.Clone(src)
+			slices.Reverse(want)
+			require.Equal(t, want, c.after.GetStack()[afterDepth-1])
+		},
+		validVectors: []opcodeVector{
+			{
+				name:          "empty",
+				inputStack:    [][]byte{emptyByteVector()},
+				expectedStack: [][]byte{emptyByteVector()},
+			},
+			{
+				name:          "single_byte_unchanged",
+				inputStack:    [][]byte{{0x42}},
+				expectedStack: [][]byte{{0x42}},
+			},
+			{
+				name:          "three_bytes",
+				inputStack:    [][]byte{{0x01, 0x02, 0x03}},
+				expectedStack: [][]byte{{0x03, 0x02, 0x01}},
+			},
+			{
+				name: "thirty_two_bytes",
+				inputStack: [][]byte{{
+					0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+					0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+					0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+					0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+				}},
+				expectedStack: [][]byte{{
+					0x1f, 0x1e, 0x1d, 0x1c, 0x1b, 0x1a, 0x19, 0x18,
+					0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, 0x10,
+					0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08,
+					0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
+				}},
+			},
+			{
+				name:       "max_element_size_520",
+				inputStack: [][]byte{seqBytes(txscript.MaxScriptElementSize)},
+			},
+			{
+				name:       "max_element_size_minus_one_519",
+				inputStack: [][]byte{seqBytes(txscript.MaxScriptElementSize - 1)},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+		},
+	}
+}
+
+// seqBytes returns a byte slice of length n filled with the values 0,1,2,...
+// modulo 256. Used so reversal can be verified by the property checker
+// without restating the expected bytes in the test vector.
+func seqBytes(n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = byte(i)
+	}
+	return out
 }
 
 func txWeightSpec() *opcodeSpec {

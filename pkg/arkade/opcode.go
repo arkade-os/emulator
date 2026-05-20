@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 	"math"
+	"slices"
 	"strings"
 
 	//nolint:staticcheck
@@ -276,7 +277,7 @@ const (
 
 	OP_NUM2BIN                       = 0xd7 // 215
 	OP_BIN2NUM                       = 0xd8 // 216
-	OP_UNKNOWN217                    = 0xd9 // 217
+	OP_REVERSEBYTES                  = 0xd9 // 217
 	OP_UNKNOWN218                    = 0xda // 218
 	OP_UNKNOWN219                    = 0xdb // 219
 	OP_UNKNOWN220                    = 0xdc // 220
@@ -577,7 +578,7 @@ var opcodeArray = [256]opcode{
 
 	OP_NUM2BIN:                       {OP_NUM2BIN, "OP_NUM2BIN", 1, opcodeNum2Bin},
 	OP_BIN2NUM:                       {OP_BIN2NUM, "OP_BIN2NUM", 1, opcodeBin2Num},
-	OP_UNKNOWN217:                    {OP_UNKNOWN217, "OP_UNKNOWN217", 1, opcodeInvalid},
+	OP_REVERSEBYTES:                  {OP_REVERSEBYTES, "OP_REVERSEBYTES", 1, opcodeReverseBytes},
 	OP_UNKNOWN218:                    {OP_UNKNOWN218, "OP_UNKNOWN218", 1, opcodeInvalid},
 	OP_UNKNOWN219:                    {OP_UNKNOWN219, "OP_UNKNOWN219", 1, opcodeInvalid},
 	OP_UNKNOWN220:                    {OP_UNKNOWN220, "OP_UNKNOWN220", 1, opcodeInvalid},
@@ -1646,6 +1647,24 @@ func opcodeBin2Num(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	vm.dstack.PushByteArray(minimallyEncode(b))
+	return nil
+}
+
+// opcodeReverseBytes treats the top item of the data stack as raw bytes and
+// replaces it with the same bytes in reverse order. Empty input yields empty
+// output and a single-byte input is returned unchanged. The operation
+// preserves length, so the stack-element size limit is automatically
+// honoured.
+//
+// Stack transformation: [... x1] -> [... reverse(x1)]
+func opcodeReverseBytes(op *opcode, data []byte, vm *Engine) error {
+	buf, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	slices.Reverse(buf)
+	vm.dstack.PushByteArray(buf)
 	return nil
 }
 
