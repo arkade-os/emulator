@@ -10,6 +10,55 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
+// isValidTaprootSigHash mirrors btcd's unexported isValidTaprootSigHash so that
+// callers (e.g. OP_SIGHASH) can pre-validate a hashType byte before invoking
+// btcd's sighash routines.
+func isValidTaprootSigHash(hashType txscript.SigHashType) bool {
+	switch hashType {
+	case txscript.SigHashDefault, txscript.SigHashAll,
+		txscript.SigHashNone, txscript.SigHashSingle:
+		return true
+	case 0x81, 0x82, 0x83:
+		return true
+	default:
+		return false
+	}
+}
+
+// computeTapscriptSighash returns the 32-byte BIP342 tapscript signature hash
+// for the engine's currently executing input under the given hashType.
+//
+// The engine MUST be in a tapscript execution context (vm.taprootCtx != nil
+// with a populated tapLeaf). The annex (if present) and the current code
+// separator position are folded into the digest, matching how a signature
+// produced by signing this leaf would be validated.
+func computeTapscriptSighash(vm *Engine,
+	hashType txscript.SigHashType) ([]byte, error) {
+
+	if vm.taprootCtx == nil {
+		return nil, fmt.Errorf("tapscript sighash requested outside " +
+			"of a tapscript execution context")
+	}
+
+	// Override the default blank codesep value installed by
+	// CalcTapscriptSignaturehash so that any OP_CODESEPARATOR run earlier
+	// in this script is committed to.
+	leafHash := vm.taprootCtx.tapLeafHash
+	opts := []txscript.TaprootSigHashOption{
+		txscript.WithBaseTapscriptVersion(
+			vm.taprootCtx.codeSepPos, leafHash[:],
+		),
+	}
+	if len(vm.taprootCtx.annex) > 0 {
+		opts = append(opts, txscript.WithAnnex(vm.taprootCtx.annex))
+	}
+
+	return txscript.CalcTapscriptSignaturehash(
+		vm.hashCache, hashType, &vm.tx, vm.txIdx, vm.prevOutFetcher,
+		vm.taprootCtx.tapLeaf, opts...,
+	)
+}
+
 // signatureVerifier is an abstract interface that allows the op code execution
 // to abstract over the _type_ of signature validation being executed.
 type signatureVerifier interface {
@@ -235,13 +284,10 @@ func newBaseTapscriptSigVerifier(pkBytes, rawSig []byte,
 //
 // NOTE: This is part of the signatureVerifier interface.
 func (b *baseTapscriptSigVerifier) Verify() verifyResult {
-	// Compute the sighash using the tapscript message extensions and return
-	// the outcome.
-	sigHash, err := txscript.CalcTaprootSignatureHash(
-		b.hashCache, b.hashType, b.tx, b.inputIndex, b.prevOuts,
-	)
+	// Compute the proper BIP342 tapscript sighash via the shared helper so
+	// that OP_CHECKSIG and OP_SIGHASH agree on the signed message.
+	sigHash, err := computeTapscriptSighash(b.vm, b.hashType)
 	if err != nil {
-		// TODO(roasbeef): propagate the error here?
 		return verifyResult{}
 	}
 

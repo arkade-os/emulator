@@ -182,6 +182,27 @@ func (taprootCheckSigCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opc
 	return c
 }
 
+// sighashCaseBuilder feeds a wide spread of hashType bytes (valid and invalid)
+// into OP_SIGHASH so the fuzzer exercises both the strict validation path and
+// the BIP342 digest path.
+type sighashCaseBuilder struct{}
+
+func (sighashCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
+	c := defaultCaseBuilder{}.Build(data, world)
+	for txIdx := range world.world.execScriptByVin {
+		c.txIdx = txIdx
+		break
+	}
+	// Mix in some known-valid flags so we don't only test the reject path.
+	allowedFlags := []byte{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}
+	flag := int64(data[0])
+	if data[1]&1 == 0 {
+		flag = int64(allowedFlags[int(data[0])%len(allowedFlags)])
+	}
+	c.stackPushes = [][]byte{scriptNum(flag).Bytes()}
+	return c
+}
+
 type taprootCheckSigAddCaseBuilder struct{}
 
 func (taprootCheckSigAddCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
@@ -350,6 +371,7 @@ var fuzzCaseBuilders = [256]fuzzCaseBuilder{
 	OP_CHECKSIG:                      taprootCheckSigCaseBuilder{},
 	OP_CHECKSIGVERIFY:                taprootCheckSigCaseBuilder{},
 	OP_CHECKSIGADD:                   taprootCheckSigAddCaseBuilder{},
+	OP_SIGHASH:                       sighashCaseBuilder{},
 	OP_FINDASSETGROUPBYASSETID:       assetIDLookupCaseBuilder{},
 	OP_INSPECTASSETGROUPASSETID:      assetGroupCaseBuilder{},
 	OP_INSPECTASSETGROUPCTRL:         assetGroupCaseBuilder{},

@@ -43,6 +43,7 @@ type taprootExecutionCtx struct {
 
 	codeSepPos uint32
 
+	tapLeaf     txscript.TapLeaf
 	tapLeafHash chainhash.Hash
 
 	sigOpsBudget int32
@@ -430,12 +431,10 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 		}
 
 		// Now that we know the script parses, and we have a
-		// valid leaf version, we'll save the tapscript hash of
-		// the leaf, as we need that for signature validation
-		// later.
-		vm.taprootCtx.tapLeafHash = txscript.NewBaseTapLeaf(
-			witnessScript,
-		).TapHash()
+		// valid leaf version, we'll save the tap leaf (and its
+		// hash) as we need both for signature validation later.
+		vm.taprootCtx.tapLeaf = txscript.NewBaseTapLeaf(witnessScript)
+		vm.taprootCtx.tapLeafHash = vm.taprootCtx.tapLeaf.TapHash()
 
 		// Otherwise, we'll now "recurse" one level deeper, and
 		// set the remaining witness (leaving off the annex and

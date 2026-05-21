@@ -305,7 +305,7 @@ const (
 	OP_TXID                          = 0xf3 // 243
 	OP_INSPECTPACKET                 = 0xf4 // 244
 	OP_INSPECTINPUTPACKET            = 0xf5 // 245
-	OP_UNKNOWN246                    = 0xf6 // 246
+	OP_SIGHASH                       = 0xf6 // 246
 	OP_UNKNOWN247                    = 0xf7 // 247
 	OP_UNKNOWN248                    = 0xf8 // 248
 	OP_UNKNOWN249                    = 0xf9 // 249
@@ -606,7 +606,7 @@ var opcodeArray = [256]opcode{
 	OP_TXID:                          {OP_TXID, "OP_TXID", 1, opcodeTxId},
 	OP_INSPECTPACKET:                 {OP_INSPECTPACKET, "OP_INSPECTPACKET", 1, opcodeInspectPacket},
 	OP_INSPECTINPUTPACKET:            {OP_INSPECTINPUTPACKET, "OP_INSPECTINPUTPACKET", 1, opcodeInspectInputPacket},
-	OP_UNKNOWN246:                    {OP_UNKNOWN246, "OP_UNKNOWN246", 1, opcodeInvalid},
+	OP_SIGHASH:                       {OP_SIGHASH, "OP_SIGHASH", 1, opcodeSighash},
 	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
 	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
 	OP_UNKNOWN249:                    {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},
@@ -2765,6 +2765,60 @@ func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
 func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
 	txHash := vm.tx.TxHash()
 	vm.dstack.PushByteArray(txHash[:])
+	return nil
+}
+
+// opcodeSighash pops a sighash flag from the stack and pushes the 32-byte
+// BIP342 tapscript signature hash of the currently executing input under that
+// flag. The pushed digest is identical to the message that OP_CHECKSIG would
+// verify a Schnorr signature against in the same execution context.
+//
+// Stack transformation: [... hashType] -> [... sighash]
+func opcodeSighash(op *opcode, data []byte, vm *Engine) error {
+	// Tapscript context is required.
+	if vm.taprootCtx == nil {
+		str := fmt.Sprintf("attempt to execute invalid opcode %s", op.name)
+		return scriptError(txscript.ErrReservedOpcode, str)
+	}
+
+	hashTypeNum, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	// PopInt enforces the default 4-byte scriptNum window, so the value
+	// already fits in int32; we only need to clip to a single byte.
+	flag := hashTypeNum.Int32()
+	if flag < 0 || flag > 0xff {
+		return scriptError(txscript.ErrNumberTooBig,
+			fmt.Sprintf("sighash flag %d out of range [0,255]", flag))
+	}
+
+	hashType := txscript.SigHashType(flag)
+	if !isValidTaprootSigHash(hashType) {
+		return scriptError(txscript.ErrInvalidSigHashType,
+			fmt.Sprintf("invalid sighash flag 0x%02x", flag))
+	}
+
+	// SIGHASH_SINGLE (and its ANYONECANPAY variant) requires a matching
+	// output at the input's index. Surface a clear error here rather than
+	// letting btcd's generic fmt.Errorf bubble up unwrapped. Strip the
+	// ANYONECANPAY bit (0x80) so 0x03 and 0x83 both compare equal to
+	// SigHashSingle.
+	if hashType&^txscript.SigHashAnyOneCanPay == txscript.SigHashSingle &&
+		vm.txIdx >= len(vm.tx.TxOut) {
+
+		return scriptError(txscript.ErrInvalidSigHashType,
+			fmt.Sprintf("SIGHASH_SINGLE: no output at input index %d "+
+				"(tx has %d outputs)", vm.txIdx, len(vm.tx.TxOut)))
+	}
+
+	sigHash, err := computeTapscriptSighash(vm, hashType)
+	if err != nil {
+		return err
+	}
+
+	vm.dstack.PushByteArray(sigHash)
 	return nil
 }
 

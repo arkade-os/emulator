@@ -12,10 +12,13 @@ import (
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewOpcodes(t *testing.T) {
@@ -2369,4 +2372,172 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// runTapscriptLeaf wires a witness-script leaf onto a single-input transaction
+// and returns the engine ready to execute. The caller owns the pre-signature
+// `witnessStack` (anything below the leaf + control block); this helper
+// appends the leaf and control block itself.
+func runTapscriptLeaf(
+	t *testing.T,
+	leafScript []byte,
+	witnessStack wire.TxWitness,
+	prevValue int64,
+) *Engine {
+	t.Helper()
+
+	// A deterministic internal key keeps tests reproducible.
+	internalPriv, _ := btcec.PrivKeyFromBytes([]byte{
+		0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+		0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01,
+		0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+		0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11,
+	})
+
+	leaf := txscript.NewBaseTapLeaf(leafScript)
+	leafHash := leaf.TapHash()
+	outputKey := txscript.ComputeTaprootOutputKey(
+		internalPriv.PubKey(), leafHash[:],
+	)
+
+	controlBlock := &txscript.ControlBlock{
+		InternalKey:     internalPriv.PubKey(),
+		LeafVersion:     txscript.BaseLeafVersion,
+		OutputKeyYIsOdd: outputKey.SerializeCompressed()[0] == 0x03,
+	}
+	controlBytes, err := controlBlock.ToBytes()
+	require.NoError(t, err)
+
+	prevScript, err := txscript.PayToTaprootScript(outputKey)
+	require.NoError(t, err)
+
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{0x77}, Index: 0}
+	tx := &wire.MsgTx{
+		Version: 2,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: outpoint,
+			Sequence:         0xffffffff,
+		}},
+		TxOut: []*wire.TxOut{{
+			Value:    prevValue - 500,
+			PkScript: []byte{OP_TRUE},
+		}},
+	}
+
+	witness := append(append(wire.TxWitness(nil), witnessStack...),
+		leafScript, controlBytes)
+	tx.TxIn[0].Witness = witness
+
+	prevouts := map[wire.OutPoint]*wire.TxOut{
+		outpoint: {Value: prevValue, PkScript: prevScript},
+	}
+	fetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(prevouts), nil, nil,
+	)
+
+	engine, err := NewEngine(
+		prevScript, tx, 0,
+		txscript.NewSigCache(32),
+		txscript.NewTxSigHashes(tx, fetcher),
+		prevValue,
+		fetcher,
+	)
+	require.NoError(t, err)
+
+	return engine
+}
+
+// TestOpSighashMatchesCheckSigFromStack proves OP_SIGHASH emits the exact
+// digest that an OP_CHECKSIG-style signature commits to: the script pushes
+// SIGHASH_DEFAULT, runs OP_SIGHASH to get the digest, then verifies a
+// witness-supplied Schnorr signature against that digest with
+// OP_CHECKSIGFROMSTACK.
+func TestOpSighashMatchesCheckSigFromStack(t *testing.T) {
+	t.Parallel()
+
+	signingPriv, _ := btcec.PrivKeyFromBytes([]byte{
+		0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+		0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0,
+		0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8,
+		0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0,
+	})
+	pubKeyX := schnorr.SerializePubKey(signingPriv.PubKey())
+
+	// Stack on entry: [sig, pubkey]. Script:
+	//   OP_0 OP_SIGHASH  // [sig, pubkey, sighash]
+	//   OP_SWAP          // [sig, sighash, pubkey] — the order
+	//                    //   OP_CHECKSIGFROMSTACK expects.
+	//   OP_CHECKSIGFROMSTACK
+	leafScript, err := txscript.NewScriptBuilder().
+		AddOp(OP_0).
+		AddOp(OP_SIGHASH).
+		AddOp(OP_SWAP).
+		AddOp(OP_CHECKSIGFROMSTACK).
+		Script()
+	require.NoError(t, err)
+
+	witnessStack := wire.TxWitness{
+		nil,     // sig placeholder, filled in below
+		pubKeyX, // pubkey for OP_CHECKSIGFROMSTACK
+	}
+
+	engine := runTapscriptLeaf(t, leafScript, witnessStack, 1_000_000)
+
+	// Compute the digest the engine will produce, sign it, and patch the
+	// signature into the witness.
+	leaf := txscript.NewBaseTapLeaf(leafScript)
+	sigHash, err := txscript.CalcTapscriptSignaturehash(
+		engine.hashCache, txscript.SigHashDefault,
+		&engine.tx, 0, engine.prevOutFetcher, leaf,
+	)
+	require.NoError(t, err)
+
+	sig, err := schnorr.Sign(signingPriv, sigHash)
+	require.NoError(t, err)
+	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
+
+	require.NoError(t, engine.Execute(),
+		"OP_SIGHASH digest must equal the BIP342 sighash a signature commits to")
+}
+
+// TestOpCheckSigTapscriptRegression locks in the fix to baseTapscriptSigVerifier.
+// Before the fix, OP_CHECKSIG validated against a BIP341 keypath digest even in
+// tapscript context, which would reject any real BIP342 signature. This test
+// signs with CalcTapscriptSignaturehash (the proper digest) and asserts
+// OP_CHECKSIG accepts it.
+func TestOpCheckSigTapscriptRegression(t *testing.T) {
+	t.Parallel()
+
+	signingPriv, _ := btcec.PrivKeyFromBytes([]byte{
+		0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8,
+		0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0,
+		0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8,
+		0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0,
+	})
+	pubKeyX := schnorr.SerializePubKey(signingPriv.PubKey())
+
+	leafScript, err := txscript.NewScriptBuilder().
+		AddData(pubKeyX).
+		AddOp(OP_CHECKSIG).
+		Script()
+	require.NoError(t, err)
+
+	// Single sig on the witness stack — OP_CHECKSIG pops [sig, pubkey].
+	witnessStack := wire.TxWitness{nil}
+
+	engine := runTapscriptLeaf(t, leafScript, witnessStack, 2_000_000)
+
+	leaf := txscript.NewBaseTapLeaf(leafScript)
+	sigHash, err := txscript.CalcTapscriptSignaturehash(
+		engine.hashCache, txscript.SigHashDefault,
+		&engine.tx, 0, engine.prevOutFetcher, leaf,
+	)
+	require.NoError(t, err)
+
+	sig, err := schnorr.Sign(signingPriv, sigHash)
+	require.NoError(t, err)
+	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
+
+	require.NoError(t, engine.Execute(),
+		"OP_CHECKSIG must accept a BIP342 tapscript signature")
 }
