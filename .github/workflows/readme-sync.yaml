@@ -12,6 +12,8 @@ jobs:
   readme-sync:
     name: verify-readme-opcodes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
