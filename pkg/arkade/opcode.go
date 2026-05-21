@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"hash"
 	"math"
-	"slices"
 	"strings"
 
 	//nolint:staticcheck
@@ -1654,7 +1653,9 @@ func opcodeBin2Num(op *opcode, data []byte, vm *Engine) error {
 // replaces it with the same bytes in reverse order. Empty input yields empty
 // output and a single-byte input is returned unchanged. The operation
 // preserves length, so the stack-element size limit is automatically
-// honoured.
+// honoured. A fresh buffer is allocated so we never mutate a slice that
+// other stack entries may still reference (see stack.go: objects on the
+// data stack are shared and must be cloned before modification).
 //
 // Stack transformation: [... x1] -> [... reverse(x1)]
 func opcodeReverseBytes(op *opcode, data []byte, vm *Engine) error {
@@ -1663,8 +1664,11 @@ func opcodeReverseBytes(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	slices.Reverse(buf)
-	vm.dstack.PushByteArray(buf)
+	result := make([]byte, len(buf))
+	for i, b := range buf {
+		result[len(buf)-1-i] = b
+	}
+	vm.dstack.PushByteArray(result)
 	return nil
 }
 

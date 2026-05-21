@@ -3741,6 +3741,18 @@ func reverseBytesSpec() *opcodeSpec {
 				}},
 			},
 			{
+				// Models the post-OP_DUP shape: both stack entries alias the
+				// same backing []byte. A correct implementation must not
+				// mutate the popped buffer in place; otherwise the lower
+				// stack entry is silently corrupted.
+				name: "shared_backing_buffer_not_mutated",
+				inputStack: func() [][]byte {
+					shared := []byte{0x01, 0x02, 0x03}
+					return [][]byte{shared, shared}
+				}(),
+				expectedStack: [][]byte{{0x01, 0x02, 0x03}, {0x03, 0x02, 0x01}},
+			},
+			{
 				name:       "max_element_size_520",
 				inputStack: [][]byte{seqBytes(txscript.MaxScriptElementSize)},
 			},
