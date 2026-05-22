@@ -2813,7 +2813,7 @@ func opcodeSighash(op *opcode, data []byte, vm *Engine) error {
 				"(tx has %d outputs)", vm.txIdx, len(vm.tx.TxOut)))
 	}
 
-	sigHash, err := computeTapscriptSighash(vm, hashType)
+	sigHash, err := computeArkadeSighash(vm, hashType)
 	if err != nil {
 		return err
 	}

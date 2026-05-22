@@ -3722,22 +3722,14 @@ func installSighashTapContext(vm *Engine, annex []byte) {
 	}
 }
 
-// expectedSighash returns the digest that OP_SIGHASH should push for the given
-// flag in the engine's current state.
+// expectedSighash returns the digest that OP_SIGHASH should push for the
+// given flag. Correctness of the digest (round-trip with
+// OP_CHECKSIGFROMSTACK, witness-blob masking, domain separation from the
+// BIP342 digest) is covered by dedicated tests in engine_test.go; this
+// helper is a stability check that the opcode and the helper agree.
 func expectedSighash(t *testing.T, vm *Engine, hashType txscript.SigHashType) []byte {
 	t.Helper()
-	opts := []txscript.TaprootSigHashOption{
-		txscript.WithBaseTapscriptVersion(
-			vm.taprootCtx.codeSepPos, vm.taprootCtx.tapLeafHash[:],
-		),
-	}
-	if len(vm.taprootCtx.annex) > 0 {
-		opts = append(opts, txscript.WithAnnex(vm.taprootCtx.annex))
-	}
-	digest, err := txscript.CalcTapscriptSignaturehash(
-		vm.hashCache, hashType, &vm.tx, vm.txIdx, vm.prevOutFetcher,
-		vm.taprootCtx.tapLeaf, opts...,
-	)
+	digest, err := computeArkadeSighash(vm, hashType)
 	require.NoError(t, err)
 	return digest
 }

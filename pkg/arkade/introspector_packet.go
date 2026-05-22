@@ -2,8 +2,8 @@ package arkade
 
 import (
 	"bytes"
-	"errors"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -104,6 +104,38 @@ func (p IntrospectorPacket) Serialize() ([]byte, error) {
 		}
 		if _, err := buf.Write(witBuf.Bytes()); err != nil {
 			return nil, fmt.Errorf("failed to write witness for entry %d: %w", i, err)
+		}
+	}
+
+	return buf.Bytes(), nil
+}
+
+// serializeIntrospectorPacketMasked is like Serialize, but omits the witness
+// blob of every entry entirely (witness_len = 0, no witness bytes). It is the
+// encoding used inside the non-standard arkade tapscript sighash, where
+// witness data must be excluded from the digest so scripts can be pre-signed
+// without committing to runtime witness arguments. The masked encoding is
+// never broadcast — it exists only to feed sha_outputs in the digest pipeline.
+func serializeIntrospectorPacketMasked(p IntrospectorPacket) ([]byte, error) {
+	var buf bytes.Buffer
+
+	if err := wire.WriteVarInt(&buf, 0, uint64(len(p))); err != nil {
+		return nil, fmt.Errorf("failed to write entry count: %w", err)
+	}
+
+	for i, entry := range p {
+		if err := binary.Write(&buf, binary.LittleEndian, entry.Vin); err != nil {
+			return nil, fmt.Errorf("failed to write vin for entry %d: %w", i, err)
+		}
+		if err := wire.WriteVarInt(&buf, 0, uint64(len(entry.Script))); err != nil {
+			return nil, fmt.Errorf("failed to write script_len for entry %d: %w", i, err)
+		}
+		if _, err := buf.Write(entry.Script); err != nil {
+			return nil, fmt.Errorf("failed to write script for entry %d: %w", i, err)
+		}
+		// Mask: witness_len = 0, no witness bytes.
+		if err := wire.WriteVarInt(&buf, 0, 0); err != nil {
+			return nil, fmt.Errorf("failed to write masked witness_len for entry %d: %w", i, err)
 		}
 	}
 

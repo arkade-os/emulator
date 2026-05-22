@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -2447,26 +2448,55 @@ func runTapscriptLeaf(
 	return engine
 }
 
+// arkadeDigest computes the arkade tapscript sighash for the given tx + input
+// without running the engine. It is the single helper used by every digest
+// test (round-trip signing, masking properties, BIP342 byte-layout
+// equivalence).
+func arkadeDigest(
+	t *testing.T, tx *wire.MsgTx, txIdx int,
+	fetcher ArkPrevOutFetcher, leafScript []byte,
+	hashType txscript.SigHashType,
+) []byte {
+	t.Helper()
+	leaf := txscript.NewBaseTapLeaf(leafScript)
+	vm := &Engine{
+		tx:             *tx,
+		txIdx:          txIdx,
+		hashCache:      txscript.NewTxSigHashes(tx, fetcher),
+		prevOutFetcher: fetcher,
+		taprootCtx: &taprootExecutionCtx{
+			tapLeaf:     leaf,
+			tapLeafHash: leaf.TapHash(),
+			codeSepPos:  blankCodeSepValue,
+		},
+	}
+	digest, err := computeArkadeSighash(vm, hashType)
+	require.NoError(t, err)
+	return digest
+}
+
+// fetcherFor returns an ArkPrevOutFetcher backed by the given prevout map.
+func fetcherFor(prevOuts map[wire.OutPoint]*wire.TxOut) ArkPrevOutFetcher {
+	return newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(prevOuts), nil, nil,
+	)
+}
+
 // TestOpSighashMatchesCheckSigFromStack proves OP_SIGHASH emits the exact
-// digest that an OP_CHECKSIG-style signature commits to: the script pushes
-// SIGHASH_DEFAULT, runs OP_SIGHASH to get the digest, then verifies a
-// witness-supplied Schnorr signature against that digest with
-// OP_CHECKSIGFROMSTACK.
+// digest an OP_CHECKSIG-style signature in the arkade VM commits to: the
+// script runs OP_SIGHASH for SIGHASH_DEFAULT and verifies a witness-supplied
+// Schnorr signature against that digest via OP_CHECKSIGFROMSTACK. The
+// signature is produced against the arkade (witness-masked) sighash, not
+// BIP342.
 func TestOpSighashMatchesCheckSigFromStack(t *testing.T) {
 	t.Parallel()
 
-	signingPriv, _ := btcec.PrivKeyFromBytes([]byte{
-		0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
-		0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0,
-		0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8,
-		0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf, 0xc0,
-	})
+	signingPriv, _ := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{0xa1}, 32))
 	pubKeyX := schnorr.SerializePubKey(signingPriv.PubKey())
 
 	// Stack on entry: [sig, pubkey]. Script:
 	//   OP_0 OP_SIGHASH  // [sig, pubkey, sighash]
-	//   OP_SWAP          // [sig, sighash, pubkey] — the order
-	//                    //   OP_CHECKSIGFROMSTACK expects.
+	//   OP_SWAP          // [sig, sighash, pubkey] — CHECKSIGFROMSTACK's order.
 	//   OP_CHECKSIGFROMSTACK
 	leafScript, err := txscript.NewScriptBuilder().
 		AddOp(OP_0).
@@ -2476,44 +2506,27 @@ func TestOpSighashMatchesCheckSigFromStack(t *testing.T) {
 		Script()
 	require.NoError(t, err)
 
-	witnessStack := wire.TxWitness{
-		nil,     // sig placeholder, filled in below
-		pubKeyX, // pubkey for OP_CHECKSIGFROMSTACK
-	}
+	engine := runTapscriptLeaf(t, leafScript,
+		wire.TxWitness{nil, pubKeyX}, 1_000_000)
 
-	engine := runTapscriptLeaf(t, leafScript, witnessStack, 1_000_000)
-
-	// Compute the digest the engine will produce, sign it, and patch the
-	// signature into the witness.
-	leaf := txscript.NewBaseTapLeaf(leafScript)
-	sigHash, err := txscript.CalcTapscriptSignaturehash(
-		engine.hashCache, txscript.SigHashDefault,
-		&engine.tx, 0, engine.prevOutFetcher, leaf,
-	)
-	require.NoError(t, err)
-
+	sigHash := arkadeDigest(t, &engine.tx, 0, engine.prevOutFetcher,
+		leafScript, txscript.SigHashDefault)
 	sig, err := schnorr.Sign(signingPriv, sigHash)
 	require.NoError(t, err)
 	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
 
 	require.NoError(t, engine.Execute(),
-		"OP_SIGHASH digest must equal the BIP342 sighash a signature commits to")
+		"OP_SIGHASH digest must equal the arkade sighash a witness signature commits to")
 }
 
-// TestOpCheckSigTapscriptRegression locks in the fix to baseTapscriptSigVerifier.
-// Before the fix, OP_CHECKSIG validated against a BIP341 keypath digest even in
-// tapscript context, which would reject any real BIP342 signature. This test
-// signs with CalcTapscriptSignaturehash (the proper digest) and asserts
-// OP_CHECKSIG accepts it.
-func TestOpCheckSigTapscriptRegression(t *testing.T) {
+// TestOpCheckSigArkadeSighash locks in that OP_CHECKSIG in the arkade VM
+// verifies signatures against the arkade (non-standard) tapscript sighash.
+// Pre-OP_SIGHASH the verifier built a BIP341 keypath digest, which rejected
+// every real tapscript signature.
+func TestOpCheckSigArkadeSighash(t *testing.T) {
 	t.Parallel()
 
-	signingPriv, _ := btcec.PrivKeyFromBytes([]byte{
-		0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8,
-		0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0,
-		0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8,
-		0xd9, 0xda, 0xdb, 0xdc, 0xdd, 0xde, 0xdf, 0xe0,
-	})
+	signingPriv, _ := btcec.PrivKeyFromBytes(bytes.Repeat([]byte{0xc1}, 32))
 	pubKeyX := schnorr.SerializePubKey(signingPriv.PubKey())
 
 	leafScript, err := txscript.NewScriptBuilder().
@@ -2522,22 +2535,307 @@ func TestOpCheckSigTapscriptRegression(t *testing.T) {
 		Script()
 	require.NoError(t, err)
 
-	// Single sig on the witness stack — OP_CHECKSIG pops [sig, pubkey].
-	witnessStack := wire.TxWitness{nil}
+	engine := runTapscriptLeaf(t, leafScript,
+		wire.TxWitness{nil}, 2_000_000)
 
-	engine := runTapscriptLeaf(t, leafScript, witnessStack, 2_000_000)
-
-	leaf := txscript.NewBaseTapLeaf(leafScript)
-	sigHash, err := txscript.CalcTapscriptSignaturehash(
-		engine.hashCache, txscript.SigHashDefault,
-		&engine.tx, 0, engine.prevOutFetcher, leaf,
-	)
-	require.NoError(t, err)
-
+	sigHash := arkadeDigest(t, &engine.tx, 0, engine.prevOutFetcher,
+		leafScript, txscript.SigHashDefault)
 	sig, err := schnorr.Sign(signingPriv, sigHash)
 	require.NoError(t, err)
 	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
 
 	require.NoError(t, engine.Execute(),
-		"OP_CHECKSIG must accept a BIP342 tapscript signature")
+		"OP_CHECKSIG must accept a signature over the arkade sighash")
+}
+
+// buildExtensionScript assembles an OP_RETURN script carrying an asset packet
+// followed by the given introspector packet. The asset packet co-locates a
+// second commitment so masking-property tests can show it remains in the
+// digest while the introspector witness blob is dropped.
+func buildExtensionScript(t *testing.T, ip IntrospectorPacket) []byte {
+	t.Helper()
+	ap, err := asset.NewPacket([]asset.AssetGroup{fallbackFuzzAssetGroup()})
+	require.NoError(t, err)
+	script, err := extension.Extension{ap, ip}.Serialize()
+	require.NoError(t, err)
+	return script
+}
+
+// mutateIntrospectorEntry locates the introspector packet inside tx's
+// extension OP_RETURN, applies fn to its first entry, and rewrites the
+// OP_RETURN with the modified packet.
+func mutateIntrospectorEntry(
+	t *testing.T, tx *wire.MsgTx, fn func(*IntrospectorEntry),
+) {
+	t.Helper()
+	ip, err := FindIntrospectorPacket(tx)
+	require.NoError(t, err)
+	require.NotNil(t, ip)
+	fn(&ip[0])
+	for i, out := range tx.TxOut {
+		if extension.IsExtension(out.PkScript) {
+			tx.TxOut[i].PkScript = buildExtensionScript(t, ip)
+			return
+		}
+	}
+	t.Fatal("no extension output found in tx")
+}
+
+// buildSighashFixture returns a 1-input tx with one real output and one
+// OP_RETURN carrying an asset packet + introspector packet (with non-empty
+// witness data), along with its prevout map and the tap leaf script we treat
+// as executing.
+func buildSighashFixture(t *testing.T) (
+	*wire.MsgTx, map[wire.OutPoint]*wire.TxOut, []byte,
+) {
+	t.Helper()
+
+	leafScript := []byte{OP_TRUE}
+	ip, err := NewPacket(IntrospectorEntry{
+		Vin:    0,
+		Script: []byte{OP_INSPECTVERSION, OP_1, OP_EQUAL},
+		Witness: wire.TxWitness{
+			[]byte("alice-secret"),
+			[]byte{0xaa, 0xbb, 0xcc, 0xdd},
+		},
+	})
+	require.NoError(t, err)
+
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{0xa1, 0xa2}, Index: 0}
+	tx := &wire.MsgTx{
+		Version: 2,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: outpoint,
+			Sequence:         0xffffffff,
+		}},
+		TxOut: []*wire.TxOut{
+			{Value: 9000, PkScript: []byte{OP_TRUE}},
+			{Value: 0, PkScript: buildExtensionScript(t, ip)},
+		},
+	}
+	prevOuts := map[wire.OutPoint]*wire.TxOut{
+		outpoint: {Value: 10_000, PkScript: []byte{OP_TRUE}},
+	}
+	return tx, prevOuts, leafScript
+}
+
+// TestArkadeSighashMasksWitnessBlobs validates the core security property of
+// the non-standard digest: introspector witness blobs are masked out, but
+// every other byte committed by BIP342 (script bytes, vin, co-located ARK
+// packets, non-extension outputs) continues to bind the signature.
+func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
+	t.Parallel()
+
+	baseTx, prevOuts, leafScript := buildSighashFixture(t)
+	fetcher := fetcherFor(prevOuts)
+	const flag = txscript.SigHashAll
+
+	digestOf := func(t *testing.T, tx *wire.MsgTx) []byte {
+		t.Helper()
+		return arkadeDigest(t, tx, 0, fetcher, leafScript, flag)
+	}
+	baseDigest := digestOf(t, baseTx)
+
+	t.Run("witness_content_mutation_does_not_change_digest", func(t *testing.T) {
+		t.Parallel()
+		mutated := baseTx.Copy()
+		mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+			e.Witness = wire.TxWitness{
+				[]byte("totally-different-content-and-length"),
+				[]byte{0xff, 0xff, 0xff},
+				[]byte("extra-item"),
+			}
+		})
+		require.Equal(t, baseDigest, digestOf(t, mutated),
+			"the arkade sighash must NOT depend on witness blob content or length")
+	})
+
+	t.Run("empty_witness_matches_non_empty_witness", func(t *testing.T) {
+		t.Parallel()
+		mutated := baseTx.Copy()
+		mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+			e.Witness = nil
+		})
+		require.Equal(t, baseDigest, digestOf(t, mutated),
+			"masking must produce the same digest for empty and non-empty witnesses")
+	})
+
+	t.Run("script_byte_mutation_changes_digest", func(t *testing.T) {
+		t.Parallel()
+		mutated := baseTx.Copy()
+		mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+			e.Script = append([]byte(nil), e.Script...)
+			e.Script[0] ^= 0x01
+		})
+		require.NotEqual(t, baseDigest, digestOf(t, mutated),
+			"script bytes must remain committed via sha_outputs")
+	})
+
+	t.Run("vin_mutation_changes_digest", func(t *testing.T) {
+		t.Parallel()
+		// A 2-input tx so vin=0 and vin=1 are both valid Validate() targets.
+		twoInputTx, twoInputPrevOuts, _ := buildSighashFixture(t)
+		extraOutpoint := wire.OutPoint{Hash: chainhash.Hash{0xb1}, Index: 0}
+		twoInputTx.TxIn = append(twoInputTx.TxIn, &wire.TxIn{
+			PreviousOutPoint: extraOutpoint,
+			Sequence:         0xffffffff,
+		})
+		twoInputPrevOuts[extraOutpoint] = &wire.TxOut{
+			Value: 5_000, PkScript: []byte{OP_TRUE},
+		}
+		twoInputFetcher := fetcherFor(twoInputPrevOuts)
+
+		digestVin0 := arkadeDigest(t, twoInputTx, 0, twoInputFetcher, leafScript, flag)
+		mutateIntrospectorEntry(t, twoInputTx, func(e *IntrospectorEntry) {
+			e.Vin = 1
+		})
+		digestVin1 := arkadeDigest(t, twoInputTx, 0, twoInputFetcher, leafScript, flag)
+		require.NotEqual(t, digestVin0, digestVin1,
+			"entry vin must remain committed via sha_outputs")
+	})
+
+	t.Run("asset_packet_mutation_changes_digest", func(t *testing.T) {
+		t.Parallel()
+		mutated := baseTx.Copy()
+		ip, err := FindIntrospectorPacket(mutated)
+		require.NoError(t, err)
+		ap, err := asset.NewPacket([]asset.AssetGroup{{
+			Outputs: []asset.AssetOutput{{
+				Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 99,
+			}},
+		}})
+		require.NoError(t, err)
+		newScript, err := extension.Extension{ap, ip}.Serialize()
+		require.NoError(t, err)
+		mutated.TxOut[1].PkScript = newScript
+		require.NotEqual(t, baseDigest, digestOf(t, mutated),
+			"co-located asset packet must remain committed via sha_outputs")
+	})
+
+	t.Run("non_extension_output_mutation_changes_digest", func(t *testing.T) {
+		t.Parallel()
+		mutated := baseTx.Copy()
+		mutated.TxOut[0].Value++
+		require.NotEqual(t, baseDigest, digestOf(t, mutated),
+			"non-extension outputs must remain committed via sha_outputs")
+	})
+}
+
+// TestArkadeSighashByteLayoutMatchesBIP342 is the strongest correctness check
+// on the hand-rolled digest. For every valid sighash flag it computes:
+//
+//   - arkadeSigMsg = buildArkadeSigMsg(originalTx, flag) — the bytes our code
+//     produces before final tagging (witness masking applied internally).
+//   - bip342Digest = txscript.CalcTapscriptSignaturehash(maskedTx, flag, …) —
+//     btcd's BIP342 digest over the same witness-masked tx, tagged with
+//     "TapSighash".
+//
+// TaggedHash(TapSighash, arkadeSigMsg) MUST equal bip342Digest. Any deviation
+// means the differences from BIP342 are NOT only witness-masking + tag.
+func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
+	t.Parallel()
+
+	flags := []struct {
+		name string
+		flag txscript.SigHashType
+	}{
+		{"default", txscript.SigHashDefault},
+		{"all", txscript.SigHashAll},
+		{"none", txscript.SigHashNone},
+		{"single", txscript.SigHashSingle},
+		{"all_anyonecanpay", txscript.SigHashAll | txscript.SigHashAnyOneCanPay},
+		{"none_anyonecanpay", txscript.SigHashNone | txscript.SigHashAnyOneCanPay},
+		{"single_anyonecanpay", txscript.SigHashSingle | txscript.SigHashAnyOneCanPay},
+	}
+
+	for _, f := range flags {
+		f := f
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+
+			tx, prevOuts, leafScript := buildSighashFixture(t)
+			fetcher := fetcherFor(prevOuts)
+			leaf := txscript.NewBaseTapLeaf(leafScript)
+			vm := &Engine{
+				tx:             *tx,
+				txIdx:          0,
+				hashCache:      txscript.NewTxSigHashes(tx, fetcher),
+				prevOutFetcher: fetcher,
+				taprootCtx: &taprootExecutionCtx{
+					tapLeaf:     leaf,
+					tapLeafHash: leaf.TapHash(),
+					codeSepPos:  blankCodeSepValue,
+				},
+			}
+
+			// Our sigMsg over the original tx; masking applied internally.
+			arkadeSigMsg, err := buildArkadeSigMsg(vm, f.flag)
+			require.NoError(t, err)
+
+			// btcd's BIP342 digest over the masked tx. There is at
+			// most one introspector-packet output per tx, so this
+			// substitutes the masked replacement at its index (if
+			// any) and leaves every other output untouched.
+			maskedTx := tx.Copy()
+			masked, maskedIdx, err := maskExtensionOutput(maskedTx)
+			require.NoError(t, err)
+			if maskedIdx >= 0 {
+				maskedTx.TxOut[maskedIdx] = masked
+			}
+			bip342Digest, err := txscript.CalcTapscriptSignaturehash(
+				txscript.NewTxSigHashes(maskedTx, fetcher), f.flag,
+				maskedTx, 0, fetcher, leaf,
+			)
+			require.NoError(t, err)
+
+			arkadeWithBIP342Tag := chainhash.TaggedHash(
+				chainhash.TagTapSighash, arkadeSigMsg,
+			)
+			require.Equal(t, bip342Digest, arkadeWithBIP342Tag[:],
+				"byte layout of arkade sigMsg must equal BIP342's over the masked tx")
+
+			// Sanity: re-tagging with the arkade tag MUST yield the
+			// production digest.
+			productionDigest, err := computeArkadeSighash(vm, f.flag)
+			require.NoError(t, err)
+			expectedProduction := chainhash.TaggedHash(
+				arkadeSighashTag, arkadeSigMsg,
+			)
+			require.Equal(t, expectedProduction[:], productionDigest,
+				"computeArkadeSighash must equal TaggedHash(arkadeSighashTag, buildArkadeSigMsg(...))")
+		})
+	}
+}
+
+// TestArkadeSighashIsDomainSeparated locks in the BIP-340 tag separation: the
+// arkade digest must NOT collide with the BIP342 digest. We use a tx with no
+// introspector packet so masking is a no-op — any digest difference is solely
+// from the tag.
+func TestArkadeSighashIsDomainSeparated(t *testing.T) {
+	t.Parallel()
+
+	leafScript := []byte{OP_TRUE}
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{0xd1, 0xd2}, Index: 0}
+	tx := &wire.MsgTx{
+		Version: 2,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: outpoint,
+			Sequence:         0xffffffff,
+		}},
+		TxOut: []*wire.TxOut{{Value: 8000, PkScript: []byte{OP_TRUE}}},
+	}
+	prevOuts := map[wire.OutPoint]*wire.TxOut{
+		outpoint: {Value: 10_000, PkScript: []byte{OP_TRUE}},
+	}
+	fetcher := fetcherFor(prevOuts)
+	leaf := txscript.NewBaseTapLeaf(leafScript)
+
+	arkade := arkadeDigest(t, tx, 0, fetcher, leafScript, txscript.SigHashAll)
+	bip342, err := txscript.CalcTapscriptSignaturehash(
+		txscript.NewTxSigHashes(tx, fetcher), txscript.SigHashAll,
+		tx, 0, fetcher, leaf,
+	)
+	require.NoError(t, err)
+	require.NotEqual(t, bip342, arkade,
+		"arkade sighash must use a distinct BIP-340 tag from BIP342 (TapSighash)")
 }

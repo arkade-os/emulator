@@ -1,8 +1,12 @@
 package arkade
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -10,9 +14,17 @@ import (
 	"github.com/btcsuite/btcd/wire"
 )
 
+// arkadeSighashTag is the BIP-340 tagged-hash tag used for the arkade VM's
+// non-standard tapscript signature hash. It is intentionally distinct from
+// chainhash.TagTapSighash (the BIP342 tag, "TapSighash") so the arkade digest
+// domain is cryptographically separated from the Bitcoin digest domain: a
+// signature valid under one can never pass verification under the other,
+// regardless of message content.
+var arkadeSighashTag = []byte("ArkadeTapSighash")
+
 // isValidTaprootSigHash mirrors btcd's unexported isValidTaprootSigHash so that
 // callers (e.g. OP_SIGHASH) can pre-validate a hashType byte before invoking
-// btcd's sighash routines.
+// the digest routine.
 func isValidTaprootSigHash(hashType txscript.SigHashType) bool {
 	switch hashType {
 	case txscript.SigHashDefault, txscript.SigHashAll,
@@ -25,38 +37,243 @@ func isValidTaprootSigHash(hashType txscript.SigHashType) bool {
 	}
 }
 
-// computeTapscriptSighash returns the 32-byte BIP342 tapscript signature hash
-// for the engine's currently executing input under the given hashType.
+// computeArkadeSighash returns the 32-byte non-standard tapscript signature
+// hash that OP_SIGHASH pushes and that the arkade VM's OP_CHECKSIG verifies
+// against.
+//
+// The byte layout fed into the final tagged hash mirrors BIP342's sigMsg
+// exactly, with two deliberate departures:
+//
+//  1. The sha_outputs digest (and the per-output digest used by SIGHASH_SINGLE)
+//     is computed over a rewritten output stream where every introspector
+//     packet entry's witness blob is omitted (witness_len = 0). Script bytes,
+//     vin ordering, entry count, co-located ARK extension packets (asset
+//     packet etc.), and every non-extension output pass through unchanged.
+//
+//  2. The final tagged hash uses arkadeSighashTag ("ArkadeTapSighash"), not
+//     chainhash.TagTapSighash. The digest space is therefore disjoint from
+//     BIP342's; this is the cryptographic signal that we are operating in a
+//     non-standard sighash domain.
 //
 // The engine MUST be in a tapscript execution context (vm.taprootCtx != nil
 // with a populated tapLeaf). The annex (if present) and the current code
-// separator position are folded into the digest, matching how a signature
-// produced by signing this leaf would be validated.
-func computeTapscriptSighash(vm *Engine,
+// separator position are folded into the digest.
+func computeArkadeSighash(vm *Engine,
 	hashType txscript.SigHashType) ([]byte, error) {
 
+	sigMsg, err := buildArkadeSigMsg(vm, hashType)
+	if err != nil {
+		return nil, err
+	}
+	digest := chainhash.TaggedHash(arkadeSighashTag, sigMsg)
+	return digest[:], nil
+}
+
+// buildArkadeSigMsg returns the inner sigMsg byte stream that
+// computeArkadeSighash feeds into the final BIP-340 tagged hash. Exposing this
+// step lets tests cross-check the byte layout against btcd's BIP342
+// implementation by wrapping our sigMsg with chainhash.TagTapSighash and
+// comparing to txscript.CalcTapscriptSignaturehash over the witness-masked
+// transaction — proving the only deliberate departures from BIP342 are the
+// witness masking and the tag.
+func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error) {
 	if vm.taprootCtx == nil {
 		return nil, fmt.Errorf("tapscript sighash requested outside " +
 			"of a tapscript execution context")
 	}
+	if !isValidTaprootSigHash(hashType) {
+		return nil, fmt.Errorf("invalid taproot sighash type: 0x%02x",
+			byte(hashType))
+	}
+	if vm.txIdx < 0 || vm.txIdx >= len(vm.tx.TxIn) {
+		return nil, fmt.Errorf("input index %d out of range [0, %d)",
+			vm.txIdx, len(vm.tx.TxIn))
+	}
 
-	// Override the default blank codesep value installed by
-	// CalcTapscriptSignaturehash so that any OP_CODESEPARATOR run earlier
-	// in this script is committed to.
+	tx := &vm.tx
+	idx := vm.txIdx
+	hashCache := vm.hashCache
+
+	var sigMsg bytes.Buffer
+
+	// 1. Epoch byte (BIP341 §3.1) — must be present inside the inner hash.
+	sigMsg.WriteByte(0x00)
+
+	// 2. hash_type.
+	sigMsg.WriteByte(byte(hashType))
+
+	// 3. nVersion, nLockTime.
+	if err := binary.Write(&sigMsg, binary.LittleEndian, tx.Version); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(&sigMsg, binary.LittleEndian, tx.LockTime); err != nil {
+		return nil, err
+	}
+
+	// 4. Cross-input midstates, unless ANYONECANPAY drops them.
+	anyoneCanPay := hashType&txscript.SigHashAnyOneCanPay == txscript.SigHashAnyOneCanPay
+	if !anyoneCanPay {
+		sigMsg.Write(hashCache.HashPrevOutsV1[:])
+		sigMsg.Write(hashCache.HashInputAmountsV1[:])
+		sigMsg.Write(hashCache.HashInputScriptsV1[:])
+		sigMsg.Write(hashCache.HashSequenceV1[:])
+	}
+
+	// 5. sha_outputs, unless SIGHASH_SINGLE or SIGHASH_NONE drop it. The
+	// SINGLE-specific per-output digest goes in further below.
+	sigHashMode := hashType & 0x03
+	if sigHashMode != txscript.SigHashSingle && sigHashMode != txscript.SigHashNone {
+		outputsHash, err := arkadeOutputsHash(tx)
+		if err != nil {
+			return nil, fmt.Errorf("arkade sha_outputs: %w", err)
+		}
+		sigMsg.Write(outputsHash)
+	}
+
+	// 6. spend_type = 2*ext_flag + annex_present. ext_flag is always 1 in
+	// our tapscript-only engine.
+	spendType := byte(2)
+	hasAnnex := len(vm.taprootCtx.annex) > 0
+	if hasAnnex {
+		spendType = 3
+	}
+	sigMsg.WriteByte(spendType)
+
+	// 7. Per-input data.
+	input := tx.TxIn[idx]
+	if anyoneCanPay {
+		if err := wire.WriteOutPoint(&sigMsg, 0, 0, &input.PreviousOutPoint); err != nil {
+			return nil, err
+		}
+		prevOut := vm.prevOutFetcher.FetchPrevOutput(input.PreviousOutPoint)
+		if prevOut == nil {
+			return nil, fmt.Errorf("no prevout for input %d", idx)
+		}
+		if err := wire.WriteTxOut(&sigMsg, 0, 0, prevOut); err != nil {
+			return nil, err
+		}
+		if err := binary.Write(&sigMsg, binary.LittleEndian, input.Sequence); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := binary.Write(&sigMsg, binary.LittleEndian, uint32(idx)); err != nil {
+			return nil, err
+		}
+	}
+
+	// 8. Annex hash, if present.
+	if hasAnnex {
+		var annexBuf bytes.Buffer
+		if err := wire.WriteVarBytes(&annexBuf, 0, vm.taprootCtx.annex); err != nil {
+			return nil, err
+		}
+		annexHash := sha256.Sum256(annexBuf.Bytes())
+		sigMsg.Write(annexHash[:])
+	}
+
+	// 9. SIGHASH_SINGLE per-output digest. If the input index happens to
+	// map to the introspector-packet OP_RETURN, substitute the masked
+	// version so the digest stays witness-blob-independent.
+	if sigHashMode == txscript.SigHashSingle {
+		if idx >= len(tx.TxOut) {
+			return nil, fmt.Errorf("SIGHASH_SINGLE: no output at input index %d", idx)
+		}
+		out := tx.TxOut[idx]
+		masked, maskedIdx, err := maskExtensionOutput(tx)
+		if err != nil {
+			return nil, fmt.Errorf("arkade single-output rewrite: %w", err)
+		}
+		if maskedIdx == idx {
+			out = masked
+		}
+		h := sha256.New()
+		if err := wire.WriteTxOut(h, 0, 0, out); err != nil {
+			return nil, err
+		}
+		sigMsg.Write(h.Sum(nil))
+	}
+
+	// 10. BIP342 tapscript extension (ext_flag = 1).
 	leafHash := vm.taprootCtx.tapLeafHash
-	opts := []txscript.TaprootSigHashOption{
-		txscript.WithBaseTapscriptVersion(
-			vm.taprootCtx.codeSepPos, leafHash[:],
-		),
-	}
-	if len(vm.taprootCtx.annex) > 0 {
-		opts = append(opts, txscript.WithAnnex(vm.taprootCtx.annex))
+	sigMsg.Write(leafHash[:])
+	sigMsg.WriteByte(0x00) // key_version, always 0 for base leaf version.
+	if err := binary.Write(&sigMsg, binary.LittleEndian, vm.taprootCtx.codeSepPos); err != nil {
+		return nil, err
 	}
 
-	return txscript.CalcTapscriptSignaturehash(
-		vm.hashCache, hashType, &vm.tx, vm.txIdx, vm.prevOutFetcher,
-		vm.taprootCtx.tapLeaf, opts...,
-	)
+	return sigMsg.Bytes(), nil
+}
+
+// maskExtensionOutput finds the single OP_RETURN output carrying an
+// introspector packet (there is at most one per tx — extension.IsExtension
+// returns on the first match and the extension parser rejects duplicate
+// packet types) and returns a copy with every entry's witness blob masked
+// out, along with its index in tx.TxOut.
+//
+// Returns (nil, -1, nil) when there is no such output, when the extension
+// fails to parse, or when the extension contains no introspector packet —
+// masking is fail-open at any parsing boundary so a corrupted OP_RETURN
+// cannot disable digest computation.
+func maskExtensionOutput(tx *wire.MsgTx) (*wire.TxOut, int, error) {
+	for i, out := range tx.TxOut {
+		if out == nil || !extension.IsExtension(out.PkScript) {
+			continue
+		}
+		// First (and effectively only) extension OP_RETURN found.
+		ext, err := extension.NewExtensionFromBytes(out.PkScript)
+		if err != nil {
+			return nil, -1, nil
+		}
+		for j, pkt := range ext {
+			if pkt.Type() != PacketType {
+				continue
+			}
+			unknown, ok := pkt.(extension.UnknownPacket)
+			if !ok {
+				return nil, -1, nil
+			}
+			ip, err := DeserializeIntrospectorPacket(unknown.Data)
+			if err != nil {
+				return nil, -1, nil
+			}
+			maskedData, err := serializeIntrospectorPacketMasked(ip)
+			if err != nil {
+				return nil, -1, fmt.Errorf("reserialize masked introspector packet: %w", err)
+			}
+			ext[j] = extension.UnknownPacket{
+				PacketType: PacketType,
+				Data:       maskedData,
+			}
+			newScript, err := ext.Serialize()
+			if err != nil {
+				return nil, -1, fmt.Errorf("reserialize masked extension: %w", err)
+			}
+			return &wire.TxOut{Value: out.Value, PkScript: newScript}, i, nil
+		}
+		// Extension present but no introspector packet inside.
+		return nil, -1, nil
+	}
+	return nil, -1, nil
+}
+
+// arkadeOutputsHash mirrors BIP342's sha_outputs but substitutes the single
+// introspector-packet OP_RETURN (if any) with its witness-masked form before
+// hashing. Every other output is hashed exactly as it appears in the tx.
+func arkadeOutputsHash(tx *wire.MsgTx) ([]byte, error) {
+	masked, maskedIdx, err := maskExtensionOutput(tx)
+	if err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	for i, out := range tx.TxOut {
+		if i == maskedIdx {
+			out = masked
+		}
+		if err := wire.WriteTxOut(h, 0, 0, out); err != nil {
+			return nil, err
+		}
+	}
+	return h.Sum(nil), nil
 }
 
 // signatureVerifier is an abstract interface that allows the op code execution
@@ -284,9 +501,10 @@ func newBaseTapscriptSigVerifier(pkBytes, rawSig []byte,
 //
 // NOTE: This is part of the signatureVerifier interface.
 func (b *baseTapscriptSigVerifier) Verify() verifyResult {
-	// Compute the proper BIP342 tapscript sighash via the shared helper so
-	// that OP_CHECKSIG and OP_SIGHASH agree on the signed message.
-	sigHash, err := computeTapscriptSighash(b.vm, b.hashType)
+	// Compute the non-standard arkade tapscript sighash via the shared
+	// helper so OP_CHECKSIG and OP_SIGHASH agree on the signed message.
+	// This is NOT a BIP342 digest — see computeArkadeSighash.
+	sigHash, err := computeArkadeSighash(b.vm, b.hashType)
 	if err != nil {
 		return verifyResult{}
 	}

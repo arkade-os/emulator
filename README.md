@@ -233,6 +233,14 @@ make integrationtest
 
 The following opcodes are supported by the Arkade script engine. They extend Bitcoin Script with additional introspection, data manipulation, and cryptographic operations.
 
+### Sighash (non-standard)
+
+The arkade VM's `OP_CHECKSIG`, `OP_CHECKSIGVERIFY`, `OP_CHECKSIGADD`, and `OP_SIGHASH` operate on a **non-standard tapscript signature hash**, not BIP342. Two deliberate departures from BIP342:
+
+1. **Witness blobs are masked out of `sha_outputs`.** When `sha_outputs` (or the per-output digest used by `SIGHASH_SINGLE`) is computed, every entry of every Introspector Packet is rewritten with `witness_len = 0` and the witness bytes dropped. Script bytes, `vin`, entry count, co-located ARK packets (e.g. the asset packet), and every non-extension output continue to flow into the digest unchanged. This lets a script be signed before any party has supplied runtime witness arguments, and lets witness arguments be re-supplied per spend attempt without invalidating signatures.
+2. **The final BIP-340 tag is `"ArkadeTapSighash"`**, not BIP342's `"TapSighash"`. The two digest domains are therefore disjoint: a signature valid under one CANNOT pass verification under the other, even when the underlying message bytes happen to match.
+
+The Bitcoin-level signatures that the introspector itself produces on PSBT `TaprootScriptSpendSig` entries are unaffected — those remain standard BIP342, computed via `txscript.CalcTapscriptSignaturehash` with the `"TapSighash"` tag. Only signatures verified *inside* the arkade VM use the non-standard digest.
 ### Transaction Introspection (Inputs)
 
 | Word | Opcode | Hex | Input | Output | Description |
@@ -262,7 +270,7 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 | OP_INSPECTNUMOUTPUTS | 213 | 0xd5 | Nothing | numOutputs | Pushes the number of outputs in the transaction (scriptNum) onto the stack. |
 | OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight (4 bytes, little-endian) onto the stack. Weight is calculated as `SerializeSizeStripped() * 4`. |
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
-| OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte BIP342 tapscript signature hash of the currently executing input under that flag. The pushed digest is identical to the message that `OP_CHECKSIG` verifies a Schnorr signature against in the same execution context. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
+| OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies a Schnorr signature against in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
 
 ### Packet Introspection
 
