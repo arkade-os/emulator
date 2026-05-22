@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/ArkLabsHQ/introspector/internal/application"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
@@ -14,6 +15,7 @@ import (
 
 const (
 	SecretKey       = "SECRET_KEY"
+	DeprecatedKeys  = "DEPRECATED_KEYS"
 	Datadir         = "DATADIR"
 	Port            = "PORT"
 	NoTLS           = "NO_TLS"
@@ -33,7 +35,8 @@ var (
 )
 
 type Config struct {
-	SecretKey       *btcec.PrivateKey
+	CurrentKey      *btcec.PrivateKey
+	DeprecatedKeys  []*btcec.PrivateKey
 	Datadir         string
 	Port            uint32
 	NoTLS           bool
@@ -53,21 +56,37 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault(TLSExtraDomains, defaultTLSExtraDomains)
 	viper.SetDefault(LogLevel, defaultLogLevel)
 
-	secretKeyHex := viper.GetString(SecretKey)
-	secretKeyBytes, err := hex.DecodeString(secretKeyHex)
+	currentKey, err := parsePrivateKey(viper.GetString(SecretKey), "secret key")
 	if err != nil {
-		return nil, fmt.Errorf("invalid secret key: %w", err)
+		return nil, err
 	}
-	secretKey, _ := btcec.PrivKeyFromBytes(secretKeyBytes)
-	if secretKey == nil {
-		return nil, fmt.Errorf("invalid secret key")
+
+	var deprecatedKeys []*btcec.PrivateKey
+	seenKeys := map[string]struct{}{
+		hex.EncodeToString(currentKey.Serialize()): {},
+	}
+	deprecatedKeyHex := viper.GetString(DeprecatedKeys)
+	if deprecatedKeyHex != "" {
+		for keyHex := range strings.SplitSeq(deprecatedKeyHex, ",") {
+			deprecatedKey, err := parsePrivateKey(keyHex, "deprecated key")
+			if err != nil {
+				return nil, err
+			}
+			keyID := hex.EncodeToString(deprecatedKey.Serialize())
+			if _, ok := seenKeys[keyID]; ok {
+				return nil, fmt.Errorf("duplicate deprecated key")
+			}
+			seenKeys[keyID] = struct{}{}
+			deprecatedKeys = append(deprecatedKeys, deprecatedKey)
+		}
 	}
 
 	logLevel := viper.GetInt(LogLevel)
 	log.SetLevel(log.Level(logLevel))
 
 	cfg := &Config{
-		SecretKey:       secretKey,
+		CurrentKey:      currentKey,
+		DeprecatedKeys:  deprecatedKeys,
 		Datadir:         viper.GetString(Datadir),
 		Port:            viper.GetUint32(Port),
 		NoTLS:           viper.GetBool(NoTLS),
@@ -81,6 +100,29 @@ func LoadConfig() (*Config, error) {
 	return cfg, nil
 }
 
+func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
+	keyBytes, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", name, err)
+	}
+	if len(keyBytes) != 32 {
+		return nil, fmt.Errorf("invalid %s length", name)
+	}
+	var keyBytes32 [32]byte
+	copy(keyBytes32[:], keyBytes)
+
+	var scalar btcec.ModNScalar
+	if scalar.SetBytes(&keyBytes32) != 0 || scalar.IsZero() {
+		return nil, fmt.Errorf("invalid %s", name)
+	}
+
+	key, _ := btcec.PrivKeyFromBytes(keyBytes)
+	if key == nil {
+		return nil, fmt.Errorf("invalid %s", name)
+	}
+	return key, nil
+}
+
 func (c *Config) AppService(ctx context.Context) (application.Service, error) {
-	return application.New(ctx, c.SecretKey, c.ArkdURL)
+	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL)
 }
