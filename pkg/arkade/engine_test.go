@@ -2807,6 +2807,55 @@ func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
 	}
 }
 
+func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
+	t.Parallel()
+
+	tx, prevOuts, _ := buildSighashFixture(t)
+	fetcher := fetcherFor(prevOuts)
+	leafScript := []byte{OP_TRUE, OP_CODESEPARATOR, OP_TRUE}
+	leaf := txscript.NewBaseTapLeaf(leafScript)
+	leafHash := leaf.TapHash()
+	annex := []byte{txscript.TaprootAnnexTag, 0xab, 0xcd}
+	const codeSepPos = uint32(1)
+	const flag = txscript.SigHashAll
+
+	vm := &Engine{
+		tx:             *tx,
+		txIdx:          0,
+		hashCache:      txscript.NewTxSigHashes(tx, fetcher),
+		prevOutFetcher: fetcher,
+		taprootCtx: &taprootExecutionCtx{
+			annex:       annex,
+			tapLeaf:     leaf,
+			tapLeafHash: leafHash,
+			codeSepPos:  codeSepPos,
+		},
+	}
+
+	arkadeSigMsg, err := buildArkadeSigMsg(vm, flag)
+	require.NoError(t, err)
+
+	maskedTx := tx.Copy()
+	masked, maskedIdx, err := maskExtensionOutput(maskedTx)
+	require.NoError(t, err)
+	if maskedIdx >= 0 {
+		maskedTx.TxOut[maskedIdx] = masked
+	}
+	bip342Digest, err := txscript.CalcTapscriptSignaturehash(
+		txscript.NewTxSigHashes(maskedTx, fetcher), flag,
+		maskedTx, 0, fetcher, leaf,
+		txscript.WithAnnex(annex),
+		txscript.WithBaseTapscriptVersion(codeSepPos, leafHash[:]),
+	)
+	require.NoError(t, err)
+
+	arkadeWithBIP342Tag := chainhash.TaggedHash(
+		chainhash.TagTapSighash, arkadeSigMsg,
+	)
+	require.Equal(t, bip342Digest, arkadeWithBIP342Tag[:],
+		"annex and code-separator fields must match BIP342 byte layout")
+}
+
 // TestArkadeSighashIsDomainSeparated locks in the BIP-340 tag separation: the
 // arkade digest must NOT collide with the BIP342 digest. We use a tx with no
 // introspector packet so masking is a no-op — any digest difference is solely

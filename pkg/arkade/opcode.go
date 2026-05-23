@@ -2769,9 +2769,10 @@ func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
 }
 
 // opcodeSighash pops a sighash flag from the stack and pushes the 32-byte
-// BIP342 tapscript signature hash of the currently executing input under that
-// flag. The pushed digest is identical to the message that OP_CHECKSIG would
-// verify a Schnorr signature against in the same execution context.
+// non-standard arkade tapscript signature hash of the currently executing input
+// under that flag. The pushed digest is identical to the message that
+// OP_CHECKSIG would verify a Schnorr signature against in the same execution
+// context.
 //
 // Stack transformation: [... hashType] -> [... sighash]
 func opcodeSighash(op *opcode, data []byte, vm *Engine) error {
