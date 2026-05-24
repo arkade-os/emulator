@@ -189,6 +189,9 @@ type sighashCaseBuilder struct{}
 
 func (sighashCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
 	c := defaultCaseBuilder{}.Build(data, world)
+	if len(data) < 2 {
+		return c
+	}
 	for txIdx := range world.world.execScriptByVin {
 		c.txIdx = txIdx
 		break
