@@ -2357,7 +2357,6 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := runEngine(t, tt.script, tt.tx, tt.prevoutTxs)
@@ -2781,7 +2780,6 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 	}
 
 	for _, f := range flags {
-		f := f
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -2884,7 +2882,6 @@ func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
 	}
 
 	for _, f := range flags {
-		f := f
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
 

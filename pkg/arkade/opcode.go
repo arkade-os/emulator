@@ -2787,8 +2787,9 @@ func opcodeSighash(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	// PopInt enforces the default 4-byte scriptNum window, so the value
-	// already fits in int32; we only need to clip to a single byte.
+	// PopInt has already bounded the scriptNum to the stack's configured
+	// length (4 bytes by default), so the value fits in int32. Clip to a
+	// single byte: sighash flags are byte-sized.
 	flag := hashTypeNum.Int32()
 	if flag < 0 || flag > 0xff {
 		return scriptError(txscript.ErrNumberTooBig,
