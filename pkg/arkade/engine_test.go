@@ -2721,6 +2721,141 @@ func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
 	})
 }
 
+// TestArkadeSighashSingleMasksExtensionOutput exercises the SIGHASH_SINGLE
+// per-output digest branch when the signed input's index maps directly to
+// the extension OP_RETURN. In buildArkadeSigMsg the branch
+//
+//	if maskedIdx == idx { out = masked }
+//
+// substitutes the witness-masked extension output for the per-output hash;
+// TestArkadeSighashMasksWitnessBlobs runs with SIGHASH_ALL (sha_outputs path)
+// and TestArkadeSighashByteLayoutMatchesBIP342 covers SIGHASH_SINGLE only at
+// idx=0 (the non-extension output). This pins the remaining branch: idx
+// landing on the extension OP_RETURN under SIGHASH_SINGLE and its
+// ANYONECANPAY variant.
+func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
+	t.Parallel()
+
+	// 2-input tx with output[1] == the introspector-bearing extension
+	// OP_RETURN. Signing input idx=1 with SIGHASH_SINGLE therefore makes
+	// the extension output the per-output target.
+	build := func(t *testing.T) (*wire.MsgTx, ArkPrevOutFetcher, []byte) {
+		t.Helper()
+		leafScript := []byte{OP_TRUE}
+		ip, err := NewPacket(IntrospectorEntry{
+			Vin:    0,
+			Script: []byte{OP_INSPECTVERSION, OP_1, OP_EQUAL},
+			Witness: wire.TxWitness{
+				[]byte("alice-secret"),
+				[]byte{0xaa, 0xbb, 0xcc, 0xdd},
+			},
+		})
+		require.NoError(t, err)
+
+		op0 := wire.OutPoint{Hash: chainhash.Hash{0xa1}, Index: 0}
+		op1 := wire.OutPoint{Hash: chainhash.Hash{0xa2}, Index: 0}
+		tx := &wire.MsgTx{
+			Version: 2,
+			TxIn: []*wire.TxIn{
+				{PreviousOutPoint: op0, Sequence: 0xffffffff},
+				{PreviousOutPoint: op1, Sequence: 0xffffffff},
+			},
+			TxOut: []*wire.TxOut{
+				{Value: 9000, PkScript: []byte{OP_TRUE}},
+				{Value: 0, PkScript: buildExtensionScript(t, ip)},
+			},
+		}
+		prevOuts := map[wire.OutPoint]*wire.TxOut{
+			op0: {Value: 10_000, PkScript: []byte{OP_TRUE}},
+			op1: {Value: 5_000, PkScript: []byte{OP_TRUE}},
+		}
+		return tx, fetcherFor(prevOuts), leafScript
+	}
+
+	flags := []struct {
+		name string
+		flag txscript.SigHashType
+	}{
+		{"single", txscript.SigHashSingle},
+		{"single_anyonecanpay", txscript.SigHashSingle | txscript.SigHashAnyOneCanPay},
+	}
+
+	for _, f := range flags {
+		f := f
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+
+			baseTx, fetcher, leafScript := build(t)
+			const idx = 1
+			baseDigest := arkadeDigest(t, baseTx, idx, fetcher, leafScript, f.flag)
+
+			t.Run("witness_mutation_invariant", func(t *testing.T) {
+				t.Parallel()
+				mutated, _, _ := build(t)
+				mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+					e.Witness = wire.TxWitness{
+						[]byte("totally-different-witness-content"),
+						[]byte{0xff, 0xff, 0xff},
+						[]byte("extra-item"),
+					}
+				})
+				require.Equal(t, baseDigest,
+					arkadeDigest(t, mutated, idx, fetcher, leafScript, f.flag),
+					"SIGHASH_SINGLE per-output mask must drop introspector witness bytes")
+			})
+
+			t.Run("script_mutation_changes_digest", func(t *testing.T) {
+				t.Parallel()
+				mutated, _, _ := build(t)
+				mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+					e.Script = append([]byte(nil), e.Script...)
+					e.Script[0] ^= 0x01
+				})
+				require.NotEqual(t, baseDigest,
+					arkadeDigest(t, mutated, idx, fetcher, leafScript, f.flag),
+					"introspector script bytes must remain committed via per-output hash")
+			})
+
+			t.Run("matches_bip342_over_masked_tx", func(t *testing.T) {
+				t.Parallel()
+				leaf := txscript.NewBaseTapLeaf(leafScript)
+				vm := &Engine{
+					tx:             *baseTx,
+					txIdx:          idx,
+					hashCache:      txscript.NewTxSigHashes(baseTx, fetcher),
+					prevOutFetcher: fetcher,
+					taprootCtx: &taprootExecutionCtx{
+						tapLeaf:     leaf,
+						tapLeafHash: leaf.TapHash(),
+						codeSepPos:  blankCodeSepValue,
+					},
+				}
+				arkadeSigMsg, err := buildArkadeSigMsg(vm, f.flag)
+				require.NoError(t, err)
+
+				maskedTx := baseTx.Copy()
+				masked, maskedIdx, err := maskExtensionOutput(maskedTx)
+				require.NoError(t, err)
+				require.Equal(t, idx, maskedIdx,
+					"sanity: the extension output should sit at the signed idx")
+				maskedTx.TxOut[maskedIdx] = masked
+
+				bip342Digest, err := txscript.CalcTapscriptSignaturehash(
+					txscript.NewTxSigHashes(maskedTx, fetcher), f.flag,
+					maskedTx, idx, fetcher, leaf,
+				)
+				require.NoError(t, err)
+
+				arkadeWithBIP342Tag := chainhash.TaggedHash(
+					chainhash.TagTapSighash, arkadeSigMsg,
+				)
+				require.Equal(t, bip342Digest, arkadeWithBIP342Tag[:],
+					"SIGHASH_SINGLE byte layout must match BIP342 over the masked tx when idx hits the extension output")
+			})
+		})
+	}
+}
+
 // TestArkadeSighashByteLayoutMatchesBIP342 is the strongest correctness check
 // on the hand-rolled digest. For every valid sighash flag it computes:
 //
