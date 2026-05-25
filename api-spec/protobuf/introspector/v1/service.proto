@@ -60,6 +60,8 @@ message GetInfoResponse {
   string version = 1;
   // hex-encoded compressed public key of the signer.
   string signer_pubkey = 2;
+  // hex-encoded compressed public keys of deprecated signers accepted for signing.
+  repeated string deprecated_signer_pubkeys = 3;
 }
 
 message SubmitTxRequest {

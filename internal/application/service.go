@@ -14,7 +14,8 @@ import (
 )
 
 type Info struct {
-	SignerPublicKey string
+	SignerPublicKey            string
+	DeprecatedSignerPublicKeys []string
 }
 
 type OffchainTx struct {
@@ -53,18 +54,33 @@ type Service interface {
 }
 
 type service struct {
-	signer     signer
-	publicKey  string
-	arkdClient client.TransportClient
-	arkdPubKey *btcec.PublicKey
+	signer               signer
+	deprecatedSigners    []signer
+	publicKey            string
+	deprecatedPublicKeys []string
+	arkdClient           client.TransportClient
+	arkdPubKey           *btcec.PublicKey
 }
 
-func New(ctx context.Context, secretKey *btcec.PrivateKey, arkdURL string) (Service, error) {
-	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
+func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdURL string) (Service, error) {
+	if secretKey == nil {
+		return nil, fmt.Errorf("current signer key is required")
+	}
 
 	arkdClient, err := grpcclient.NewClient(arkdURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create arkd client: %w", err)
+	}
+
+	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
+	deprecatedSigners := make([]signer, 0, len(deprecatedKeys))
+	deprecatedPublicKeys := make([]string, 0, len(deprecatedKeys))
+	for i, deprecatedKey := range deprecatedKeys {
+		if deprecatedKey == nil {
+			return nil, fmt.Errorf("deprecated signer key #%d is required", i)
+		}
+		deprecatedSigners = append(deprecatedSigners, signer{deprecatedKey})
+		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
 	arkdInfo, err := arkdClient.GetInfo(ctx)
@@ -89,10 +105,12 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, arkdURL string) (Serv
 	}
 
 	return &service{
-		signer:     signer{secretKey},
-		publicKey:  publicKey,
-		arkdClient: arkdClient,
-		arkdPubKey: arkdPubKey,
+		signer:               signer{secretKey},
+		deprecatedSigners:    deprecatedSigners,
+		publicKey:            publicKey,
+		deprecatedPublicKeys: deprecatedPublicKeys,
+		arkdClient:           arkdClient,
+		arkdPubKey:           arkdPubKey,
 	}, nil
 }
 
@@ -101,5 +119,8 @@ func (s *service) Close() {
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {
-	return &Info{SignerPublicKey: s.publicKey}, nil
+	return &Info{
+		SignerPublicKey:            s.publicKey,
+		DeprecatedSignerPublicKeys: append([]string(nil), s.deprecatedPublicKeys...),
+	}, nil
 }
