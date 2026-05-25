@@ -1,6 +1,6 @@
 module github.com/ArkLabsHQ/introspector/pkg/client
 
-go 1.26.2
+go 1.26.3
 
 replace github.com/ArkLabsHQ/introspector/api-spec => ../../api-spec
 
