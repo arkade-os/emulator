@@ -73,8 +73,8 @@ func computeArkadeSighash(vm *Engine,
 // signature hash used by OP_CHECKSIG and OP_SIGHASH inside arkade scripts.
 //
 // The byte layout mirrors BIP342's tapscript sigMsg with arkade's witness
-// masking and "ArkadeTapSighash" final tag. Callers should pass the tap leaf
-// for the arkade script being signed.
+// masking and "ArkadeTapSighash" final tag. Callers should pass the active
+// Bitcoin spending tapleaf whose hash the signature commits to.
 func CalcTapscriptSignaturehash(
 	sigHashes *txscript.TxSigHashes,
 	hashType txscript.SigHashType,
@@ -93,17 +93,12 @@ func CalcTapscriptSignaturehash(
 		return nil, fmt.Errorf("nil prevout fetcher")
 	}
 
-	tapLeafHash := tapLeaf.TapHash()
 	vm := &Engine{
 		tx:             *tx,
 		txIdx:          idx,
 		hashCache:      sigHashes,
 		prevOutFetcher: prevOutFetcher,
-		taprootCtx: &taprootExecutionCtx{
-			tapLeaf:     tapLeaf,
-			tapLeafHash: tapLeafHash,
-			codeSepPos:  blankCodeSepValue,
-		},
+		taprootCtx:     newTaprootExecutionCtxForLeaf(tapLeaf, 0),
 	}
 
 	return computeArkadeSighash(vm, hashType)

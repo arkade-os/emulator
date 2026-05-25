@@ -17,12 +17,12 @@ import (
 var ErrTweakedArkadePubKeyNotFound = errors.New("tweaked arkade script public key not found in tapscript")
 
 type ArkadeScript struct {
-	script         []byte
-	hash           []byte
-	witness        wire.TxWitness
-	pubkey         *btcec.PublicKey
-	tapLeaf        txscript.TapLeaf
-	closurePubkeys []*btcec.PublicKey
+	script          []byte
+	hash            []byte
+	witness         wire.TxWitness
+	pubkey          *btcec.PublicKey
+	spendingTapLeaf txscript.TapLeaf
+	closurePubkeys  []*btcec.PublicKey
 }
 
 type ExecuteOption func(*Engine)
@@ -73,6 +73,10 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 	if spendingTapscript == nil {
 		return nil, fmt.Errorf("input does not specify any TaprootLeafScript")
 	}
+	if spendingTapscript.LeafVersion != txscript.BaseLeafVersion {
+		return nil, fmt.Errorf("unsupported taproot leaf version: 0x%02x",
+			byte(spendingTapscript.LeafVersion))
+	}
 
 	scriptHash := ArkadeScriptHash(entry.Script)
 	expectedPublicKey := ComputeArkadeScriptPublicKey(signerPublicKey, scriptHash)
@@ -113,11 +117,13 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 	}
 
 	return &ArkadeScript{
-		script:         entry.Script,
-		hash:           scriptHash,
-		witness:        entry.Witness,
-		pubkey:         expectedPublicKey,
-		tapLeaf:        txscript.NewBaseTapLeaf(spendingTapscript.Script),
+		script:  entry.Script,
+		hash:    scriptHash,
+		witness: entry.Witness,
+		pubkey:  expectedPublicKey,
+		spendingTapLeaf: txscript.NewTapLeaf(
+			spendingTapscript.LeafVersion, spendingTapscript.Script,
+		),
 		closurePubkeys: pubkeys,
 	}, nil
 }
@@ -142,10 +148,12 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
 
-	arkadeTapLeaf := txscript.NewBaseTapLeaf(s.script)
-	engine.taprootCtx = newTaprootExecutionCtx(int32(s.witness.SerializeSize()))
-	engine.taprootCtx.tapLeaf = arkadeTapLeaf
-	engine.taprootCtx.tapLeafHash = arkadeTapLeaf.TapHash()
+	engine.taprootCtx = newTaprootExecutionCtxForLeaf(
+		s.spendingTapLeaf, int32(s.witness.SerializeSize()),
+	)
+	// Arkade scripts execute from the introspector packet, not from the
+	// spending tapleaf whose hash the sighash commits to.
+	engine.taprootCtx.trackCodeSep = false
 
 	for _, opt := range opts {
 		opt(engine)
@@ -189,8 +197,11 @@ func (s *ArkadeScript) PubKey() *btcec.PublicKey {
 	return s.pubkey
 }
 
+// TapLeaf returns the Bitcoin spending tapleaf from the PSBT input. Arkade
+// signature hashes commit to this leaf hash, while the arkade script itself is
+// committed separately by the introspector key tweak and packet entry.
 func (s *ArkadeScript) TapLeaf() txscript.TapLeaf {
-	return s.tapLeaf
+	return s.spendingTapLeaf
 }
 
 func (s *ArkadeScript) Script() []byte {

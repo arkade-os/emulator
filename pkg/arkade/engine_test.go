@@ -2457,17 +2457,14 @@ func arkadeDigest(
 	hashType txscript.SigHashType,
 ) []byte {
 	t.Helper()
-	leaf := txscript.NewBaseTapLeaf(leafScript)
 	vm := &Engine{
 		tx:             *tx,
 		txIdx:          txIdx,
 		hashCache:      txscript.NewTxSigHashes(tx, fetcher),
 		prevOutFetcher: fetcher,
-		taprootCtx: &taprootExecutionCtx{
-			tapLeaf:     leaf,
-			tapLeafHash: leaf.TapHash(),
-			codeSepPos:  blankCodeSepValue,
-		},
+		taprootCtx: newTaprootExecutionCtxForLeaf(
+			txscript.NewBaseTapLeaf(leafScript), 0,
+		),
 	}
 	digest, err := computeArkadeSighash(vm, hashType)
 	require.NoError(t, err)
@@ -2816,17 +2813,14 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 
 			t.Run("matches_bip342_over_masked_tx", func(t *testing.T) {
 				t.Parallel()
-				leaf := txscript.NewBaseTapLeaf(leafScript)
 				vm := &Engine{
 					tx:             *baseTx,
 					txIdx:          idx,
 					hashCache:      txscript.NewTxSigHashes(baseTx, fetcher),
 					prevOutFetcher: fetcher,
-					taprootCtx: &taprootExecutionCtx{
-						tapLeaf:     leaf,
-						tapLeafHash: leaf.TapHash(),
-						codeSepPos:  blankCodeSepValue,
-					},
+					taprootCtx: newTaprootExecutionCtxForLeaf(
+						txscript.NewBaseTapLeaf(leafScript), 0,
+					),
 				}
 				arkadeSigMsg, err := buildArkadeSigMsg(vm, f.flag)
 				require.NoError(t, err)
@@ -2840,7 +2834,7 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 
 				bip342Digest, err := txscript.CalcTapscriptSignaturehash(
 					txscript.NewTxSigHashes(maskedTx, fetcher), f.flag,
-					maskedTx, idx, fetcher, leaf,
+					maskedTx, idx, fetcher, vm.taprootCtx.tapLeaf,
 				)
 				require.NoError(t, err)
 
@@ -2887,17 +2881,14 @@ func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
 
 			tx, prevOuts, leafScript := buildSighashFixture(t)
 			fetcher := fetcherFor(prevOuts)
-			leaf := txscript.NewBaseTapLeaf(leafScript)
 			vm := &Engine{
 				tx:             *tx,
 				txIdx:          0,
 				hashCache:      txscript.NewTxSigHashes(tx, fetcher),
 				prevOutFetcher: fetcher,
-				taprootCtx: &taprootExecutionCtx{
-					tapLeaf:     leaf,
-					tapLeafHash: leaf.TapHash(),
-					codeSepPos:  blankCodeSepValue,
-				},
+				taprootCtx: newTaprootExecutionCtxForLeaf(
+					txscript.NewBaseTapLeaf(leafScript), 0,
+				),
 			}
 
 			// Our sigMsg over the original tx; masking applied internally.
@@ -2916,7 +2907,7 @@ func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
 			}
 			bip342Digest, err := txscript.CalcTapscriptSignaturehash(
 				txscript.NewTxSigHashes(maskedTx, fetcher), f.flag,
-				maskedTx, 0, fetcher, leaf,
+				maskedTx, 0, fetcher, vm.taprootCtx.tapLeaf,
 			)
 			require.NoError(t, err)
 
@@ -2945,23 +2936,21 @@ func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
 	tx, prevOuts, _ := buildSighashFixture(t)
 	fetcher := fetcherFor(prevOuts)
 	leafScript := []byte{OP_TRUE, OP_CODESEPARATOR, OP_TRUE}
-	leaf := txscript.NewBaseTapLeaf(leafScript)
-	leafHash := leaf.TapHash()
 	annex := []byte{txscript.TaprootAnnexTag, 0xab, 0xcd}
 	const codeSepPos = uint32(1)
 	const flag = txscript.SigHashAll
+	taprootCtx := newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf(leafScript), 0,
+	)
+	taprootCtx.annex = annex
+	taprootCtx.codeSepPos = codeSepPos
 
 	vm := &Engine{
 		tx:             *tx,
 		txIdx:          0,
 		hashCache:      txscript.NewTxSigHashes(tx, fetcher),
 		prevOutFetcher: fetcher,
-		taprootCtx: &taprootExecutionCtx{
-			annex:       annex,
-			tapLeaf:     leaf,
-			tapLeafHash: leafHash,
-			codeSepPos:  codeSepPos,
-		},
+		taprootCtx:     taprootCtx,
 	}
 
 	arkadeSigMsg, err := buildArkadeSigMsg(vm, flag)
@@ -2975,9 +2964,9 @@ func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
 	}
 	bip342Digest, err := txscript.CalcTapscriptSignaturehash(
 		txscript.NewTxSigHashes(maskedTx, fetcher), flag,
-		maskedTx, 0, fetcher, leaf,
+		maskedTx, 0, fetcher, vm.taprootCtx.tapLeaf,
 		txscript.WithAnnex(annex),
-		txscript.WithBaseTapscriptVersion(codeSepPos, leafHash[:]),
+		txscript.WithBaseTapscriptVersion(codeSepPos, vm.taprootCtx.tapLeafHash[:]),
 	)
 	require.NoError(t, err)
 

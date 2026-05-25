@@ -3710,13 +3710,12 @@ var sighashTestLeafScript = []byte{OP_SIGHASH}
 // the engine would normally populate during verifyWitnessProgram. Tests run
 // opcodes in isolation, so we wire it up directly here.
 func installSighashTapContext(vm *Engine, annex []byte) {
-	leaf := txscript.NewBaseTapLeaf(sighashTestLeafScript)
 	if vm.hashCache == nil {
 		vm.hashCache = txscript.NewTxSigHashes(&vm.tx, vm.prevOutFetcher)
 	}
-	vm.taprootCtx = newTaprootExecutionCtx(0)
-	vm.taprootCtx.tapLeaf = leaf
-	vm.taprootCtx.tapLeafHash = leaf.TapHash()
+	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf(sighashTestLeafScript), 0,
+	)
 	if len(annex) > 0 {
 		vm.taprootCtx.annex = append([]byte(nil), annex...)
 	}

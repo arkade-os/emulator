@@ -2,6 +2,7 @@ package test
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
@@ -65,6 +66,7 @@ func TestSignedPayToOutput(t *testing.T) {
 		introspectorPubKey,
 		arkade.ArkadeScriptHash(arkadeScript),
 	)
+	contractTapscript := onlyForfeitScript(t, contractVtxoScript)
 	contractInput := fund(
 		t, ctx, alice, indexerSvc,
 		aliceAddr.Signer, contractVtxoScript, contractAmount,
@@ -118,7 +120,7 @@ func TestSignedPayToOutput(t *testing.T) {
 	t.Run("valid_authorization_signature", func(t *testing.T) {
 		ptx, checkpoints := buildSpend(wire.TxWitness{nil})
 		authSig := signArkadeInput(
-			t, ptx, 0, authorizerKey, txscript.NewBaseTapLeaf(arkadeScript),
+			t, ptx, 0, authorizerKey, txscript.NewBaseTapLeaf(contractTapscript),
 		)
 		replaceIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{
 			{Vin: 0, Script: arkadeScript, Witness: wire.TxWitness{authSig}},
@@ -143,6 +145,12 @@ func TestSignedPayToOutput(t *testing.T) {
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
+
+		signedPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedTx), true)
+		require.NoError(t, err)
+		require.NoError(t, executeArkadeScripts(
+			t, signedPtx, checkpoints, introspectorPubKey,
+		))
 
 		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)

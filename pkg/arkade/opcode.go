@@ -1740,7 +1740,9 @@ func opcodeCodeSeparator(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	vm.lastCodeSep = int(vm.tokenizer.ByteIndex())
-	vm.taprootCtx.codeSepPos = uint32(vm.tokenizer.OpcodePosition())
+	if vm.taprootCtx.trackCodeSep {
+		vm.taprootCtx.codeSepPos = uint32(vm.tokenizer.OpcodePosition())
+	}
 
 	return nil
 }

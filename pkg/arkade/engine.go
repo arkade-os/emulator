@@ -49,6 +49,8 @@ type taprootExecutionCtx struct {
 	sigOpsBudget int32
 
 	mustSucceed bool
+
+	trackCodeSep bool
 }
 
 // sigOpsDelta is both the starting budget for sig ops for tapscript
@@ -75,7 +77,19 @@ func newTaprootExecutionCtx(inputWitnessSize int32) *taprootExecutionCtx {
 	return &taprootExecutionCtx{
 		codeSepPos:   blankCodeSepValue,
 		sigOpsBudget: sigOpsDelta + inputWitnessSize,
+		trackCodeSep: true,
 	}
+}
+
+// newTaprootExecutionCtxForLeaf returns a fresh taproot execution context for
+// the given tapscript leaf.
+func newTaprootExecutionCtxForLeaf(
+	tapLeaf txscript.TapLeaf, inputWitnessSize int32,
+) *taprootExecutionCtx {
+	ctx := newTaprootExecutionCtx(inputWitnessSize)
+	ctx.tapLeaf = tapLeaf
+	ctx.tapLeafHash = tapLeaf.TapHash()
+	return ctx
 }
 
 // Engine is the virtual machine that executes scripts.
