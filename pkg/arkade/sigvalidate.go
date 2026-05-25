@@ -69,6 +69,46 @@ func computeArkadeSighash(vm *Engine,
 	return digest[:], nil
 }
 
+// CalcTapscriptSignaturehash returns the non-standard arkade tapscript
+// signature hash used by OP_CHECKSIG and OP_SIGHASH inside arkade scripts.
+//
+// The byte layout mirrors BIP342's tapscript sigMsg with arkade's witness
+// masking and "ArkadeTapSighash" final tag. Callers should pass the tap leaf
+// for the arkade script being signed.
+func CalcTapscriptSignaturehash(
+	sigHashes *txscript.TxSigHashes,
+	hashType txscript.SigHashType,
+	tx *wire.MsgTx,
+	idx int,
+	prevOutFetcher ArkPrevOutFetcher,
+	tapLeaf txscript.TapLeaf,
+) ([]byte, error) {
+	if sigHashes == nil {
+		return nil, fmt.Errorf("nil sighash cache")
+	}
+	if tx == nil {
+		return nil, fmt.Errorf("nil transaction")
+	}
+	if prevOutFetcher == nil {
+		return nil, fmt.Errorf("nil prevout fetcher")
+	}
+
+	tapLeafHash := tapLeaf.TapHash()
+	vm := &Engine{
+		tx:             *tx,
+		txIdx:          idx,
+		hashCache:      sigHashes,
+		prevOutFetcher: prevOutFetcher,
+		taprootCtx: &taprootExecutionCtx{
+			tapLeaf:     tapLeaf,
+			tapLeafHash: tapLeafHash,
+			codeSepPos:  blankCodeSepValue,
+		},
+	}
+
+	return computeArkadeSighash(vm, hashType)
+}
+
 // buildArkadeSigMsg returns the inner sigMsg byte stream that
 // computeArkadeSighash feeds into the final BIP-340 tagged hash. Exposing this
 // step lets tests cross-check the byte layout against btcd's BIP342

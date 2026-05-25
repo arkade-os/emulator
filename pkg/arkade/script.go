@@ -142,6 +142,11 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
 
+	arkadeTapLeaf := txscript.NewBaseTapLeaf(s.script)
+	engine.taprootCtx = newTaprootExecutionCtx(int32(s.witness.SerializeSize()))
+	engine.taprootCtx.tapLeaf = arkadeTapLeaf
+	engine.taprootCtx.tapLeafHash = arkadeTapLeaf.TapHash()
+
 	for _, opt := range opts {
 		opt(engine)
 	}
