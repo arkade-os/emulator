@@ -1798,15 +1798,14 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 		return nil
 	}
 
-	sigVerifier, err := newBaseTapscriptSigVerifier(
+	sigVerifier, err := newTapscriptSigVerifier(
 		pkBytes, fullSigBytes, vm,
 	)
 	if err != nil {
 		return err
 	}
 
-	result := sigVerifier.Verify()
-	valid := result.sigValid
+	valid := sigVerifier.Verify()
 
 	// For tapscript, if the signature is invalid, then this MUST be
 	// an empty signature.
@@ -1889,18 +1888,16 @@ func opcodeCheckSigAdd(op *opcode, data []byte, vm *Engine) error {
 	//
 	// If the constructor fails immediately, then it's because the public
 	// key size is zero, so we'll fail all script execution.
-	sigVerifier, err := newBaseTapscriptSigVerifier(
+	sigVerifier, err := newTapscriptSigVerifier(
 		pubKeyBytes, sigBytes, vm,
 	)
 	if err != nil {
 		return err
 	}
 
-	result := sigVerifier.Verify()
-
 	// If the signature is invalid, this we fail execution, as it should
 	// have been an empty signature.
-	if !result.sigValid {
+	if !sigVerifier.Verify() {
 		str := "signature not empty on failed checksig"
 		return scriptError(txscript.ErrNullFail, str)
 	}
