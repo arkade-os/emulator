@@ -62,9 +62,11 @@ type GetInfoResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
 	// hex-encoded compressed public key of the signer.
-	SignerPubkey  string `protobuf:"bytes,2,opt,name=signer_pubkey,json=signerPubkey,proto3" json:"signer_pubkey,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SignerPubkey string `protobuf:"bytes,2,opt,name=signer_pubkey,json=signerPubkey,proto3" json:"signer_pubkey,omitempty"`
+	// hex-encoded compressed public keys of deprecated signers accepted for signing.
+	DeprecatedSignerPubkeys []string `protobuf:"bytes,3,rep,name=deprecated_signer_pubkeys,json=deprecatedSignerPubkeys,proto3" json:"deprecated_signer_pubkeys,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *GetInfoResponse) Reset() {
@@ -109,6 +111,13 @@ func (x *GetInfoResponse) GetSignerPubkey() string {
 		return x.SignerPubkey
 	}
 	return ""
+}
+
+func (x *GetInfoResponse) GetDeprecatedSignerPubkeys() []string {
+	if x != nil {
+		return x.DeprecatedSignerPubkeys
+	}
+	return nil
 }
 
 type SubmitTxRequest struct {
@@ -631,10 +640,11 @@ var File_introspector_v1_service_proto protoreflect.FileDescriptor
 const file_introspector_v1_service_proto_rawDesc = "" +
 	"\n" +
 	"\x1dintrospector/v1/service.proto\x12\x0fintrospector.v1\x1a!meshapi/gateway/annotations.proto\"\x10\n" +
-	"\x0eGetInfoRequest\"P\n" +
+	"\x0eGetInfoRequest\"\x8c\x01\n" +
 	"\x0fGetInfoResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12#\n" +
-	"\rsigner_pubkey\x18\x02 \x01(\tR\fsignerPubkey\"O\n" +
+	"\rsigner_pubkey\x18\x02 \x01(\tR\fsignerPubkey\x12:\n" +
+	"\x19deprecated_signer_pubkeys\x18\x03 \x03(\tR\x17deprecatedSignerPubkeys\"O\n" +
 	"\x0fSubmitTxRequest\x12\x15\n" +
 	"\x06ark_tx\x18\x01 \x01(\tR\x05arkTx\x12%\n" +
 	"\x0echeckpoint_txs\x18\x02 \x03(\tR\rcheckpointTxs\"j\n" +

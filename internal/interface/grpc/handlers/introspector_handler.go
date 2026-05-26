@@ -33,8 +33,9 @@ func (h *handler) GetInfo(
 	}
 
 	return &introspectorv1.GetInfoResponse{
-		SignerPubkey: info.SignerPublicKey,
-		Version:      h.version,
+		SignerPubkey:            info.SignerPublicKey,
+		DeprecatedSignerPubkeys: append([]string(nil), info.DeprecatedSignerPublicKeys...),
+		Version:                 h.version,
 	}, nil
 }
 

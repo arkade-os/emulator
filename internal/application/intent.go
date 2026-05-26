@@ -35,8 +35,6 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		return nil, fmt.Errorf("no introspector packet found in transaction")
 	}
 
-	signerPublicKey := s.signer.secretKey.PubKey()
-
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 
@@ -47,7 +45,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			continue
 		}
 
-		script, err := arkade.ReadArkadeScript(ptx, signerPublicKey, entry)
+		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.deprecatedSigners, ptx, entry)
 		if err != nil {
 			// skip if the input is not a valid arkade script
 			continue
@@ -62,13 +60,13 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}
 
-		if err := s.signer.signInput(ptx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
+		if err := matchedSigner.signInput(ptx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
 		// if input index 1 is valid and signed, we can also sign the intent message input (index 0)
 		if inputIndex == 1 {
-			if err := s.signer.signInput(ptx, 0, script.Hash(), prevOutFetcher); err != nil {
+			if err := matchedSigner.signInput(ptx, 0, script.Hash(), prevOutFetcher); err != nil {
 				return nil, fmt.Errorf("failed to sign fake message input: %w", err)
 			}
 		}

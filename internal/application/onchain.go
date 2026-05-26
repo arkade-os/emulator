@@ -36,13 +36,12 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 		return nil, fmt.Errorf("no introspector packet found in transaction")
 	}
 
-	signerPublicKey := s.signer.secretKey.PubKey()
 	nSigned := 0
 
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
 
-		script, err := arkade.ReadArkadeScript(ptx, signerPublicKey, entry)
+		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.deprecatedSigners, ptx, entry)
 		if err != nil {
 			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(ptx.Inputs) > 1 {
 				continue
@@ -63,7 +62,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 		}
 		log.Debugf("execution of %x succeeded", script.Script())
 
-		if err := s.signer.signInput(ptx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
+		if err := matchedSigner.signInput(ptx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
