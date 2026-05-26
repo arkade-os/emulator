@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arkade-os/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/go-sdk/explorer"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	"github.com/btcsuite/btcd/btcec/v2"

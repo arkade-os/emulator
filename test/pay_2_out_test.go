@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arkade-os/emulator/pkg/arkade"
-	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/emulator/pkg/arkade"
+	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
 	"github.com/arkade-os/go-sdk/types"

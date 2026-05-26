@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arkade-os/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	sdkclient "github.com/arkade-os/go-sdk/client"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"

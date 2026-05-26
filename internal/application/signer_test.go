@@ -3,8 +3,8 @@ package application
 import (
 	"testing"
 
-	"github.com/arkade-os/emulator/pkg/arkade"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"

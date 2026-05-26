@@ -5,10 +5,10 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/arkade-os/go-sdk/client"
 	"github.com/arkade-os/go-sdk/indexer"
