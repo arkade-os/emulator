@@ -283,9 +283,9 @@ const (
 	OP_UNKNOWN221                    = 0xdd // 221
 	OP_UNKNOWN222                    = 0xde // 222
 	OP_UNKNOWN223                    = 0xdf // 223
-	OP_UNKNOWN224                    = 0xe0 // 224
-	OP_UNKNOWN225                    = 0xe1 // 225
-	OP_UNKNOWN226                    = 0xe2 // 226
+	OP_ECADD                         = 0xe0 // 224
+	OP_ECMUL                         = 0xe1 // 225
+	OP_ECPAIRING                     = 0xe2 // 226
 	OP_ECMULSCALARVERIFY             = 0xe3 // 227
 	OP_TWEAKVERIFY                   = 0xe4 // 228
 	OP_INSPECTNUMASSETGROUPS         = 0xe5 // 229
@@ -584,9 +584,9 @@ var opcodeArray = [256]opcode{
 	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
 	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
 	OP_UNKNOWN223:                    {OP_UNKNOWN223, "OP_UNKNOWN223", 1, opcodeInvalid},
-	OP_UNKNOWN224:                    {OP_UNKNOWN224, "OP_UNKNOWN224", 1, opcodeInvalid},
-	OP_UNKNOWN225:                    {OP_UNKNOWN225, "OP_UNKNOWN225", 1, opcodeInvalid},
-	OP_UNKNOWN226:                    {OP_UNKNOWN226, "OP_UNKNOWN226", 1, opcodeInvalid},
+	OP_ECADD:                         {OP_ECADD, "OP_ECADD", 1, opcodeECAdd},
+	OP_ECMUL:                         {OP_ECMUL, "OP_ECMUL", 1, opcodeECMul},
+	OP_ECPAIRING:                     {OP_ECPAIRING, "OP_ECPAIRING", 1, opcodeECPairing},
 	OP_ECMULSCALARVERIFY:             {OP_ECMULSCALARVERIFY, "OP_ECMULSCALARVERIFY", 1, opcodeECMulScalarVerify},
 	OP_TWEAKVERIFY:                   {OP_TWEAKVERIFY, "OP_TWEAKVERIFY", 1, opcodeTweakVerify},
 	OP_INSPECTNUMASSETGROUPS:         {OP_INSPECTNUMASSETGROUPS, "OP_INSPECTNUMASSETGROUPS", 1, opcodeInspectNumAssetGroups},

@@ -388,6 +388,74 @@ var fuzzCaseBuilders = [256]fuzzCaseBuilder{
 	OP_INSPECTINASSETCOUNT:           assetIndexCaseBuilder{},
 	OP_INSPECTINASSETAT:              assetAtCaseBuilder{},
 	OP_INSPECTINASSETLOOKUP:          assetLookupCaseBuilder{},
+	OP_ECADD:                         ecCurveCaseBuilder{coordPushes: 4},
+	OP_ECMUL:                         ecCurveCaseBuilder{coordPushes: 3},
+	OP_ECPAIRING:                     ecPairingFuzzCaseBuilder{},
+}
+
+// ecCurveCaseBuilder seeds the stack with a few BigNum-shaped pushes plus a
+// bounded curve_id on top, so the EC opcodes spend most fuzz iterations past
+// the initial validation gate.
+type ecCurveCaseBuilder struct{ coordPushes int }
+
+func (b ecCurveCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
+	c := defaultCaseBuilder{}.Build(data, world)
+	salted := saltedBytes(data, 0xec)
+	items := make([][]byte, 0, b.coordPushes+1)
+	for i := range b.coordPushes {
+		items = append(items, ecFuzzCoord(salted, byte(i)))
+	}
+	curveID := scriptNum(int64(salted[0]) % 5) // bias toward 0..2 valid, 3..4 invalid
+	items = append(items, curveID.Bytes())
+	c.stackPushes = items
+	return c
+}
+
+// ecPairingFuzzCaseBuilder pushes a count near the maxECPairingCount boundary
+// and per-pair coordinates, exercising the variable-arity stack consumption
+// in OP_ECPAIRING.
+type ecPairingFuzzCaseBuilder struct{}
+
+func (ecPairingFuzzCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
+	c := defaultCaseBuilder{}.Build(data, world)
+	salted := saltedBytes(data, 0xed)
+	// 0..19 covers below, at, and just past maxECPairingCount = 16
+	pairCount := int64(salted[0]) % 20
+	items := make([][]byte, 0, 6*int(pairCount)+2)
+	for i := int64(0); i < pairCount; i++ {
+		for j := byte(0); j < 6; j++ {
+			items = append(items, ecFuzzCoord(salted, byte(i)*7+j))
+		}
+	}
+	items = append(items, scriptNum(pairCount).Bytes())
+	curveID := scriptNum(int64(salted[1]) % 5)
+	items = append(items, curveID.Bytes())
+	c.stackPushes = items
+	return c
+}
+
+// ecFuzzCoord builds a random-but-canonical BigNum byte slice from the fuzz
+// seed so most fuzz inputs survive minimal-encoding checks and let the opcode
+// reach its curve-specific validation paths.
+func ecFuzzCoord(seed []byte, salt byte) []byte {
+	src := saltedBytes(seed, salt)
+	// Length 0..32 bytes covers small, medium, and full-32-byte coordinates.
+	length := int(src[0]) % 33
+	if length == 0 {
+		return nil
+	}
+	raw := make([]byte, length)
+	copy(raw, src[1:])
+	// Drop sign bit on the last byte so the BigNum is non-negative
+	// most of the time. Coordinates are non-negative in the EC opcodes.
+	raw[length-1] &= 0x7f
+	canonical := minimallyEncode(raw)
+	if canonical == nil {
+		return nil
+	}
+	out := make([]byte, len(canonical))
+	copy(out, canonical)
+	return out
 }
 
 // FuzzOpcodes turns one fuzz input into a coherent transaction world, derives a

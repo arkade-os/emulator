@@ -26,6 +26,7 @@ require (
 	github.com/btcsuite/btcd/btcutil/psbt v1.1.9
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
 	github.com/btcsuite/btcwallet v0.16.10-0.20240718224643-db3a4a2543bd
+	github.com/consensys/gnark-crypto v0.19.2
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/meshapi/grpc-api-gateway v0.1.0
 	github.com/sirupsen/logrus v1.9.3
@@ -45,6 +46,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/arkade-os/arkd/pkg/kvdb v0.7.1-0.20260216152434-74a173c67a37 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/bits-and-blooms/bitset v1.20.0 // indirect
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
 	github.com/btcsuite/btcwallet/wallet/txauthor v1.3.4 // indirect
 	github.com/btcsuite/btcwallet/wallet/txrules v1.2.1 // indirect

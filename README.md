@@ -329,8 +329,20 @@ and can be up to the maximum script element size. `OP_NUM2BIN` and
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
-| OP_ECMULSCALARVERIFY | 227 | 0xe3 | k P Q | Nothing/fail | Verifies that Q = k*P where k is a 32-byte scalar, P is a compressed public key, and Q is a compressed public key. Fails if verification fails. |
+| OP_ECADD | 224 | 0xe0 | x1 y1 x2 y2 curve_id | x3 y3 | Adds two affine points on the selected curve. Coordinates are Arkade BigNums; `(0, 0)` represents the point at infinity. Fails on unsupported `curve_id`, non-minimal BigNums, negative or out-of-field coordinates, and off-curve points. |
+| OP_ECMUL | 225 | 0xe1 | x y k curve_id | x2 y2 | Multiplies an affine point by a scalar on the selected curve. `k = 0` returns the point at infinity. Fails on scalars `>=` the group order, off-curve points, and the other validation cases listed for OP_ECADD. |
+| OP_ECPAIRING | 226 | 0xe2 | [g1_x g1_y g2_x_c1 g2_x_c0 g2_y_c1 g2_y_c0]... pair_count curve_id | bool | Checks whether the product of pairings is the identity in GT. Pushes canonical true (`0x01`) on success, canonical false (empty) on a valid non-identity product. `pair_count = 0` returns true. Pairing only works for `alt_bn128`; any other curve fails execution. Fails on non-minimal BigNums, negative or out-of-field coordinates, off-curve G1, off-curve G2, G2 outside the `alt_bn128` r-subgroup, negative `pair_count`, and `pair_count > 16`. |
+| OP_ECMULSCALARVERIFY | 227 | 0xe3 | k P Q | Nothing/fail | Verifies that Q = k*P on secp256k1 where k is a 32-byte scalar, P is a compressed public key, and Q is a compressed public key. Fails if verification fails. |
 | OP_TWEAKVERIFY | 228 | 0xe4 | P k Q | Nothing/fail | Verifies that Q = P + k*G where P is a 32-byte X-only internal key, k is a 32-byte big-endian scalar, Q is a 33-byte compressed point, and G is the generator point. Fails if verification fails. |
+
+#### Curve IDs
+
+| Curve ID | Curve | Operations |
+|----------|-------|------------|
+| 0 | `secp256k1` | addition, scalar multiplication |
+| 1 | `secp256r1` (NIST P-256) | addition, scalar multiplication |
+| 2 | `alt_bn128` / BN254 | addition, scalar multiplication, pairing |
+
 
 ### SHA256 Streaming Operations
 
