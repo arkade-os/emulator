@@ -22,6 +22,10 @@ import (
 // regardless of message content.
 var arkadeSighashTag = []byte("ArkadeTapSighash")
 
+// sigHashMask defines the number of bits of the hash type which is used
+// to identify which outputs are signed.
+const sigHashMask = 0x1f
+
 // isValidTaprootSigHash mirrors btcd's unexported isValidTaprootSigHash so that
 // callers (e.g. OP_SIGHASH) can pre-validate a hashType byte before invoking
 // the digest routine.
@@ -156,7 +160,7 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 
 	// 5. sha_outputs, unless SIGHASH_SINGLE or SIGHASH_NONE drop it. The
 	// SINGLE-specific per-output digest goes in further below.
-	sigHashMode := hashType & 0x03
+	sigHashMode := hashType & sigHashMask
 	if sigHashMode != txscript.SigHashSingle && sigHashMode != txscript.SigHashNone {
 		outputsHash, err := arkadeOutputsHash(tx)
 		if err != nil {
