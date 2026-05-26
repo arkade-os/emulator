@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func FuzzDeserializeIntrospectorPacket(f *testing.F) {
+func FuzzDeserializeEmulatorPacket(f *testing.F) {
 	fix := readFixtures(f)
 
 	for _, tc := range fix.Valid {
@@ -26,7 +26,7 @@ func FuzzDeserializeIntrospectorPacket(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		packet, err := DeserializeIntrospectorPacket(data)
+		packet, err := DeserializeEmulatorPacket(data)
 		if err != nil {
 			return
 		}
@@ -34,7 +34,7 @@ func FuzzDeserializeIntrospectorPacket(f *testing.F) {
 		reencoded, err := packet.Serialize()
 		require.NoError(t, err)
 
-		_, err = DeserializeIntrospectorPacket(reencoded)
+		_, err = DeserializeEmulatorPacket(reencoded)
 		require.NoError(t, err)
 	})
 }

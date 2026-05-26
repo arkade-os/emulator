@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -124,16 +124,16 @@ func TestPayToTwoOutputs(t *testing.T) {
 		Script()
 	require.NoError(t, err)
 
-	// --- Introspector client ---
+	// --- Emulator client ---
 	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	introspectorClient := introspectorclient.NewGRPCClient(conn)
+	emulatorClient := emulatorclient.NewGRPCClient(conn)
 
-	introspectorInfo, err := introspectorClient.GetInfo(ctx)
+	emulatorInfo, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, introspectorInfo)
+	require.NotNil(t, emulatorInfo)
 
-	publicKeyBytes, err := hex.DecodeString(introspectorInfo.SignerPublicKey)
+	publicKeyBytes, err := hex.DecodeString(emulatorInfo.SignerPublicKey)
 	require.NoError(t, err)
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	require.NoError(t, err)
@@ -245,7 +245,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	addIntrospectorPacket(t, invalidAddrTx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, invalidAddrTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: arkadeScript},
 	})
 
@@ -264,7 +264,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 		encodedInvalidAddrCheckpoints = append(encodedInvalidAddrCheckpoints, signed)
 	}
 
-	_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidAddrTx, encodedInvalidAddrCheckpoints)
+	_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidAddrTx, encodedInvalidAddrCheckpoints)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to process transaction")
 
@@ -281,7 +281,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	addIntrospectorPacket(t, invalidAmtTx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, invalidAmtTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: arkadeScript},
 	})
 
@@ -300,7 +300,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 		encodedInvalidAmtCheckpoints = append(encodedInvalidAmtCheckpoints, signed)
 	}
 
-	_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidAmtTx, encodedInvalidAmtCheckpoints)
+	_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidAmtTx, encodedInvalidAmtCheckpoints)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to process transaction")
 
@@ -317,7 +317,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: arkadeScript},
 	})
 
@@ -338,7 +338,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 
 	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0, 1)
 
-	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+	_, _, err = emulatorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
 	waitForVtxos()

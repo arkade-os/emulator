@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -59,7 +59,7 @@ func resolveArkadeScriptSigner(
 	current signer,
 	deprecated []signer,
 	ptx *psbt.Packet,
-	entry arkade.IntrospectorEntry,
+	entry arkade.EmulatorEntry,
 ) (signer, *arkade.ArkadeScript, error) {
 	script, err := arkade.ReadArkadeScript(ptx, current.secretKey.PubKey(), entry)
 	if err == nil {

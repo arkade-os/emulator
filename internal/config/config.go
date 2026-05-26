@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ArkLabsHQ/introspector/internal/application"
+	"github.com/ArkLabsHQ/emulator/internal/application"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	defaultDatadir         = arklib.AppDataDir("introspector", false)
+	defaultDatadir         = arklib.AppDataDir("emulator", false)
 	defaultPort            = uint32(7073)
 	defaultNoTLS           = false
 	defaultTLSExtraIPs     = []string{}
@@ -46,7 +46,7 @@ type Config struct {
 }
 
 func LoadConfig() (*Config, error) {
-	viper.SetEnvPrefix("INTROSPECTOR")
+	viper.SetEnvPrefix("EMULATOR")
 	viper.AutomaticEnv()
 
 	viper.SetDefault(Datadir, defaultDatadir)

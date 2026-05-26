@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -88,12 +88,12 @@ func TestSubmitOffchain(t *testing.T) {
 
 	bobWallet, _, bobPubKey := setupWallet(t, ctx)
 	altIntroWallet, _, altIntroPubKey := setupWallet(t, ctx)
-	introspectorClient, introspectorPublicKey, _ := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPublicKey, _ := setupEmulatorClient(t, ctx)
 	indexerSvc := setupIndexer(t)
 	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
-	bobPaysAliceContract := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, introspectorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
+	bobPaysAliceContract := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, emulatorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
 	vtxoTapKey, vtxoTapTree, err := bobPaysAliceContract.TapTree()
 	require.NoError(t, err)
 	closure := bobPaysAliceContract.ForfeitClosures()[0]
@@ -113,18 +113,18 @@ func TestSubmitOffchain(t *testing.T) {
 	arkadeScriptB, err := txscript.NewScriptBuilder().AddOp(arkade.OP_1).Script()
 	require.NoError(t, err)
 
-	// Foreign script using alternative introspector
+	// Foreign script using alternative emulator
 	foreignScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, altIntroPubKey, arkade.ArkadeScriptHash(mustPayAliceScript))
 
 	// Current script (same as bobPaysAliceContract but recreated for consistency in multi-input patterns)
-	currentScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, introspectorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
+	currentScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, emulatorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
 
 	// Multisig script for not_finalizer_on_all_owned_inputs pattern
 	multisigScriptNotFinalizer := script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
 			&script.MultisigClosure{
 				PubKeys: []*btcec.PublicKey{
-					arkade.ComputeArkadeScriptPublicKey(introspectorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript)),
+					arkade.ComputeArkadeScriptPublicKey(emulatorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript)),
 					bobPubKey, aliceAddr.Signer,
 				},
 			},
@@ -136,7 +136,7 @@ func TestSubmitOffchain(t *testing.T) {
 	multisigTapscriptBytesNotFinalizer, err := multisigClosureNotFinalizer.Script()
 	require.NoError(t, err)
 
-	// Multisig script for mixed_introspector_entries_success pattern
+	// Multisig script for mixed_emulator_entries_success pattern
 	multisigScriptMixed := script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
 			&script.MultisigClosure{
@@ -156,8 +156,8 @@ func TestSubmitOffchain(t *testing.T) {
 	require.NoError(t, err)
 
 	// VTXO script variants for multi-input tests
-	vtxoScriptA := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, introspectorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
-	vtxoScriptB := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, introspectorPublicKey, arkade.ArkadeScriptHash(arkadeScriptB))
+	vtxoScriptA := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, emulatorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
+	vtxoScriptB := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, emulatorPublicKey, arkade.ArkadeScriptHash(arkadeScriptB))
 	tapKeyA, _, err := vtxoScriptA.TapTree()
 	require.NoError(t, err)
 	tapKeyB, _, err := vtxoScriptB.TapTree()
@@ -209,7 +209,7 @@ func TestSubmitOffchain(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, invalidTx, []arkade.IntrospectorEntry{{Vin: 0, Script: mustPayAliceScript}})
+		addEmulatorPacket(t, invalidTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}})
 
 		encodedInvalidTx, err := invalidTx.B64Encode()
 		require.NoError(t, err)
@@ -224,7 +224,7 @@ func TestSubmitOffchain(t *testing.T) {
 			signedInvalidCheckpoints = append(signedInvalidCheckpoints, signed)
 		}
 
-		_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidTx, signedInvalidCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidTx, signedInvalidCheckpoints)
 		assertSubmitError(t, err)
 	})
 
@@ -267,7 +267,7 @@ func TestSubmitOffchain(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{{Vin: 0, Script: mustPayAliceScript}})
+		addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}})
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedValidTx)
@@ -279,7 +279,7 @@ func TestSubmitOffchain(t *testing.T) {
 			require.NoError(t, err)
 			encodedValidCheckpoints = append(encodedValidCheckpoints, encoded)
 		}
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
 		assertSubmitError(t, err)
 	})
 
@@ -322,7 +322,7 @@ func TestSubmitOffchain(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{{Vin: 0, Script: mustPayAliceScript}})
+		addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}})
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedValidTx)
@@ -336,12 +336,12 @@ func TestSubmitOffchain(t *testing.T) {
 			signedValidCheckpoints = append(signedValidCheckpoints, signed)
 		}
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedValidCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedValidCheckpoints)
 		require.NoError(t, err)
 		waitForVtxos()
 	})
 
-	t.Run("multi_input_same_introspector_success", func(t *testing.T) {
+	t.Run("multi_input_same_emulator_success", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 20000)
 		addrA := arklib.Address{HRP: "tark", VtxoTapKey: tapKeyA, Signer: aliceAddr.Signer}
 		addrB := arklib.Address{HRP: "tark", VtxoTapKey: tapKeyB, Signer: aliceAddr.Signer}
@@ -377,7 +377,7 @@ func TestSubmitOffchain(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: arkadeScriptB}})
+		addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: arkadeScriptB}})
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedValidTx)
@@ -391,7 +391,7 @@ func TestSubmitOffchain(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 		waitForVtxos()
 	})
@@ -430,7 +430,7 @@ func TestSubmitOffchain(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
@@ -443,11 +443,11 @@ func TestSubmitOffchain(t *testing.T) {
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		assertSubmitError(t, err)
 	})
 
-	t.Run("mixed_introspector_entries_missing_required_signature", func(t *testing.T) {
+	t.Run("mixed_emulator_entries_missing_required_signature", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 20000)
 		tapKeyA, _, err := currentScript.TapTree()
 		require.NoError(t, err)
@@ -485,7 +485,7 @@ func TestSubmitOffchain(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
@@ -502,11 +502,11 @@ func TestSubmitOffchain(t *testing.T) {
 				signedCheckpoints = append(signedCheckpoints, encoded)
 			}
 		}
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		assertSubmitError(t, err)
 	})
 
-	t.Run("mixed_introspector_entries_success", func(t *testing.T) {
+	t.Run("mixed_emulator_entries_success", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 20000)
 		foreignScript := multisigScriptMixed
 		tapKeyA, _, err := currentScript.TapTree()
@@ -542,7 +542,7 @@ func TestSubmitOffchain(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
@@ -555,14 +555,14 @@ func TestSubmitOffchain(t *testing.T) {
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
-		// foriegn introspector must sign input checkpoint 1 and tx
+		// foriegn emulator must sign input checkpoint 1 and tx
 		introBSigned, err := altIntroWallet.SignTransaction(ctx, explorer, signedCheckpoints[1])
 		require.NoError(t, err)
 		signedCheckpoints[1] = introBSigned
 		signedTx, err = altIntroWallet.SignTransaction(ctx, explorer, signedTx)
 		require.NoError(t, err)
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 		waitForVtxos()
 	})
@@ -597,7 +597,7 @@ func TestSettlement(t *testing.T) {
 	require.NoError(t, err)
 
 	// create the client
-	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, publicKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -717,7 +717,7 @@ func TestSettlement(t *testing.T) {
 	intent.Inputs[1].Unknowns = append(intent.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intent.Packet
-	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{
 		{Vin: 1, Script: arkadeScript},
 	})
 
@@ -731,15 +731,15 @@ func TestSettlement(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
-	// SubmitIntent make the introspector execute the arkade script on the intent tx
+	// SubmitIntent make the emulator execute the arkade script on the intent tx
 	// if valid, it will sign the intent and return it
-	approvedIntentProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	signedIntent := introspectorclient.Intent{
+	signedIntent := emulatorclient.Intent{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}
@@ -759,14 +759,14 @@ func TestSettlement(t *testing.T) {
 		Tapscripts: tapscripts,
 	}
 
-	introspectorBatchHandler := &delegateBatchEventsHandler{
-		intentId:           intentId,
-		intent:             signedIntent,
-		vtxosToForfeit:     []client.TapscriptsVtxo{vtxo},
-		signerSession:      treeSignerSession,
-		introspectorClient: introspectorClient,
-		wallet:             bobWallet,
-		client:             grpcClient,
+	emulatorBatchHandler := &delegateBatchEventsHandler{
+		intentId:       intentId,
+		intent:         signedIntent,
+		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		signerSession:  treeSignerSession,
+		emulatorClient: emulatorClient,
+		wallet:         bobWallet,
+		client:         grpcClient,
 	}
 
 	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
@@ -776,7 +776,7 @@ func TestSettlement(t *testing.T) {
 		stop()
 	})
 
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, introspectorBatchHandler)
+	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }
@@ -834,13 +834,13 @@ func TestBoarding(t *testing.T) {
 	// create the client
 	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
-	introspectorClient := introspectorclient.NewGRPCClient(conn)
+	emulatorClient := emulatorclient.NewGRPCClient(conn)
 
-	introspectorInfo, err := introspectorClient.GetInfo(ctx)
+	emulatorInfo, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, introspectorInfo)
+	require.NotNil(t, emulatorInfo)
 
-	publicKeyBytes, err := hex.DecodeString(introspectorInfo.SignerPublicKey)
+	publicKeyBytes, err := hex.DecodeString(emulatorInfo.SignerPublicKey)
 	require.NoError(t, err)
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	require.NoError(t, err)
@@ -984,7 +984,7 @@ func TestBoarding(t *testing.T) {
 	intent.Inputs[1].Unknowns = append(intent.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intent.Packet
-	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{
 		{Vin: 1, Script: arkadeScript},
 	})
 
@@ -998,15 +998,15 @@ func TestBoarding(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
-	// SubmitIntent make the introspector execute the arkade script on the intent tx
+	// SubmitIntent make the emulator execute the arkade script on the intent tx
 	// if valid, it will sign the intent and return it
-	approvedIntentProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	signedIntent := introspectorclient.Intent{
+	signedIntent := emulatorclient.Intent{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}
@@ -1026,15 +1026,15 @@ func TestBoarding(t *testing.T) {
 		Tapscripts: tapscripts,
 	}
 
-	introspectorBatchHandler := &boardingBatchEventsHandler{
+	emulatorBatchHandler := &boardingBatchEventsHandler{
 		delegateBatchEventsHandler: &delegateBatchEventsHandler{
-			intentId:           intentId,
-			intent:             signedIntent,
-			signerSession:      treeSignerSession,
-			introspectorClient: introspectorClient,
-			wallet:             bobWallet,
-			client:             grpcClient,
-			explorer:           explorer,
+			intentId:       intentId,
+			intent:         signedIntent,
+			signerSession:  treeSignerSession,
+			emulatorClient: emulatorClient,
+			wallet:         bobWallet,
+			client:         grpcClient,
+			explorer:       explorer,
 		},
 		boardingVtxo: vtxo,
 	}
@@ -1046,12 +1046,12 @@ func TestBoarding(t *testing.T) {
 		stop()
 	})
 
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, introspectorBatchHandler)
+	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }
 
-func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
+func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 	ctx := t.Context()
 	alice, grpcAlice := setupArkSDK(t)
 	t.Cleanup(func() {
@@ -1077,13 +1077,13 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 	require.NoError(t, err)
 
 	// create the client
-	introspectorClient, introspectorPublicKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPublicKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
 	})
 
-	vtxoScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, introspectorPublicKey, arkade.ArkadeScriptHash(arkadeScript))
+	vtxoScript := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, emulatorPublicKey, arkade.ArkadeScriptHash(arkadeScript))
 
 	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
 	require.NoError(t, err)
@@ -1159,20 +1159,20 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 	testCases := []struct {
 		name     string
 		contains string
-		entry    arkade.IntrospectorEntry
+		entry    arkade.EmulatorEntry
 		mutateTx func(*testing.T, *psbt.Packet)
 	}{
 		{
 			name:     "malformed witness",
 			contains: "EOF",
-			entry: arkade.IntrospectorEntry{
+			entry: arkade.EmulatorEntry{
 				Vin:     0,
 				Script:  arkadeScript,
 				Witness: wire.TxWitness{uint64LE(6), {0, 0, 0, 0, 0, 0, 0, 4}},
 			},
 			mutateTx: func(t *testing.T, ptx *psbt.Packet) {
 				t.Helper()
-				// the introspector packet should be the penultimate output (before P2A)
+				// the emulator packet should be the penultimate output (before P2A)
 				require.GreaterOrEqual(t, len(ptx.UnsignedTx.TxOut), 2)
 				idx := len(ptx.UnsignedTx.TxOut) - 2
 				pkScript := ptx.UnsignedTx.TxOut[idx].PkScript
@@ -1183,7 +1183,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 		{
 			name:     "script hash mismatch",
 			contains: "tweaked arkade script public key not found in tapscript",
-			entry: arkade.IntrospectorEntry{
+			entry: arkade.EmulatorEntry{
 				Vin:    0,
 				Script: invalidArkadeScript,
 			},
@@ -1191,7 +1191,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 		{
 			name:     "missing taproot leaf script",
 			contains: "input does not specify any TaprootLeafScript",
-			entry: arkade.IntrospectorEntry{
+			entry: arkade.EmulatorEntry{
 				Vin:    0,
 				Script: arkadeScript,
 			},
@@ -1204,7 +1204,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 		{
 			name:     "malformed tapscript decode",
 			contains: "failed to decode tapscript",
-			entry: arkade.IntrospectorEntry{
+			entry: arkade.EmulatorEntry{
 				Vin:    0,
 				Script: arkadeScript,
 			},
@@ -1219,7 +1219,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 		{
 			name:     "input index out of range",
 			contains: "input index out of range",
-			entry: arkade.IntrospectorEntry{
+			entry: arkade.EmulatorEntry{
 				Vin:    1,
 				Script: arkadeScript,
 			},
@@ -1250,14 +1250,14 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			addIntrospectorPacket(t, invalidTx, []arkade.IntrospectorEntry{tc.entry})
+			addEmulatorPacket(t, invalidTx, []arkade.EmulatorEntry{tc.entry})
 
 			if tc.mutateTx != nil {
 				tc.mutateTx(t, invalidTx)
 			}
 
 			// confirm the packet is malformed for the reason stated in the testcase
-			packet, err := arkade.FindIntrospectorPacket(invalidTx.UnsignedTx)
+			packet, err := arkade.FindEmulatorPacket(invalidTx.UnsignedTx)
 			if err != nil {
 				require.Contains(t, err.Error(), tc.contains)
 			} else {
@@ -1265,7 +1265,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 				require.Len(t, packet, 1)
 
 				entry := packet[0]
-				_, err = arkade.ReadArkadeScript(invalidTx, introspectorPublicKey, entry)
+				_, err = arkade.ReadArkadeScript(invalidTx, emulatorPublicKey, entry)
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.contains)
 			}
@@ -1287,7 +1287,7 @@ func TestIntrospectorRejectsInvalidArkadeScript(t *testing.T) {
 				encodedInvalidCheckpoints = append(encodedInvalidCheckpoints, encoded)
 			}
 
-			_, _, err = introspectorClient.SubmitTx(ctx, signedInvalidTx, encodedInvalidCheckpoints)
+			_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidTx, encodedInvalidCheckpoints)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "failed to process transaction")
 		})
@@ -1533,7 +1533,7 @@ func setupServerWalletAndCLI() error {
 		return fmt.Errorf("error initializing ark config: %s", err)
 	}
 
-	// wait for introspector to come up
+	// wait for emulator to come up
 	for {
 		time.Sleep(time.Second)
 
@@ -1543,9 +1543,9 @@ func setupServerWalletAndCLI() error {
 			continue
 		}
 
-		introspectorClient := introspectorclient.NewGRPCClient(conn)
+		emulatorClient := emulatorclient.NewGRPCClient(conn)
 
-		if _, err := introspectorClient.GetInfo(context.Background()); err == nil {
+		if _, err := emulatorClient.GetInfo(context.Background()); err == nil {
 			break
 		}
 	}

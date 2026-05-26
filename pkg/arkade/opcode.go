@@ -3045,14 +3045,14 @@ func opcodeInspectInputArkadeScriptHash(op *opcode, data []byte, vm *Engine) err
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
 
-	if vm.introspectorPacket == nil {
-		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
+	if vm.emulatorPacket == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "no emulator packet")
 	}
 
-	entry, found := findEntryByVin(vm.introspectorPacket, int(index.Int32()))
+	entry, found := findEntryByVin(vm.emulatorPacket, int(index.Int32()))
 	if !found {
 		return scriptError(txscript.ErrInvalidStackOperation,
-			fmt.Sprintf("no introspector entry for vin %d", index))
+			fmt.Sprintf("no emulator entry for vin %d", index))
 	}
 
 	scriptHash := ArkadeScriptHash(entry.Script)
@@ -3074,14 +3074,14 @@ func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) er
 		return scriptError(txscript.ErrInvalidIndex, "input index out of range")
 	}
 
-	if vm.introspectorPacket == nil {
-		return scriptError(txscript.ErrInvalidStackOperation, "no introspector packet")
+	if vm.emulatorPacket == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "no emulator packet")
 	}
 
-	entry, found := findEntryByVin(vm.introspectorPacket, int(index.Int32()))
+	entry, found := findEntryByVin(vm.emulatorPacket, int(index.Int32()))
 	if !found {
 		return scriptError(txscript.ErrInvalidStackOperation,
-			fmt.Sprintf("no introspector entry for vin %d", index))
+			fmt.Sprintf("no emulator entry for vin %d", index))
 	}
 
 	if len(entry.Witness) == 0 {
@@ -3096,11 +3096,11 @@ func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) er
 	return nil
 }
 
-func findEntryByVin(packet IntrospectorPacket, index int) (IntrospectorEntry, bool) {
+func findEntryByVin(packet EmulatorPacket, index int) (EmulatorEntry, bool) {
 	for _, entry := range packet {
 		if int(entry.Vin) == index {
 			return entry, true
 		}
 	}
-	return IntrospectorEntry{}, false
+	return EmulatorEntry{}, false
 }

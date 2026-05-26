@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             (unknown)
-// source: introspector/v1/service.proto
+// source: emulator/v1/service.proto
 
-package introspectorv1
+package emulatorv1
 
 import (
 	context "context"
@@ -19,17 +19,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	IntrospectorService_GetInfo_FullMethodName            = "/introspector.v1.IntrospectorService/GetInfo"
-	IntrospectorService_SubmitTx_FullMethodName           = "/introspector.v1.IntrospectorService/SubmitTx"
-	IntrospectorService_SubmitIntent_FullMethodName       = "/introspector.v1.IntrospectorService/SubmitIntent"
-	IntrospectorService_SubmitFinalization_FullMethodName = "/introspector.v1.IntrospectorService/SubmitFinalization"
-	IntrospectorService_SubmitOnchainTx_FullMethodName    = "/introspector.v1.IntrospectorService/SubmitOnchainTx"
+	EmulatorService_GetInfo_FullMethodName            = "/emulator.v1.EmulatorService/GetInfo"
+	EmulatorService_SubmitTx_FullMethodName           = "/emulator.v1.EmulatorService/SubmitTx"
+	EmulatorService_SubmitIntent_FullMethodName       = "/emulator.v1.EmulatorService/SubmitIntent"
+	EmulatorService_SubmitFinalization_FullMethodName = "/emulator.v1.EmulatorService/SubmitFinalization"
+	EmulatorService_SubmitOnchainTx_FullMethodName    = "/emulator.v1.EmulatorService/SubmitOnchainTx"
 )
 
-// IntrospectorServiceClient is the client API for IntrospectorService service.
+// EmulatorServiceClient is the client API for EmulatorService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type IntrospectorServiceClient interface {
+type EmulatorServiceClient interface {
 	// GetInfo returns service metadata including the base signer's public key.
 	// the public key should be tweaked with the arkade script hash before being used as forfeit.
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
@@ -48,72 +48,72 @@ type IntrospectorServiceClient interface {
 	// 2. SubmitFinalization during batch finalization.
 	SubmitFinalization(ctx context.Context, in *SubmitFinalizationRequest, opts ...grpc.CallOption) (*SubmitFinalizationResponse, error)
 	// SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
-	// on each input whose tapscript contains the introspector's tweaked key.
+	// on each input whose tapscript contains the emulator's tweaked key.
 	SubmitOnchainTx(ctx context.Context, in *SubmitOnchainTxRequest, opts ...grpc.CallOption) (*SubmitOnchainTxResponse, error)
 }
 
-type introspectorServiceClient struct {
+type emulatorServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewIntrospectorServiceClient(cc grpc.ClientConnInterface) IntrospectorServiceClient {
-	return &introspectorServiceClient{cc}
+func NewEmulatorServiceClient(cc grpc.ClientConnInterface) EmulatorServiceClient {
+	return &emulatorServiceClient{cc}
 }
 
-func (c *introspectorServiceClient) GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error) {
+func (c *emulatorServiceClient) GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetInfoResponse)
-	err := c.cc.Invoke(ctx, IntrospectorService_GetInfo_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EmulatorService_GetInfo_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *introspectorServiceClient) SubmitTx(ctx context.Context, in *SubmitTxRequest, opts ...grpc.CallOption) (*SubmitTxResponse, error) {
+func (c *emulatorServiceClient) SubmitTx(ctx context.Context, in *SubmitTxRequest, opts ...grpc.CallOption) (*SubmitTxResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SubmitTxResponse)
-	err := c.cc.Invoke(ctx, IntrospectorService_SubmitTx_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EmulatorService_SubmitTx_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *introspectorServiceClient) SubmitIntent(ctx context.Context, in *SubmitIntentRequest, opts ...grpc.CallOption) (*SubmitIntentResponse, error) {
+func (c *emulatorServiceClient) SubmitIntent(ctx context.Context, in *SubmitIntentRequest, opts ...grpc.CallOption) (*SubmitIntentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SubmitIntentResponse)
-	err := c.cc.Invoke(ctx, IntrospectorService_SubmitIntent_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EmulatorService_SubmitIntent_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *introspectorServiceClient) SubmitFinalization(ctx context.Context, in *SubmitFinalizationRequest, opts ...grpc.CallOption) (*SubmitFinalizationResponse, error) {
+func (c *emulatorServiceClient) SubmitFinalization(ctx context.Context, in *SubmitFinalizationRequest, opts ...grpc.CallOption) (*SubmitFinalizationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SubmitFinalizationResponse)
-	err := c.cc.Invoke(ctx, IntrospectorService_SubmitFinalization_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EmulatorService_SubmitFinalization_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *introspectorServiceClient) SubmitOnchainTx(ctx context.Context, in *SubmitOnchainTxRequest, opts ...grpc.CallOption) (*SubmitOnchainTxResponse, error) {
+func (c *emulatorServiceClient) SubmitOnchainTx(ctx context.Context, in *SubmitOnchainTxRequest, opts ...grpc.CallOption) (*SubmitOnchainTxResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SubmitOnchainTxResponse)
-	err := c.cc.Invoke(ctx, IntrospectorService_SubmitOnchainTx_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, EmulatorService_SubmitOnchainTx_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// IntrospectorServiceServer is the server API for IntrospectorService service.
-// All implementations should embed UnimplementedIntrospectorServiceServer
+// EmulatorServiceServer is the server API for EmulatorService service.
+// All implementations should embed UnimplementedEmulatorServiceServer
 // for forward compatibility.
-type IntrospectorServiceServer interface {
+type EmulatorServiceServer interface {
 	// GetInfo returns service metadata including the base signer's public key.
 	// the public key should be tweaked with the arkade script hash before being used as forfeit.
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
@@ -132,170 +132,170 @@ type IntrospectorServiceServer interface {
 	// 2. SubmitFinalization during batch finalization.
 	SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error)
 	// SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
-	// on each input whose tapscript contains the introspector's tweaked key.
+	// on each input whose tapscript contains the emulator's tweaked key.
 	SubmitOnchainTx(context.Context, *SubmitOnchainTxRequest) (*SubmitOnchainTxResponse, error)
 }
 
-// UnimplementedIntrospectorServiceServer should be embedded to have
+// UnimplementedEmulatorServiceServer should be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedIntrospectorServiceServer struct{}
+type UnimplementedEmulatorServiceServer struct{}
 
-func (UnimplementedIntrospectorServiceServer) GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error) {
+func (UnimplementedEmulatorServiceServer) GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetInfo not implemented")
 }
-func (UnimplementedIntrospectorServiceServer) SubmitTx(context.Context, *SubmitTxRequest) (*SubmitTxResponse, error) {
+func (UnimplementedEmulatorServiceServer) SubmitTx(context.Context, *SubmitTxRequest) (*SubmitTxResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitTx not implemented")
 }
-func (UnimplementedIntrospectorServiceServer) SubmitIntent(context.Context, *SubmitIntentRequest) (*SubmitIntentResponse, error) {
+func (UnimplementedEmulatorServiceServer) SubmitIntent(context.Context, *SubmitIntentRequest) (*SubmitIntentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitIntent not implemented")
 }
-func (UnimplementedIntrospectorServiceServer) SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error) {
+func (UnimplementedEmulatorServiceServer) SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitFinalization not implemented")
 }
-func (UnimplementedIntrospectorServiceServer) SubmitOnchainTx(context.Context, *SubmitOnchainTxRequest) (*SubmitOnchainTxResponse, error) {
+func (UnimplementedEmulatorServiceServer) SubmitOnchainTx(context.Context, *SubmitOnchainTxRequest) (*SubmitOnchainTxResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitOnchainTx not implemented")
 }
-func (UnimplementedIntrospectorServiceServer) testEmbeddedByValue() {}
+func (UnimplementedEmulatorServiceServer) testEmbeddedByValue() {}
 
-// UnsafeIntrospectorServiceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to IntrospectorServiceServer will
+// UnsafeEmulatorServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to EmulatorServiceServer will
 // result in compilation errors.
-type UnsafeIntrospectorServiceServer interface {
-	mustEmbedUnimplementedIntrospectorServiceServer()
+type UnsafeEmulatorServiceServer interface {
+	mustEmbedUnimplementedEmulatorServiceServer()
 }
 
-func RegisterIntrospectorServiceServer(s grpc.ServiceRegistrar, srv IntrospectorServiceServer) {
-	// If the following call panics, it indicates UnimplementedIntrospectorServiceServer was
+func RegisterEmulatorServiceServer(s grpc.ServiceRegistrar, srv EmulatorServiceServer) {
+	// If the following call panics, it indicates UnimplementedEmulatorServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&IntrospectorService_ServiceDesc, srv)
+	s.RegisterService(&EmulatorService_ServiceDesc, srv)
 }
 
-func _IntrospectorService_GetInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EmulatorService_GetInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetInfoRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IntrospectorServiceServer).GetInfo(ctx, in)
+		return srv.(EmulatorServiceServer).GetInfo(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: IntrospectorService_GetInfo_FullMethodName,
+		FullMethod: EmulatorService_GetInfo_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IntrospectorServiceServer).GetInfo(ctx, req.(*GetInfoRequest))
+		return srv.(EmulatorServiceServer).GetInfo(ctx, req.(*GetInfoRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IntrospectorService_SubmitTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EmulatorService_SubmitTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SubmitTxRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IntrospectorServiceServer).SubmitTx(ctx, in)
+		return srv.(EmulatorServiceServer).SubmitTx(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: IntrospectorService_SubmitTx_FullMethodName,
+		FullMethod: EmulatorService_SubmitTx_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IntrospectorServiceServer).SubmitTx(ctx, req.(*SubmitTxRequest))
+		return srv.(EmulatorServiceServer).SubmitTx(ctx, req.(*SubmitTxRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IntrospectorService_SubmitIntent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EmulatorService_SubmitIntent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SubmitIntentRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IntrospectorServiceServer).SubmitIntent(ctx, in)
+		return srv.(EmulatorServiceServer).SubmitIntent(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: IntrospectorService_SubmitIntent_FullMethodName,
+		FullMethod: EmulatorService_SubmitIntent_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IntrospectorServiceServer).SubmitIntent(ctx, req.(*SubmitIntentRequest))
+		return srv.(EmulatorServiceServer).SubmitIntent(ctx, req.(*SubmitIntentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IntrospectorService_SubmitFinalization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EmulatorService_SubmitFinalization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SubmitFinalizationRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IntrospectorServiceServer).SubmitFinalization(ctx, in)
+		return srv.(EmulatorServiceServer).SubmitFinalization(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: IntrospectorService_SubmitFinalization_FullMethodName,
+		FullMethod: EmulatorService_SubmitFinalization_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IntrospectorServiceServer).SubmitFinalization(ctx, req.(*SubmitFinalizationRequest))
+		return srv.(EmulatorServiceServer).SubmitFinalization(ctx, req.(*SubmitFinalizationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _IntrospectorService_SubmitOnchainTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _EmulatorService_SubmitOnchainTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SubmitOnchainTxRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IntrospectorServiceServer).SubmitOnchainTx(ctx, in)
+		return srv.(EmulatorServiceServer).SubmitOnchainTx(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: IntrospectorService_SubmitOnchainTx_FullMethodName,
+		FullMethod: EmulatorService_SubmitOnchainTx_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IntrospectorServiceServer).SubmitOnchainTx(ctx, req.(*SubmitOnchainTxRequest))
+		return srv.(EmulatorServiceServer).SubmitOnchainTx(ctx, req.(*SubmitOnchainTxRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// IntrospectorService_ServiceDesc is the grpc.ServiceDesc for IntrospectorService service.
+// EmulatorService_ServiceDesc is the grpc.ServiceDesc for EmulatorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var IntrospectorService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "introspector.v1.IntrospectorService",
-	HandlerType: (*IntrospectorServiceServer)(nil),
+var EmulatorService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "emulator.v1.EmulatorService",
+	HandlerType: (*EmulatorServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "GetInfo",
-			Handler:    _IntrospectorService_GetInfo_Handler,
+			Handler:    _EmulatorService_GetInfo_Handler,
 		},
 		{
 			MethodName: "SubmitTx",
-			Handler:    _IntrospectorService_SubmitTx_Handler,
+			Handler:    _EmulatorService_SubmitTx_Handler,
 		},
 		{
 			MethodName: "SubmitIntent",
-			Handler:    _IntrospectorService_SubmitIntent_Handler,
+			Handler:    _EmulatorService_SubmitIntent_Handler,
 		},
 		{
 			MethodName: "SubmitFinalization",
-			Handler:    _IntrospectorService_SubmitFinalization_Handler,
+			Handler:    _EmulatorService_SubmitFinalization_Handler,
 		},
 		{
 			MethodName: "SubmitOnchainTx",
-			Handler:    _IntrospectorService_SubmitOnchainTx_Handler,
+			Handler:    _EmulatorService_SubmitOnchainTx_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "introspector/v1/service.proto",
+	Metadata: "emulator/v1/service.proto",
 }

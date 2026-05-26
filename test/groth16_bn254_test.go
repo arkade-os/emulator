@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -59,7 +59,7 @@ func TestGroth16BN254VerificationInScript(t *testing.T) {
 		grpcAlice.Close()
 	})
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -76,7 +76,7 @@ func TestGroth16BN254VerificationInScript(t *testing.T) {
 	arkadeScript := groth16BN254VerifierScript(t, fixture)
 	arkadeScriptHash := arkade.ArkadeScriptHash(arkadeScript)
 
-	vtxoScript := createArkadeOnlyVtxoScript(aliceAddr.Signer, introspectorPubKey, arkadeScriptHash)
+	vtxoScript := createArkadeOnlyVtxoScript(aliceAddr.Signer, emulatorPubKey, arkadeScriptHash)
 
 	const contractAmount = int64(10_000)
 	vtxoInput := fund(t, ctx, alice, indexerSvc, aliceAddr.Signer, vtxoScript, contractAmount)
@@ -90,7 +90,7 @@ func TestGroth16BN254VerificationInScript(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		addIntrospectorPacket(t, spendTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, spendTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: arkadeScript, Witness: w},
 		})
 		return spendTx, checkpoints
@@ -100,14 +100,14 @@ func TestGroth16BN254VerificationInScript(t *testing.T) {
 		witness := groth16BN254Witness(fixture, groth16BN254PublicInput+1, fixture.proofC)
 		spendTx, checkpoints := buildSpend(witness)
 
-		err := executeArkadeScripts(t, spendTx, checkpoints, introspectorPubKey)
+		err := executeArkadeScripts(t, spendTx, checkpoints, emulatorPubKey)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "false stack entry at end of script execution")
 
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	})
@@ -119,7 +119,7 @@ func TestGroth16BN254VerificationInScript(t *testing.T) {
 		witness := groth16BN254Witness(fixture, groth16BN254PublicInput, tamperedC)
 		spendTx, checkpoints := buildSpend(witness)
 
-		err := executeArkadeScripts(t, spendTx, checkpoints, introspectorPubKey)
+		err := executeArkadeScripts(t, spendTx, checkpoints, emulatorPubKey)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "false stack entry at end of script execution")
 	})
@@ -128,14 +128,14 @@ func TestGroth16BN254VerificationInScript(t *testing.T) {
 		witness := groth16BN254Witness(fixture, groth16BN254PublicInput, fixture.proofC)
 		spendTx, checkpoints := buildSpend(witness)
 
-		require.NoError(t, executeArkadeScripts(t, spendTx, checkpoints, introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, spendTx, checkpoints, emulatorPubKey))
 
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, spendTx, 0)
 
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.NoError(t, err)
 		waitForVtxos()
 	})

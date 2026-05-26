@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	introspectorv1 "github.com/ArkLabsHQ/introspector/api-spec/protobuf/gen/introspector/v1"
+	emulatorv1 "github.com/ArkLabsHQ/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"google.golang.org/grpc"
 )
@@ -36,18 +36,18 @@ type TransportClient interface {
 
 // grpcClient implements TransportClient using gRPC
 type grpcClient struct {
-	client introspectorv1.IntrospectorServiceClient
+	client emulatorv1.EmulatorServiceClient
 }
 
 // NewGRPCClient creates a new gRPC-based transport client
 func NewGRPCClient(conn *grpc.ClientConn) TransportClient {
 	return &grpcClient{
-		client: introspectorv1.NewIntrospectorServiceClient(conn),
+		client: emulatorv1.NewEmulatorServiceClient(conn),
 	}
 }
 
 func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
-	req := &introspectorv1.GetInfoRequest{}
+	req := &emulatorv1.GetInfoRequest{}
 	resp, err := c.client.GetInfo(ctx, req)
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
 }
 
 func (c *grpcClient) SubmitTx(ctx context.Context, tx string, checkpoints []string) (signedTx string, signedCheckpoints []string, err error) {
-	req := &introspectorv1.SubmitTxRequest{
+	req := &emulatorv1.SubmitTxRequest{
 		ArkTx:         tx,
 		CheckpointTxs: checkpoints,
 	}
@@ -75,8 +75,8 @@ func (c *grpcClient) SubmitTx(ctx context.Context, tx string, checkpoints []stri
 }
 
 func (c *grpcClient) SubmitIntent(ctx context.Context, intent Intent) (string, error) {
-	req := &introspectorv1.SubmitIntentRequest{
-		Intent: &introspectorv1.Intent{
+	req := &emulatorv1.SubmitIntentRequest{
+		Intent: &emulatorv1.Intent{
 			Proof:   intent.Proof,
 			Message: intent.Message,
 		},
@@ -97,8 +97,8 @@ func (c *grpcClient) SubmitFinalization(
 ) (signedForfeits []string, signedCommitmentTx string, err error) {
 	connectorTreeNodes := castTxTree(connectorTree)
 
-	req := &introspectorv1.SubmitFinalizationRequest{
-		SignedIntent: &introspectorv1.Intent{
+	req := &emulatorv1.SubmitFinalizationRequest{
+		SignedIntent: &emulatorv1.Intent{
 			Proof:   intent.Proof,
 			Message: intent.Message,
 		},
@@ -116,7 +116,7 @@ func (c *grpcClient) SubmitFinalization(
 }
 
 func (c *grpcClient) SubmitOnchainTx(ctx context.Context, tx string) (string, error) {
-	req := &introspectorv1.SubmitOnchainTxRequest{Tx: tx}
+	req := &emulatorv1.SubmitOnchainTxRequest{Tx: tx}
 
 	resp, err := c.client.SubmitOnchainTx(ctx, req)
 	if err != nil {
@@ -126,10 +126,10 @@ func (c *grpcClient) SubmitOnchainTx(ctx context.Context, tx string) (string, er
 	return resp.GetSignedTx(), nil
 }
 
-func castTxTree(tree tree.FlatTxTree) []*introspectorv1.TxTreeNode {
-	nodes := make([]*introspectorv1.TxTreeNode, 0, len(tree))
+func castTxTree(tree tree.FlatTxTree) []*emulatorv1.TxTreeNode {
+	nodes := make([]*emulatorv1.TxTreeNode, 0, len(tree))
 	for _, node := range tree {
-		nodes = append(nodes, &introspectorv1.TxTreeNode{
+		nodes = append(nodes, &emulatorv1.TxTreeNode{
 			Txid:     node.Txid,
 			Tx:       node.Tx,
 			Children: node.Children,

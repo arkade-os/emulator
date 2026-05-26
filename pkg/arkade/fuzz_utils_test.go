@@ -38,7 +38,7 @@ type opcodeFuzzWorld struct {
 	signerPublicKey *btcec.PublicKey
 }
 
-// buildFuzzWorld derives a transaction, prevout set, introspector packet, and
+// buildFuzzWorld derives a transaction, prevout set, emulator packet, and
 // asset packet that are internally consistent enough for most opcodes to run.
 // This intentionally biases toward "valid enough to execute" instead of fully
 // unconstrained randomness so the fuzzer spends more time inside opcode logic.
@@ -54,7 +54,7 @@ func buildFuzzWorld(data []byte) *opcodeFuzzWorld {
 	scriptByVin := make(map[int][]byte, inputCount)
 	execScriptByVin := make(map[int][]byte, inputCount)
 	witnessByVin := make(map[int]wire.TxWitness, inputCount)
-	entries := make([]IntrospectorEntry, 0, inputCount)
+	entries := make([]EmulatorEntry, 0, inputCount)
 
 	for i := range inputCount {
 		h := hashWithSalt(data, byte(i))
@@ -74,7 +74,7 @@ func buildFuzzWorld(data []byte) *opcodeFuzzWorld {
 
 		scriptByVin[i] = []byte{OP_TRUE}
 		entryWitness := wire.TxWitness{h[:], h[:16]}
-		entries = append(entries, IntrospectorEntry{
+		entries = append(entries, EmulatorEntry{
 			Vin:     uint16(i),
 			Script:  cloneBytes(scriptByVin[i]),
 			Witness: cloneWitness(entryWitness),
@@ -157,7 +157,7 @@ func buildFuzzWorld(data []byte) *opcodeFuzzWorld {
 		TxOut:    txOut,
 	}
 
-	parsedPacket, err := FindIntrospectorPacket(&tx)
+	parsedPacket, err := FindEmulatorPacket(&tx)
 	if err != nil || len(parsedPacket) == 0 {
 		return nil
 	}
@@ -208,7 +208,7 @@ func buildFuzzWorld(data []byte) *opcodeFuzzWorld {
 }
 
 // buildMinimalEngineWorld returns the simplest valid opcodeWorld that
-// NewEngine will accept: one input, one prevout, no asset/introspector
+// NewEngine will accept: one input, one prevout, no asset/emulator
 // packets. It is used by engine fuzzers when buildFuzzWorld returns nil.
 func buildMinimalEngineWorld(data []byte) *opcodeWorld {
 	h := hashWithSalt(data, 0x01)
@@ -228,10 +228,10 @@ func buildMinimalEngineWorld(data []byte) *opcodeWorld {
 	}
 }
 
-// setEnginePacketsFromWorld attaches the introspector and asset packets stored
+// setEnginePacketsFromWorld attaches the emulator and asset packets stored
 // in world to an already-constructed Engine.
 func setEnginePacketsFromWorld(vm *Engine, world *opcodeWorld) {
-	vm.SetIntrospectorPacket(world.packet)
+	vm.SetEmulatorPacket(world.packet)
 	if world.assetPacket != nil {
 		vm.SetAssetPacket(world.assetPacket)
 		return

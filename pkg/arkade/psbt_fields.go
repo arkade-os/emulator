@@ -41,7 +41,7 @@ func (c arkPsbtFieldCoderPrevArkTx) Decode(unknown *psbt.Unknown) (*wire.MsgTx, 
 }
 
 var (
-	ArkFieldPrevoutTx                                    = []byte("prevouttx")
+	ArkFieldPrevoutTx                                       = []byte("prevouttx")
 	PrevoutTxField    txutils.ArkPsbtFieldCoder[wire.MsgTx] = arkPsbtFieldCoderPrevoutTx{}
 )
 

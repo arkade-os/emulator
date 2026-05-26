@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"strings"
 
-	introspectorv1 "github.com/ArkLabsHQ/introspector/api-spec/protobuf/gen/introspector/v1"
-	"github.com/ArkLabsHQ/introspector/internal/application"
-	"github.com/ArkLabsHQ/introspector/internal/config"
-	interfaces "github.com/ArkLabsHQ/introspector/internal/interface"
-	"github.com/ArkLabsHQ/introspector/internal/interface/grpc/handlers"
+	emulatorv1 "github.com/ArkLabsHQ/emulator/api-spec/protobuf/gen/emulator/v1"
+	"github.com/ArkLabsHQ/emulator/internal/application"
+	"github.com/ArkLabsHQ/emulator/internal/config"
+	interfaces "github.com/ArkLabsHQ/emulator/internal/interface"
+	"github.com/ArkLabsHQ/emulator/internal/interface/grpc/handlers"
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -140,7 +140,7 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 	}
 	s.appSvc = appSvc
 	appHandler := handlers.New(s.version, appSvc)
-	introspectorv1.RegisterIntrospectorServiceServer(grpcServer, appHandler)
+	emulatorv1.RegisterEmulatorServiceServer(grpcServer, appHandler)
 
 	healthHandler := handlers.NewHealthHandler()
 	grpchealth.RegisterHealthServer(grpcServer, healthHandler)
@@ -175,7 +175,7 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 	)
 
 	// Register public services on main gateway
-	introspectorv1.RegisterIntrospectorServiceHandler(ctx, gwmux, conn)
+	emulatorv1.RegisterEmulatorServiceHandler(ctx, gwmux, conn)
 
 	grpcGateway := http.Handler(gwmux)
 	handler := router(grpcServer, grpcGateway)

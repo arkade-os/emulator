@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -68,7 +68,7 @@ func TestFinalizerAccumulatorFlow(t *testing.T) {
 			LeafVersion:  txscript.BaseLeafVersion,
 		}}
 
-		packet, err := arkade.NewPacket(arkade.IntrospectorEntry{Vin: 0, Script: arkadeScriptBytes})
+		packet, err := arkade.NewPacket(arkade.EmulatorEntry{Vin: 0, Script: arkadeScriptBytes})
 		require.NoError(t, err)
 
 		ext := extension.Extension{packet}
@@ -77,11 +77,11 @@ func TestFinalizerAccumulatorFlow(t *testing.T) {
 		ptx.UnsignedTx.AddTxOut(txOut)
 		ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 
-		introspectorPacket, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
+		emulatorPacket, err := arkade.FindEmulatorPacket(ptx.UnsignedTx)
 		require.NoError(t, err)
-		require.Len(t, introspectorPacket, 1)
+		require.Len(t, emulatorPacket, 1)
 
-		script, err := arkade.ReadArkadeScript(ptx, thisSigner.PubKey(), introspectorPacket[0])
+		script, err := arkade.ReadArkadeScript(ptx, thisSigner.PubKey(), emulatorPacket[0])
 		require.NoError(t, err)
 		return script
 	}

@@ -157,7 +157,7 @@ func TestReadArkadeScriptRejectsNonBaseSpendingTapLeafVersion(t *testing.T) {
 		LeafVersion: txscript.TapscriptLeafVersion(txscript.BaseLeafVersion + 2),
 	}}
 
-	_, err = ReadArkadeScript(ptx, signerKey.PubKey(), IntrospectorEntry{
+	_, err = ReadArkadeScript(ptx, signerKey.PubKey(), EmulatorEntry{
 		Vin:    0,
 		Script: arkadeScript,
 	})
@@ -263,7 +263,7 @@ func decodeXOnlyPubKey(t *testing.T, hexStr string) *btcec.PublicKey {
 	return pubKey
 }
 
-func decodeEntry(t *testing.T, raw scriptFixtureEntry) IntrospectorEntry {
+func decodeEntry(t *testing.T, raw scriptFixtureEntry) EmulatorEntry {
 	t.Helper()
 	script, err := hex.DecodeString(raw.Script)
 	require.NoError(t, err)
@@ -274,7 +274,7 @@ func decodeEntry(t *testing.T, raw scriptFixtureEntry) IntrospectorEntry {
 		require.NoError(t, err)
 	}
 
-	return IntrospectorEntry{
+	return EmulatorEntry{
 		Vin:     uint16(raw.Vin),
 		Script:  script,
 		Witness: witness,

@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	// PacketType is the extension type for the Introspector Packet.
+	// PacketType is the extension type for the Emulator Packet.
 	PacketType = 0x01
 	// MaxEntryCount is the maximum number of entries allowed in one packet.
 	MaxEntryCount = 1_000
@@ -24,20 +24,20 @@ const (
 	MaxWitnessLength = 1_000_000
 )
 
-// IntrospectorEntry represents a single entry in the Introspector Packet.
-type IntrospectorEntry struct {
+// EmulatorEntry represents a single entry in the Emulator Packet.
+type EmulatorEntry struct {
 	Vin     uint16         // Transaction input index (u16 LE)
 	Script  []byte         // Arkade Script bytecode
 	Witness wire.TxWitness // Script witness stack items
 }
 
-// IntrospectorPacket is a set of IntrospectorEntry items encoded as a TLV
+// EmulatorPacket is a set of EmulatorEntry items encoded as a TLV
 // record inside an ARK extension OP_RETURN output.
-type IntrospectorPacket []IntrospectorEntry
+type EmulatorPacket []EmulatorEntry
 
-// NewPacket creates a validated IntrospectorPacket from the given entries.
-func NewPacket(entries ...IntrospectorEntry) (IntrospectorPacket, error) {
-	p := IntrospectorPacket(entries)
+// NewPacket creates a validated EmulatorPacket from the given entries.
+func NewPacket(entries ...EmulatorEntry) (EmulatorPacket, error) {
+	p := EmulatorPacket(entries)
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
@@ -45,12 +45,12 @@ func NewPacket(entries ...IntrospectorEntry) (IntrospectorPacket, error) {
 }
 
 // Validate checks that the packet is not empty and has no duplicate vin values.
-func (p IntrospectorPacket) Validate() error {
+func (p EmulatorPacket) Validate() error {
 	if len(p) == 0 {
 		return fmt.Errorf("empty packet")
 	}
 	if len(p) > MaxEntryCount {
-		return fmt.Errorf("max introspector entry count exceeded, max=%d got=%d", MaxEntryCount, len(p))
+		return fmt.Errorf("max emulator entry count exceeded, max=%d got=%d", MaxEntryCount, len(p))
 	}
 	seen := make(map[uint16]bool, len(p))
 	for i, entry := range p {
@@ -65,14 +65,14 @@ func (p IntrospectorPacket) Validate() error {
 	return nil
 }
 
-// Type returns the TLV type byte for the Introspector Packet,
+// Type returns the TLV type byte for the Emulator Packet,
 // implementing the extension.Packet interface.
-func (p IntrospectorPacket) Type() uint8 {
+func (p EmulatorPacket) Type() uint8 {
 	return PacketType
 }
 
-// Serialize serializes the IntrospectorPacket to bytes.
-func (p IntrospectorPacket) Serialize() ([]byte, error) {
+// Serialize serializes the EmulatorPacket to bytes.
+func (p EmulatorPacket) Serialize() ([]byte, error) {
 	var buf bytes.Buffer
 
 	// Write entry count as varint
@@ -110,13 +110,13 @@ func (p IntrospectorPacket) Serialize() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// serializeIntrospectorPacketMasked is like Serialize, but omits the witness
+// serializeEmulatorPacketMasked is like Serialize, but omits the witness
 // blob of every entry entirely (witness_len = 0, no witness bytes). It is the
 // encoding used inside the non-standard arkade tapscript sighash, where
 // witness data must be excluded from the digest so scripts can be pre-signed
 // without committing to runtime witness arguments. The masked encoding is
 // never broadcast — it exists only to feed sha_outputs in the digest pipeline.
-func serializeIntrospectorPacketMasked(p IntrospectorPacket) ([]byte, error) {
+func serializeEmulatorPacketMasked(p EmulatorPacket) ([]byte, error) {
 	var buf bytes.Buffer
 
 	if err := wire.WriteVarInt(&buf, 0, uint64(len(p))); err != nil {
@@ -142,8 +142,8 @@ func serializeIntrospectorPacketMasked(p IntrospectorPacket) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// DeserializeIntrospectorPacket deserializes an IntrospectorPacket from bytes.
-func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
+// DeserializeEmulatorPacket deserializes an EmulatorPacket from bytes.
+func DeserializeEmulatorPacket(data []byte) (EmulatorPacket, error) {
 	r := bytes.NewReader(data)
 
 	entryCount, err := wire.ReadVarInt(r, 0)
@@ -151,12 +151,12 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 		return nil, fmt.Errorf("failed to read entry count: %w", err)
 	}
 	if entryCount > MaxEntryCount {
-		return nil, fmt.Errorf("max introspector entry count exceeded, max=%d got=%d", MaxEntryCount, entryCount)
+		return nil, fmt.Errorf("max emulator entry count exceeded, max=%d got=%d", MaxEntryCount, entryCount)
 	}
 
-	entries := make([]IntrospectorEntry, 0, entryCount)
+	entries := make([]EmulatorEntry, 0, entryCount)
 	for i := range entryCount {
-		var entry IntrospectorEntry
+		var entry EmulatorEntry
 
 		// Read vin (u16 LE)
 		if err := binary.Read(r, binary.LittleEndian, &entry.Vin); err != nil {
@@ -169,7 +169,7 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 			return nil, fmt.Errorf("failed to read script_len for entry %d: %w", i, err)
 		}
 		if scriptLen > MaxScriptLength {
-			return nil, fmt.Errorf("max introspector script length exceeded, max=%d got=%d", MaxScriptLength, scriptLen)
+			return nil, fmt.Errorf("max emulator script length exceeded, max=%d got=%d", MaxScriptLength, scriptLen)
 		}
 		entry.Script = make([]byte, scriptLen)
 		if _, err := io.ReadFull(r, entry.Script); err != nil {
@@ -182,7 +182,7 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 			return nil, fmt.Errorf("failed to read witness_len for entry %d: %w", i, err)
 		}
 		if witnessLen > MaxWitnessLength {
-			return nil, fmt.Errorf("max introspector witness length exceeded, max=%d got=%d", MaxWitnessLength, witnessLen)
+			return nil, fmt.Errorf("max emulator witness length exceeded, max=%d got=%d", MaxWitnessLength, witnessLen)
 		}
 		witnessBytes := make([]byte, witnessLen)
 		if _, err := io.ReadFull(r, witnessBytes); err != nil {
@@ -205,10 +205,10 @@ func DeserializeIntrospectorPacket(data []byte) (IntrospectorPacket, error) {
 	return NewPacket(entries...)
 }
 
-// FindIntrospectorPacket scans a transaction's outputs for an OP_RETURN
-// containing an ARK TLV stream with an Introspector Packet (Type 0x01).
+// FindEmulatorPacket scans a transaction's outputs for an OP_RETURN
+// containing an ARK TLV stream with an Emulator Packet (Type 0x01).
 // Returns the parsed packet, or nil if no packet is found.
-func FindIntrospectorPacket(tx *wire.MsgTx) (IntrospectorPacket, error) {
+func FindEmulatorPacket(tx *wire.MsgTx) (EmulatorPacket, error) {
 	ext, err := extension.NewExtensionFromTx(tx)
 	if err != nil {
 		if errors.Is(err, extension.ErrExtensionNotFound) {
@@ -225,7 +225,7 @@ func FindIntrospectorPacket(tx *wire.MsgTx) (IntrospectorPacket, error) {
 			continue
 		}
 
-		return DeserializeIntrospectorPacket(unknownPacket.Data)
+		return DeserializeEmulatorPacket(unknownPacket.Data)
 	}
 	return nil, nil
 }

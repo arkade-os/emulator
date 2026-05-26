@@ -9,7 +9,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -60,7 +60,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 		grpcAlice.Close()
 	})
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -89,7 +89,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 	arkadeScript := ecdsaSecp256r1VerifyScript(t, px, py)
 	arkadeScriptHash := arkade.ArkadeScriptHash(arkadeScript)
 
-	vtxoScript := createArkadeOnlyVtxoScript(aliceAddr.Signer, introspectorPubKey, arkadeScriptHash)
+	vtxoScript := createArkadeOnlyVtxoScript(aliceAddr.Signer, emulatorPubKey, arkadeScriptHash)
 
 	const contractAmount = int64(10_000)
 	vtxoInput := fund(t, ctx, alice, indexerSvc, aliceAddr.Signer, vtxoScript, contractAmount)
@@ -112,7 +112,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 			checkpointScriptBytes,
 		)
 		require.NoError(t, err)
-		addIntrospectorPacket(t, spendTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, spendTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: arkadeScript, Witness: w},
 		})
 		return spendTx, checkpoints
@@ -126,7 +126,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.NoError(t, err)
 		waitForVtxos()
 	})
@@ -144,7 +144,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	})
@@ -159,7 +159,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	})

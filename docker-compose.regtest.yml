@@ -1,18 +1,18 @@
 services:
-  introspector:
+  emulator:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: introspector
+    container_name: emulator
     restart: unless-stopped
     ports:
       - 7073:7073
     environment:
        # public key has odd y
-      - INTROSPECTOR_SECRET_KEY=5646b2e23bbb82491fb4ef262079ff17594d5e873fc6bcea5f1453edbe1029b1
-      - INTROSPECTOR_DEPRECATED_KEYS=0202020202020202020202020202020202020202020202020202020202020202,0303030303030303030303030303030303030303030303030303030303030303
-      - INTROSPECTOR_NO_TLS=true
-      - INTROSPECTOR_ARKD_URL=arkd:7070
+      - EMULATOR_SECRET_KEY=5646b2e23bbb82491fb4ef262079ff17594d5e873fc6bcea5f1453edbe1029b1
+      - EMULATOR_DEPRECATED_KEYS=0202020202020202020202020202020202020202020202020202020202020202,0303030303030303030303030303030303030303030303030303030303030303
+      - EMULATOR_NO_TLS=true
+      - EMULATOR_ARKD_URL=arkd:7070
     volumes:
       - type: tmpfs
         target: /app/data

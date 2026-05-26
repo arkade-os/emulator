@@ -939,7 +939,7 @@ func cloneEngineForExpectedResult(vm *Engine) *Engine {
 	clone.witnessProgram = cloneBytes(vm.witnessProgram)
 	clone.dstack = cloneStack(vm.dstack)
 	clone.astack = cloneStack(vm.astack)
-	clone.introspectorPacket = cloneIntrospectorPacket(vm.introspectorPacket)
+	clone.emulatorPacket = cloneEmulatorPacket(vm.emulatorPacket)
 
 	if vm.taprootCtx != nil {
 		taprootCtx := *vm.taprootCtx
@@ -956,14 +956,14 @@ func cloneStack(s stack) stack {
 	return clone
 }
 
-func cloneIntrospectorPacket(packet IntrospectorPacket) IntrospectorPacket {
+func cloneEmulatorPacket(packet EmulatorPacket) EmulatorPacket {
 	if packet == nil {
 		return nil
 	}
 
-	clone := make(IntrospectorPacket, len(packet))
+	clone := make(EmulatorPacket, len(packet))
 	for i, entry := range packet {
-		clone[i] = IntrospectorEntry{
+		clone[i] = EmulatorEntry{
 			Vin:     entry.Vin,
 			Script:  cloneBytes(entry.Script),
 			Witness: cloneWitness(entry.Witness),

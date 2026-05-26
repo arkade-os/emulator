@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -27,13 +27,13 @@ import (
 
 // TestSubmitOnchainTx funds an arkade-tweaked P2TR address directly via
 // `nigiri faucet`, then spends it via a plain Bitcoin transaction where the
-// introspector co-signs after running the embedded arkade script.
+// emulator co-signs after running the embedded arkade script.
 func TestSubmitOnchainTx(t *testing.T) {
 	ctx := context.Background()
 
-	// --- Setup Bob & introspector ---
+	// --- Setup Bob & emulator ---
 	bobWallet, _, bobPubKey := setupWallet(t, ctx)
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() { _ = conn.Close() })
 
 	// Reuse aliceSigner role with a fresh random pubkey (not used for signing).
@@ -70,7 +70,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 	// --- VTXO-shaped tapscript with the arkade closure ---
 	vtxoScript := createVtxoScriptWithArkadeScript(
-		bobPubKey, aliceSigner, introspectorPubKey, arkadeScriptHash,
+		bobPubKey, aliceSigner, emulatorPubKey, arkadeScriptHash,
 	)
 
 	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
@@ -150,7 +150,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
 		require.NoError(t, err)
 
-		fullySigned, err := introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+		fullySigned, err := emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.NoError(t, err)
 		require.NotEqual(t, bobSigned, fullySigned)
 
@@ -159,7 +159,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 		require.GreaterOrEqual(
 			t, len(finalPtx.Inputs[0].TaprootScriptSpendSig), 2,
-			"expected at least 2 signatures (Bob + introspector)",
+			"expected at least 2 signatures (Bob + emulator)",
 		)
 
 		// Add alice's signature to complete the 3-of-3 multisig.
@@ -206,7 +206,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		require.NotEmpty(t, txid)
 	})
 
-	t.Run("no introspector packet", func(t *testing.T) {
+	t.Run("no emulator packet", func(t *testing.T) {
 		ptx := buildOnchainSpendPtx(
 			t, *fundingTxid, fundingVout, fundingOutput,
 			&wire.TxOut{Value: spendAmount, PkScript: bobPkScript},
@@ -219,7 +219,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
 		require.NoError(t, err)
 
-		_, err = introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
@@ -241,7 +241,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
 		require.NoError(t, err)
 
-		_, err = introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
@@ -260,7 +260,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
 		require.NoError(t, err)
 
-		_, err = introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
@@ -279,7 +279,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		// VTXO script including arkd's pubkey — this is exactly the shape
 		// SubmitOnchainTx must refuse.
 		vtxoWithArkd := createVtxoScriptWithArkadeScript(
-			bobPubKey, arkdPubKey, introspectorPubKey, arkadeScriptHash,
+			bobPubKey, arkdPubKey, emulatorPubKey, arkadeScriptHash,
 		)
 		_, vtxoWithArkdTapTree, err := vtxoWithArkd.TapTree()
 		require.NoError(t, err)
@@ -302,12 +302,12 @@ func TestSubmitOnchainTx(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		_, err = introspectorClient.SubmitOnchainTx(ctx, encoded)
+		_, err = emulatorClient.SubmitOnchainTx(ctx, encoded)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process onchain tx")
 	})
 
-	// VTXO whose exit leaf is a CSVMultisigClosure containing the introspector's arkade-tweaked key.
+	// VTXO whose exit leaf is a CSVMultisigClosure containing the emulator's arkade-tweaked key.
 	// Post-unroll, the owner can continue the covenant execution onchain.
 	t.Run("CSV exit closure", func(t *testing.T) {
 		const csvBlocks uint32 = 3
@@ -316,7 +316,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 			Type: arklib.LocktimeTypeBlock, Value: csvBlocks,
 		}
 		exitScript := createVtxoScriptWithArkadeExitClosure(
-			bobPubKey, aliceSigner, introspectorPubKey, arkadeScriptHash, csvLocktime,
+			bobPubKey, aliceSigner, emulatorPubKey, arkadeScriptHash, csvLocktime,
 		)
 		exitTapKey, exitTapTree, err := exitScript.TapTree()
 		require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		require.NoError(t, txutils.SetArkPsbtField(
 			ptx, 0, arkade.PrevoutTxField, *exitRawTx,
 		))
-		addIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, ptx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: arkadeScript},
 		})
 
@@ -402,18 +402,18 @@ func TestSubmitOnchainTx(t *testing.T) {
 		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
 		require.NoError(t, err)
 
-		fullySigned, err := introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+		fullySigned, err := emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 		require.NoError(t, err)
 
 		signedPtx, err := psbt.NewFromRawBytes(strings.NewReader(fullySigned), true)
 		require.NoError(t, err)
 
-		introspectorTweaked := arkade.ComputeArkadeScriptPublicKey(
-			introspectorPubKey, arkadeScriptHash,
+		emulatorTweaked := arkade.ComputeArkadeScriptPublicKey(
+			emulatorPubKey, arkadeScriptHash,
 		)
 		wantKeys := map[string]struct{}{
-			hex.EncodeToString(schnorr.SerializePubKey(bobPubKey)):           {},
-			hex.EncodeToString(schnorr.SerializePubKey(introspectorTweaked)): {},
+			hex.EncodeToString(schnorr.SerializePubKey(bobPubKey)):       {},
+			hex.EncodeToString(schnorr.SerializePubKey(emulatorTweaked)): {},
 		}
 		for _, sig := range signedPtx.Inputs[0].TaprootScriptSpendSig {
 			delete(wantKeys, hex.EncodeToString(sig.XOnlyPubKey))
@@ -425,7 +425,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 // buildOnchainSpendPtx builds a one-in / one-out PSBT that spends the funding
 // outpoint and sends to the given output. It wires WitnessUtxo,
 // TaprootLeafScript, PrevoutTxField, and (if arkadeScript != nil) an
-// introspector OP_RETURN packet.
+// emulator OP_RETURN packet.
 func buildOnchainSpendPtx(
 	t *testing.T,
 	fundingTxid chainhash.Hash,
@@ -478,7 +478,7 @@ func buildOnchainSpendPtxCustomPrevout(
 	))
 
 	if arkadeScript != nil {
-		addIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, ptx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: arkadeScript},
 		})
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -83,7 +83,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 	t.Cleanup(func() { grpcSolver.Close() })
 	_ = fundAndSettleAlice(t, ctx, solver, 100_000)
 
-	introspector, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulator, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		// nolint:errcheck
 		conn.Close()
@@ -115,11 +115,11 @@ func TestAssetAccountCovenant(t *testing.T) {
 	// (No aliceClaim — alice's 45-USDT change in Phase 2 goes directly to
 	//  her account pkScript since she funded the dust herself in Phase 1.)
 	bobClaimArkade := enforceBobClaim(t, solverAccountPk, bobAccountPk, solverBobUSDT)
-	bobClaim := createArkadeOnlyVtxoScript(server, introspectorPubKey, arkade.ArkadeScriptHash(bobClaimArkade))
+	bobClaim := createArkadeOnlyVtxoScript(server, emulatorPubKey, arkade.ArkadeScriptHash(bobClaimArkade))
 	bobClaimPk := p2trScriptForVtxoScript(t, bobClaim)
 
 	solverArkade := enforceSolverRouting(t, bobClaimPk, aliceAccountPk)
-	solverContract := createArkadeOnlyVtxoScript(server, introspectorPubKey, arkade.ArkadeScriptHash(solverArkade))
+	solverContract := createArkadeOnlyVtxoScript(server, emulatorPubKey, arkade.ArkadeScriptHash(solverArkade))
 	solverContractPk := p2trScriptForVtxoScript(t, solverContract)
 
 	// =========================================================================
@@ -178,7 +178,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 		)
 		require.NoError(t, err)
 		addAssetPacketToTx(t, ptx, packet)
-		addIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{{Vin: 0, Script: solverArkade}})
+		addEmulatorPacket(t, ptx, []arkade.EmulatorEntry{{Vin: 0, Script: solverArkade}})
 		return ptx, cps
 	}
 
@@ -193,10 +193,10 @@ func TestAssetAccountCovenant(t *testing.T) {
 	submitRoute := func(ptx *psbt.Packet, cps []*psbt.Packet) error {
 		t.Helper()
 		// Solver signs only its own BTC input (vin=1); the covenant input is
-		// signed by the introspector after the arkade script passes.
+		// signed by the emulator after the arkade script passes.
 		signed, err := solverWallet.SignTransaction(ctx, explorerSvc, b64(t, ptx))
 		require.NoError(t, err)
-		_, _, err = introspector.SubmitTx(ctx, signed, signCheckpoints(t, ctx, solverWallet, explorerSvc, cps))
+		_, _, err = emulator.SubmitTx(ctx, signed, signCheckpoints(t, ctx, solverWallet, explorerSvc, cps))
 		return err
 	}
 
@@ -244,12 +244,12 @@ func TestAssetAccountCovenant(t *testing.T) {
 	)
 	require.NoError(t, err)
 	addAssetPacketToTx(t, bobMergeTx, createTransferAssetPacket(t, mintTxHash, 0, 0, 1, solverBobUSDT))
-	addIntrospectorPacket(t, bobMergeTx, []arkade.IntrospectorEntry{{Vin: 0, Script: bobClaimArkade}})
+	addEmulatorPacket(t, bobMergeTx, []arkade.EmulatorEntry{{Vin: 0, Script: bobClaimArkade}})
 
 	waitBob := watchForPreconfirmedVtxos(t, indexerSvc, bobMergeTx, 1)
 	signedBob, err := bobWallet.SignTransaction(ctx, explorerSvc, b64(t, bobMergeTx))
 	require.NoError(t, err)
-	_, _, err = introspector.SubmitTx(ctx, signedBob, signCheckpoints(t, ctx, bobWallet, explorerSvc, bobMergeCps))
+	_, _, err = emulator.SubmitTx(ctx, signedBob, signCheckpoints(t, ctx, bobWallet, explorerSvc, bobMergeCps))
 	require.NoError(t, err)
 	waitBob()
 }

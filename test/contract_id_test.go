@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Packet type 2 for contract state (0=assets, 1=introspector).
+// Packet type 2 for contract state (0=assets, 1=emulator).
 const statePacketType = 2
 
 // Fixed state payload carried by the main contract across spends.
@@ -43,7 +43,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, 50000)
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -101,13 +101,13 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 		waitForVtxos()
 	}
 
-	submitWithIntrospector := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+	submitWithEmulator := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
 
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(checkpoints))
+		_, _, err = emulatorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(checkpoints))
 		require.NoError(t, err)
 
 		waitForVtxos()
@@ -120,7 +120,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	mainArkadeScript := mainContractArkadeScript(t)
 	mainVtxoScript := createArkadeOnlyVtxoScript(
 		aliceAddr.Signer,
-		introspectorPubKey,
+		emulatorPubKey,
 		arkade.ArkadeScriptHash(mainArkadeScript),
 	)
 	mainTapscript := onlyForfeitScript(t, mainVtxoScript)
@@ -212,7 +212,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	readerArkadeScript := readerContractArkadeScript(t, bootstrapTxHash)
 	readerVtxoScript := createArkadeOnlyVtxoScript(
 		aliceAddr.Signer,
-		introspectorPubKey,
+		emulatorPubKey,
 		arkade.ArkadeScriptHash(readerArkadeScript),
 	)
 	readerTapscript := onlyForfeitScript(t, readerVtxoScript)
@@ -284,8 +284,8 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	// State packet with the same fixed payload.
 	addStatePacket(t, coSpendTx, fixedStatePayload)
 
-	// Introspector packet for both inputs.
-	addIntrospectorPacket(t, coSpendTx, []arkade.IntrospectorEntry{
+	// Emulator packet for both inputs.
+	addEmulatorPacket(t, coSpendTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: mainArkadeScript},
 		{Vin: 1, Script: readerArkadeScript},
 	})
@@ -293,8 +293,8 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	// The main contract needs the bootstrap tx for OP_INSPECTINPUTPACKET.
 	require.NoError(t, txutils.SetArkPsbtField(coSpendTx, 0, arkade.PrevArkTxField, *bootstrapTx.UnsignedTx))
 
-	require.NoError(t, executeArkadeScripts(t, coSpendTx, coSpendCheckpoints, introspectorPubKey))
-	submitWithIntrospector(coSpendTx, coSpendCheckpoints)
+	require.NoError(t, executeArkadeScripts(t, coSpendTx, coSpendCheckpoints, emulatorPubKey))
+	submitWithEmulator(coSpendTx, coSpendCheckpoints)
 }
 
 // mainContractArkadeScript builds the recursive main contract script. It verifies:

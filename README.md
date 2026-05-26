@@ -1,17 +1,17 @@
-# Introspector
+# Emulator
 
-[![test](https://github.com/ArkLabsHQ/introspector/actions/workflows/test.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/test.yaml)
-[![quality](https://github.com/ArkLabsHQ/introspector/actions/workflows/quality.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/quality.yaml)
-[![Trivy Security Scan](https://github.com/ArkLabsHQ/introspector/actions/workflows/trivy.yaml/badge.svg)](https://github.com/ArkLabsHQ/introspector/actions/workflows/trivy.yaml)
+[![test](https://github.com/ArkLabsHQ/emulator/actions/workflows/test.yaml/badge.svg)](https://github.com/ArkLabsHQ/emulator/actions/workflows/test.yaml)
+[![quality](https://github.com/ArkLabsHQ/emulator/actions/workflows/quality.yaml/badge.svg)](https://github.com/ArkLabsHQ/emulator/actions/workflows/quality.yaml)
+[![Trivy Security Scan](https://github.com/ArkLabsHQ/emulator/actions/workflows/trivy.yaml/badge.svg)](https://github.com/ArkLabsHQ/emulator/actions/workflows/trivy.yaml)
 
-_Introspector is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script)._
+_Emulator is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script)._
 
-This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `introspector_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go) (`"ArkScriptHash"`). The Arkade script is revealed via an [Introspector Packet](pkg/arkade/introspector_packet.go) committed inside an ARK extension OP_RETURN output. An ARK extension is a TLV stream prefixed with magic bytes `ARK` (`0x41524b`); the Introspector Packet is one of its packet types (`0x01`), containing per-input entries with the script bytecode and optional witness arguments.
+This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `emulator_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go) (`"ArkScriptHash"`). The Arkade script is revealed via an [Emulator Packet](pkg/arkade/emulator_packet.go) committed inside an ARK extension OP_RETURN output. An ARK extension is a TLV stream prefixed with magic bytes `ARK` (`0x41524b`); the Emulator Packet is one of its packet types (`0x01`), containing per-input entries with the script bytecode and optional witness arguments.
 
 ## ArkadeScript examples
 
-- [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + introspector-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
-- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + introspector-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant is a self-send (preserves the input's scriptPubKey + value on output 0) gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
+- [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
+- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant is a self-send (preserves the input's scriptPubKey + value on output 0) gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
 
 ## API
 
@@ -32,9 +32,9 @@ Returns service metadata including the signer's public key. The public key shoul
 
 ### SubmitTx
 
-Validates and signs the Ark transaction inputs owned by this introspector, and signs their matching checkpoint transactions. Arkade scripts are executed only on the Ark transaction, not on checkpoints.
+Validates and signs the Ark transaction inputs owned by this emulator, and signs their matching checkpoint transactions. Arkade scripts are executed only on the Ark transaction, not on checkpoints.
 
-If this introspector is the last required non-`arkd` signer for all owned inputs matched by the introspector packet, each checkpoint PSBT must already include any other required non-`arkd` signatures; otherwise the request fails. In that case, the introspector submits the signed transaction set to `arkd`, merges `arkd`'s checkpoint signatures, finalizes the transaction, and returns the finalized Ark PSBT plus updated checkpoint PSBTs. Otherwise it returns only this introspector's added signatures without calling `arkd`.
+If this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet, each checkpoint PSBT must already include any other required non-`arkd` signatures; otherwise the request fails. In that case, the emulator submits the signed transaction set to `arkd`, merges `arkd`'s checkpoint signatures, finalizes the transaction, and returns the finalized Ark PSBT plus updated checkpoint PSBTs. Otherwise it returns only this emulator's added signatures without calling `arkd`.
 
 **Endpoint**: `POST /v1/tx`
 
@@ -54,7 +54,7 @@ If this introspector is the last required non-`arkd` signer for all owned inputs
 }
 ```
 
-`signedArkTx` may be either partially signed or finalized, depending on whether this introspector is the last required non-`arkd` signer for all owned inputs matched by the introspector packet.
+`signedArkTx` may be either partially signed or finalized, depending on whether this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet.
 
 ### SubmitIntent
 
@@ -117,7 +117,7 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
 
 ### SubmitOnchainTx
 
-Validates and signs the inputs of a plain Bitcoin transaction whose tapscripts contain the introspector's tweaked key (e.g. a VTXO unrolled onchain). Each input may carry an optional `PrevoutTxField` PSBT unknown field (key `"prevouttx"`) holding the raw previous transaction, required only by arkade opcodes that introspect it.
+Validates and signs the inputs of a plain Bitcoin transaction whose tapscripts contain the emulator's tweaked key (e.g. a VTXO unrolled onchain). Each input may carry an optional `PrevoutTxField` PSBT unknown field (key `"prevouttx"`) holding the raw previous transaction, required only by arkade opcodes that introspect it.
 
 Inputs whose tapscript closure also contains the `arkd` signer pubkey are rejected — those must go through [`SubmitTx`](#submittx) so checkpoint and forfeit checks are enforced.
 
@@ -137,9 +137,9 @@ Inputs whose tapscript closure also contains the `arkd` signer pubkey are reject
 }
 ```
 
-## Introspector Packet
+## Emulator Packet
 
-The Introspector Packet is the data structure that reveals which inputs of a transaction must be checked by the introspector, the Arkade script bytecode to execute for each, and any witness arguments the script consumes. It lives inside an [ARK extension](https://github.com/arkade-os/arkd/tree/master/pkg/ark-lib/extension) — an OP_RETURN output whose payload starts with the magic prefix `ARK` (`0x41 0x52 0x4b`) followed by a sequence of `(type, length, value)` packets. The introspector packet has type byte `0x01` and shares the envelope with other ARK packets (e.g. the asset packet, type `0x00`); a single OP_RETURN can carry both, and helpers like [`addIntrospectorPacket`](test/utils_test.go) merge the introspector packet into an existing extension when one is already present.
+The Emulator Packet is the data structure that reveals which inputs of a transaction must be checked by the emulator, the Arkade script bytecode to execute for each, and any witness arguments the script consumes. It lives inside an [ARK extension](https://github.com/arkade-os/arkd/tree/master/pkg/ark-lib/extension) — an OP_RETURN output whose payload starts with the magic prefix `ARK` (`0x41 0x52 0x4b`) followed by a sequence of `(type, length, value)` packets. The emulator packet has type byte `0x01` and shares the envelope with other ARK packets (e.g. the asset packet, type `0x00`); a single OP_RETURN can carry both, and helpers like [`addEmulatorPacket`](test/utils_test.go) merge the emulator packet into an existing extension when one is already present.
 
 The packet content (the value side of the outer TLV) has the following layout — `varint` denotes a Bitcoin-style compact size integer:
 
@@ -181,15 +181,15 @@ The service can be configured using environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `INTROSPECTOR_SECRET_KEY` | Private key for signing (hex encoded) | Required |
-| `INTROSPECTOR_DEPRECATED_KEYS` | Comma-separated deprecated private keys (hex encoded) still accepted for signing. Empty means none. CSV is strict: leading commas, trailing commas, empty entries, whitespace, duplicates, and the current key are rejected. | Empty |
-| `INTROSPECTOR_DATADIR` | Data directory path | OS-specific app data dir |
-| `INTROSPECTOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
-| `INTROSPECTOR_NO_TLS` | Disable TLS encryption | false |
-| `INTROSPECTOR_TLS_EXTRA_IPS` | Additional IPs for TLS cert | [] |
-| `INTROSPECTOR_TLS_EXTRA_DOMAINS` | Additional domains for TLS cert | [] |
-| `INTROSPECTOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
-| `INTROSPECTOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
+| `EMULATOR_SECRET_KEY` | Private key for signing (hex encoded) | Required |
+| `EMULATOR_DEPRECATED_KEYS` | Comma-separated deprecated private keys (hex encoded) still accepted for signing. Empty means none. CSV is strict: leading commas, trailing commas, empty entries, whitespace, duplicates, and the current key are rejected. | Empty |
+| `EMULATOR_DATADIR` | Data directory path | OS-specific app data dir |
+| `EMULATOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
+| `EMULATOR_NO_TLS` | Disable TLS encryption | false |
+| `EMULATOR_TLS_EXTRA_IPS` | Additional IPs for TLS cert | [] |
+| `EMULATOR_TLS_EXTRA_DOMAINS` | Additional domains for TLS cert | [] |
+| `EMULATOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
+| `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
 
 ## Development
 
@@ -239,21 +239,21 @@ The following opcodes are supported by the Arkade script engine. They extend Bit
 
 The arkade VM's `OP_CHECKSIG`, `OP_CHECKSIGVERIFY`, `OP_CHECKSIGADD`, and `OP_SIGHASH` operate on a **non-standard tapscript signature hash**, not BIP342. Two deliberate departures from BIP342:
 
-1. **Witness blobs are masked out of `sha_outputs`.** When `sha_outputs` (or the per-output digest used by `SIGHASH_SINGLE`) is computed, every entry of every Introspector Packet is rewritten with `witness_len = 0` and the witness bytes dropped. Script bytes, `vin`, entry count, co-located ARK packets (e.g. the asset packet), and every non-extension output continue to flow into the digest unchanged. This lets a script be signed before any party has supplied runtime witness arguments, and lets witness arguments be re-supplied per spend attempt without invalidating signatures.
+1. **Witness blobs are masked out of `sha_outputs`.** When `sha_outputs` (or the per-output digest used by `SIGHASH_SINGLE`) is computed, every entry of every Emulator Packet is rewritten with `witness_len = 0` and the witness bytes dropped. Script bytes, `vin`, entry count, co-located ARK packets (e.g. the asset packet), and every non-extension output continue to flow into the digest unchanged. This lets a script be signed before any party has supplied runtime witness arguments, and lets witness arguments be re-supplied per spend attempt without invalidating signatures.
 2. **The final BIP-340 tag is `"ArkadeTapSighash"`**, not BIP342's `"TapSighash"`. The two digest domains are therefore disjoint: a signature valid under one CANNOT pass verification under the other, even when the underlying message bytes happen to match.
 
-The Bitcoin-level signatures that the introspector itself produces on PSBT `TaprootScriptSpendSig` entries are unaffected — those remain standard BIP342, computed via `txscript.CalcTapscriptSignaturehash` with the `"TapSighash"` tag. Only signatures verified *inside* the arkade VM use the non-standard digest.
+The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootScriptSpendSig` entries are unaffected — those remain standard BIP342, computed via `txscript.CalcTapscriptSignaturehash` with the `"TapSighash"` tag. Only signatures verified *inside* the arkade VM use the non-standard digest.
 ### Transaction Introspection (Inputs)
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTINPUTOUTPOINT | 199 | 0xc7 | index | txid index | Pushes the transaction ID (32 bytes) and output index (scriptNum) of the input at the given index onto the stack. |
-| OP_INSPECTINPUTARKADESCRIPTHASH | 200 | 0xc8 | index | script_hash | Pushes the 32-byte Arkade script hash (`tagged_hash("ArkScriptHash", script)`) of the IntrospectorEntry for the input at the given index. This is the same hash used as the tweak scalar in `ComputeArkadeScriptPublicKey`. Fails if no entry exists. |
+| OP_INSPECTINPUTARKADESCRIPTHASH | 200 | 0xc8 | index | script_hash | Pushes the 32-byte Arkade script hash (`tagged_hash("ArkScriptHash", script)`) of the EmulatorEntry for the input at the given index. This is the same hash used as the tweak scalar in `ComputeArkadeScriptPublicKey`. Fails if no entry exists. |
 | OP_INSPECTINPUTVALUE | 201 | 0xc9 | index | value | Pushes the satoshi value of the previous output spent by the input at the given index, as a minimally-encoded BigNum. |
 | OP_INSPECTINPUTSCRIPTPUBKEY | 202 | 0xca | index | program version | For witness programs: pushes the witness program (2-40 bytes) and segwit version (scriptNum). For non-native segwit: pushes SHA256 hash of scriptPubKey and -1. |
 | OP_INSPECTINPUTSEQUENCE | 203 | 0xcb | index | sequence | Pushes the sequence number (4 bytes, little-endian) of the input at the given index. |
 | OP_PUSHCURRENTINPUTINDEX | 205 | 0xcd | Nothing | index | Pushes the current input index (scriptNum) being evaluated onto the stack. |
-| OP_INSPECTINPUTARKADEWITNESSHASH | 206 | 0xce | index | witness_hash | Pushes the 32-byte Arkade witness hash (`tagged_hash("ArkWitnessHash", witness)`) of the IntrospectorEntry for the input at the given index. Pushes 32 zero bytes if witness is empty. Fails if no entry exists. |
+| OP_INSPECTINPUTARKADEWITNESSHASH | 206 | 0xce | index | witness_hash | Pushes the 32-byte Arkade witness hash (`tagged_hash("ArkWitnessHash", witness)`) of the EmulatorEntry for the input at the given index. Pushes 32 zero bytes if witness is empty. Fails if no entry exists. |
 
 ### Transaction Introspection (Outputs)
 

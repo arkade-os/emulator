@@ -1725,7 +1725,7 @@ func TestMerkleBranchVerify(t *testing.T) {
 	}
 }
 
-func TestIntrospectorPacketOpcodes(t *testing.T) {
+func TestEmulatorPacketOpcodes(t *testing.T) {
 	t.Parallel()
 
 	prevoutFetcher := newTestArkPrevOutFetcher(
@@ -1760,8 +1760,8 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 	witnessA := wire.TxWitness{{0xaa, 0xbb}}
 
 	packet, err := NewPacket(
-		IntrospectorEntry{Vin: 0, Script: scriptA, Witness: witnessA},
-		IntrospectorEntry{Vin: 1, Script: scriptB, Witness: nil},
+		EmulatorEntry{Vin: 0, Script: scriptA, Witness: witnessA},
+		EmulatorEntry{Vin: 1, Script: scriptB, Witness: nil},
 	)
 	if err != nil {
 		t.Fatalf("NewPacket: %v", err)
@@ -1774,7 +1774,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 	expectedWitnessHashA := chainhash.TaggedHash(TagArkWitnessHash, witBuf.Bytes())
 	zeroHash := make([]byte, 32)
 
-	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, pkt IntrospectorPacket, stack [][]byte) error {
+	runEngine := func(t *testing.T, script []byte, tx *wire.MsgTx, pkt EmulatorPacket, stack [][]byte) error {
 		t.Helper()
 		engine, err := NewEngine(
 			script, tx, 0,
@@ -1786,7 +1786,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 			t.Fatalf("NewEngine: %v", err)
 		}
 		if pkt != nil {
-			engine.SetIntrospectorPacket(pkt)
+			engine.SetEmulatorPacket(pkt)
 		}
 		if len(stack) > 0 {
 			engine.SetStack(stack)
@@ -1799,7 +1799,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 		valid   bool
 		script  []byte
 		tx      *wire.MsgTx
-		pkt     IntrospectorPacket
+		pkt     EmulatorPacket
 		stack   [][]byte
 		errText string
 	}
@@ -1880,7 +1880,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 			script:  buildScript(t, OP_0, OP_INSPECTINPUTARKADESCRIPTHASH),
 			tx:      twoInputTx,
 			pkt:     nil,
-			errText: "no introspector packet",
+			errText: "no emulator packet",
 		},
 		{
 			name:    "script_hash_out_of_range",
@@ -1901,10 +1901,10 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 				return s
 			}(),
 			tx: twoInputTx,
-			pkt: IntrospectorPacket{
+			pkt: EmulatorPacket{
 				{Vin: 1, Script: scriptB},
 			},
-			errText: "no introspector entry for vin 0",
+			errText: "no emulator entry for vin 0",
 		},
 		{
 			name:   "witness_hash_non_empty",
@@ -1926,7 +1926,7 @@ func TestIntrospectorPacketOpcodes(t *testing.T) {
 			script:  buildScript(t, OP_0, OP_INSPECTINPUTARKADEWITNESSHASH),
 			tx:      twoInputTx,
 			pkt:     nil,
-			errText: "no introspector packet",
+			errText: "no emulator packet",
 		},
 		{
 			name:    "witness_hash_out_of_range",
@@ -2013,7 +2013,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 
 	// Custom packet types for testing. We use small values (2, 3) that
 	// can be pushed with OP_2, OP_3 opcodes. Type 0 is asset.Packet
-	// and type 1 is IntrospectorPacket, so 2+ are free.
+	// and type 1 is EmulatorPacket, so 2+ are free.
 	const testPacketType = 2
 	testPayload := []byte{0xde, 0xad, 0xbe, 0xef}
 	testPacket := extension.UnknownPacket{PacketType: testPacketType, Data: testPayload}
@@ -2545,10 +2545,10 @@ func TestOpCheckSigArkadeSighash(t *testing.T) {
 }
 
 // buildExtensionScript assembles an OP_RETURN script carrying an asset packet
-// followed by the given introspector packet. The asset packet co-locates a
+// followed by the given emulator packet. The asset packet co-locates a
 // second commitment so masking-property tests can show it remains in the
-// digest while the introspector witness blob is dropped.
-func buildExtensionScript(t *testing.T, ip IntrospectorPacket) []byte {
+// digest while the emulator witness blob is dropped.
+func buildExtensionScript(t *testing.T, ip EmulatorPacket) []byte {
 	t.Helper()
 	ap, err := asset.NewPacket([]asset.AssetGroup{fallbackFuzzAssetGroup()})
 	require.NoError(t, err)
@@ -2557,14 +2557,14 @@ func buildExtensionScript(t *testing.T, ip IntrospectorPacket) []byte {
 	return script
 }
 
-// mutateIntrospectorEntry locates the introspector packet inside tx's
+// mutateEmulatorEntry locates the emulator packet inside tx's
 // extension OP_RETURN, applies fn to its first entry, and rewrites the
 // OP_RETURN with the modified packet.
-func mutateIntrospectorEntry(
-	t *testing.T, tx *wire.MsgTx, fn func(*IntrospectorEntry),
+func mutateEmulatorEntry(
+	t *testing.T, tx *wire.MsgTx, fn func(*EmulatorEntry),
 ) {
 	t.Helper()
-	ip, err := FindIntrospectorPacket(tx)
+	ip, err := FindEmulatorPacket(tx)
 	require.NoError(t, err)
 	require.NotNil(t, ip)
 	fn(&ip[0])
@@ -2578,7 +2578,7 @@ func mutateIntrospectorEntry(
 }
 
 // buildSighashFixture returns a 1-input tx with one real output and one
-// OP_RETURN carrying an asset packet + introspector packet (with non-empty
+// OP_RETURN carrying an asset packet + emulator packet (with non-empty
 // witness data), along with its prevout map and the tap leaf script we treat
 // as executing.
 func buildSighashFixture(t *testing.T) (
@@ -2587,7 +2587,7 @@ func buildSighashFixture(t *testing.T) (
 	t.Helper()
 
 	leafScript := []byte{OP_TRUE}
-	ip, err := NewPacket(IntrospectorEntry{
+	ip, err := NewPacket(EmulatorEntry{
 		Vin:    0,
 		Script: []byte{OP_INSPECTVERSION, OP_1, OP_EQUAL},
 		Witness: wire.TxWitness{
@@ -2616,7 +2616,7 @@ func buildSighashFixture(t *testing.T) (
 }
 
 // TestArkadeSighashMasksWitnessBlobs validates the core security property of
-// the non-standard digest: introspector witness blobs are masked out, but
+// the non-standard digest: emulator witness blobs are masked out, but
 // every other byte committed by BIP342 (script bytes, vin, co-located ARK
 // packets, non-extension outputs) continues to bind the signature.
 func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
@@ -2635,7 +2635,7 @@ func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
 	t.Run("witness_content_mutation_does_not_change_digest", func(t *testing.T) {
 		t.Parallel()
 		mutated := baseTx.Copy()
-		mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+		mutateEmulatorEntry(t, mutated, func(e *EmulatorEntry) {
 			e.Witness = wire.TxWitness{
 				[]byte("totally-different-content-and-length"),
 				[]byte{0xff, 0xff, 0xff},
@@ -2649,7 +2649,7 @@ func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
 	t.Run("empty_witness_matches_non_empty_witness", func(t *testing.T) {
 		t.Parallel()
 		mutated := baseTx.Copy()
-		mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+		mutateEmulatorEntry(t, mutated, func(e *EmulatorEntry) {
 			e.Witness = nil
 		})
 		require.Equal(t, baseDigest, digestOf(t, mutated),
@@ -2659,7 +2659,7 @@ func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
 	t.Run("script_byte_mutation_changes_digest", func(t *testing.T) {
 		t.Parallel()
 		mutated := baseTx.Copy()
-		mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+		mutateEmulatorEntry(t, mutated, func(e *EmulatorEntry) {
 			e.Script = append([]byte(nil), e.Script...)
 			e.Script[0] ^= 0x01
 		})
@@ -2682,7 +2682,7 @@ func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
 		twoInputFetcher := fetcherFor(twoInputPrevOuts)
 
 		digestVin0 := arkadeDigest(t, twoInputTx, 0, twoInputFetcher, leafScript, flag)
-		mutateIntrospectorEntry(t, twoInputTx, func(e *IntrospectorEntry) {
+		mutateEmulatorEntry(t, twoInputTx, func(e *EmulatorEntry) {
 			e.Vin = 1
 		})
 		digestVin1 := arkadeDigest(t, twoInputTx, 0, twoInputFetcher, leafScript, flag)
@@ -2693,7 +2693,7 @@ func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
 	t.Run("asset_packet_mutation_changes_digest", func(t *testing.T) {
 		t.Parallel()
 		mutated := baseTx.Copy()
-		ip, err := FindIntrospectorPacket(mutated)
+		ip, err := FindEmulatorPacket(mutated)
 		require.NoError(t, err)
 		ap, err := asset.NewPacket([]asset.AssetGroup{{
 			Outputs: []asset.AssetOutput{{
@@ -2732,13 +2732,13 @@ func TestArkadeSighashMasksWitnessBlobs(t *testing.T) {
 func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 	t.Parallel()
 
-	// 2-input tx with output[1] == the introspector-bearing extension
+	// 2-input tx with output[1] == the emulator-bearing extension
 	// OP_RETURN. Signing input idx=1 with SIGHASH_SINGLE therefore makes
 	// the extension output the per-output target.
 	build := func(t *testing.T) (*wire.MsgTx, ArkPrevOutFetcher, []byte) {
 		t.Helper()
 		leafScript := []byte{OP_TRUE}
-		ip, err := NewPacket(IntrospectorEntry{
+		ip, err := NewPacket(EmulatorEntry{
 			Vin:    0,
 			Script: []byte{OP_INSPECTVERSION, OP_1, OP_EQUAL},
 			Witness: wire.TxWitness{
@@ -2787,7 +2787,7 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 			t.Run("witness_mutation_invariant", func(t *testing.T) {
 				t.Parallel()
 				mutated, _, _ := build(t)
-				mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+				mutateEmulatorEntry(t, mutated, func(e *EmulatorEntry) {
 					e.Witness = wire.TxWitness{
 						[]byte("totally-different-witness-content"),
 						[]byte{0xff, 0xff, 0xff},
@@ -2796,19 +2796,19 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 				})
 				require.Equal(t, baseDigest,
 					arkadeDigest(t, mutated, idx, fetcher, leafScript, f.flag),
-					"SIGHASH_SINGLE per-output mask must drop introspector witness bytes")
+					"SIGHASH_SINGLE per-output mask must drop emulator witness bytes")
 			})
 
 			t.Run("script_mutation_changes_digest", func(t *testing.T) {
 				t.Parallel()
 				mutated, _, _ := build(t)
-				mutateIntrospectorEntry(t, mutated, func(e *IntrospectorEntry) {
+				mutateEmulatorEntry(t, mutated, func(e *EmulatorEntry) {
 					e.Script = append([]byte(nil), e.Script...)
 					e.Script[0] ^= 0x01
 				})
 				require.NotEqual(t, baseDigest,
 					arkadeDigest(t, mutated, idx, fetcher, leafScript, f.flag),
-					"introspector script bytes must remain committed via per-output hash")
+					"emulator script bytes must remain committed via per-output hash")
 			})
 
 			t.Run("matches_bip342_over_masked_tx", func(t *testing.T) {
@@ -2896,7 +2896,7 @@ func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
 			require.NoError(t, err)
 
 			// btcd's BIP342 digest over the masked tx. There is at
-			// most one introspector-packet output per tx, so this
+			// most one emulator-packet output per tx, so this
 			// substitutes the masked replacement at its index (if
 			// any) and leaves every other output untouched.
 			maskedTx := tx.Copy()
@@ -2979,7 +2979,7 @@ func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
 
 // TestArkadeSighashIsDomainSeparated locks in the BIP-340 tag separation: the
 // arkade digest must NOT collide with the BIP342 digest. We use a tx with no
-// introspector packet so masking is a no-op — any digest difference is solely
+// emulator packet so masking is a no-op — any digest difference is solely
 // from the tag.
 func TestArkadeSighashIsDomainSeparated(t *testing.T) {
 	t.Parallel()

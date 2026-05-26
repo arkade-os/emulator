@@ -1,4 +1,4 @@
-module github.com/ArkLabsHQ/introspector/pkg/arkade
+module github.com/ArkLabsHQ/emulator/pkg/arkade
 
 go 1.26.3
 

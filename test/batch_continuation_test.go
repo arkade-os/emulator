@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -31,7 +31,7 @@ import (
 //
 // Semantics: each batch swap is a real contract transition. The intent proof
 // spends the current counter VTXO, carries counter=N+1 in its output packets,
-// and outputs the same value back to the same contract script. The introspector
+// and outputs the same value back to the same contract script. The emulator
 // executes the arkade script against that intent proof and signs only because
 // counter=N+1 is a valid transition from the current counter=N.
 //
@@ -51,7 +51,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, 50000)
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -76,7 +76,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	counterVtxoScript := createVtxoScriptWithArkadeAndCSV(
 		alicePubKey,
 		aliceAddr.Signer,
-		introspectorPubKey,
+		emulatorPubKey,
 		arkade.ArkadeScriptHash(counterArkadeScript),
 	)
 	counterTapscript := onlyForfeitScript(t, counterVtxoScript)
@@ -123,14 +123,14 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		1,
 	)
 	requireCounterPacket(t, firstIntentPtx.UnsignedTx, 1)
-	require.NoError(t, executeArkadeScripts(t, firstIntentPtx, nil, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, firstIntentPtx, nil, emulatorPubKey))
 
 	signedIntent := signAndSubmitCounterIntent(
 		t,
 		ctx,
 		aliceWallet,
 		explorer,
-		introspectorClient,
+		emulatorClient,
 		firstIntentPtx,
 		firstMessage,
 	)
@@ -152,14 +152,14 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 
 	batchHandler := &capturingBatchEventsHandler{
 		delegateBatchEventsHandler: &delegateBatchEventsHandler{
-			intentId:           intentId,
-			intent:             signedIntent,
-			vtxosToForfeit:     []client.TapscriptsVtxo{vtxo},
-			signerSession:      signerSession,
-			introspectorClient: introspectorClient,
-			wallet:             aliceWallet,
-			client:             grpcClient,
-			explorer:           explorer,
+			intentId:       intentId,
+			intent:         signedIntent,
+			vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+			signerSession:  signerSession,
+			emulatorClient: emulatorClient,
+			wallet:         aliceWallet,
+			client:         grpcClient,
+			explorer:       explorer,
 		},
 	}
 
@@ -206,14 +206,14 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		2,
 	)
 	requireCounterPacket(t, secondIntentPtx.UnsignedTx, 2)
-	require.NoError(t, executeArkadeScripts(t, secondIntentPtx, nil, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, secondIntentPtx, nil, emulatorPubKey))
 
 	signAndSubmitCounterIntent(
 		t,
 		ctx,
 		aliceWallet,
 		explorer,
-		introspectorClient,
+		emulatorClient,
 		secondIntentPtx,
 		secondMessage,
 	)
@@ -314,7 +314,7 @@ func buildCounterIncrementIntent(
 
 	intentPtx := &intentProof.Packet
 	addCounterPacket(t, intentPtx, nextCounterValue)
-	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{
 		{Vin: 1, Script: counterArkadeScript},
 	})
 	require.NoError(t, txutils.SetArkPsbtField(
@@ -329,10 +329,10 @@ func signAndSubmitCounterIntent(
 	ctx context.Context,
 	walletSvc wallet.WalletService,
 	explorerSvc explorer.Explorer,
-	introspectorClient introspectorclient.TransportClient,
+	emulatorClient emulatorclient.TransportClient,
 	intentPtx *psbt.Packet,
 	message string,
-) introspectorclient.Intent {
+) emulatorclient.Intent {
 	t.Helper()
 
 	encodedIntentProof, err := intentPtx.B64Encode()
@@ -341,13 +341,13 @@ func signAndSubmitCounterIntent(
 	signedIntentProof, err := walletSvc.SignTransaction(ctx, explorerSvc, encodedIntentProof)
 	require.NoError(t, err)
 
-	approvedIntentProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	return introspectorclient.Intent{
+	return emulatorclient.Intent{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
@@ -25,14 +25,14 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
-	// Parse IntrospectorPacket from the transaction's OP_RETURN output
-	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
+	// Parse EmulatorPacket from the transaction's OP_RETURN output
+	packet, err := arkade.FindEmulatorPacket(ptx.UnsignedTx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse introspector packet: %w", err)
+		return nil, fmt.Errorf("failed to parse emulator packet: %w", err)
 	}
 
 	if len(packet) == 0 {
-		return nil, fmt.Errorf("no introspector packet found in transaction")
+		return nil, fmt.Errorf("no emulator packet found in transaction")
 	}
 
 	for _, entry := range packet {

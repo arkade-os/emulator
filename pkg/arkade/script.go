@@ -55,10 +55,10 @@ type ArkPrevOutFetcher interface {
 	FetchVtxoPrevOutPkScript(wire.OutPoint) []byte
 }
 
-// ReadArkadeScript reads an arkade script from an IntrospectorEntry and validates
+// ReadArkadeScript reads an arkade script from an EmulatorEntry and validates
 // it against the tapscript in the PSBT input. The entry contains the script and
-// witness data extracted from the Introspector Packet (OP_RETURN TLV).
-func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry IntrospectorEntry) (*ArkadeScript, error) {
+// witness data extracted from the Emulator Packet (OP_RETURN TLV).
+func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry EmulatorEntry) (*ArkadeScript, error) {
 	inputIndex := int(entry.Vin)
 	if len(ptx.Inputs) <= inputIndex {
 		return nil, fmt.Errorf("input index out of range")
@@ -151,7 +151,7 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 	engine.taprootCtx = newTaprootExecutionCtxForLeaf(
 		s.spendingTapLeaf, int32(s.witness.SerializeSize()),
 	)
-	// Arkade scripts execute from the introspector packet, not from the
+	// Arkade scripts execute from the emulator packet, not from the
 	// spending tapleaf whose hash the sighash commits to.
 	engine.taprootCtx.trackCodeSep = false
 
@@ -169,13 +169,13 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 		engine.SetAssetPacket(ap)
 	}
 
-	// Parse & set introspector packet from transaction outputs if present
-	packet, err := FindIntrospectorPacket(spendingTx)
+	// Parse & set emulator packet from transaction outputs if present
+	packet, err := FindEmulatorPacket(spendingTx)
 	if err != nil {
-		return fmt.Errorf("failed to parse introspector packet: %w", err)
+		return fmt.Errorf("failed to parse emulator packet: %w", err)
 	}
 	if packet != nil {
-		engine.SetIntrospectorPacket(packet)
+		engine.SetEmulatorPacket(packet)
 	}
 
 	if len(s.witness) > 0 {
@@ -199,7 +199,7 @@ func (s *ArkadeScript) PubKey() *btcec.PublicKey {
 
 // TapLeaf returns the Bitcoin spending tapleaf from the PSBT input. Arkade
 // signature hashes commit to this leaf hash, while the arkade script itself is
-// committed separately by the introspector key tweak and packet entry.
+// committed separately by the emulator key tweak and packet entry.
 func (s *ArkadeScript) TapLeaf() txscript.TapLeaf {
 	return s.spendingTapLeaf
 }

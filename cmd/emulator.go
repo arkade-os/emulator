@@ -5,8 +5,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ArkLabsHQ/introspector/internal/config"
-	grpcservice "github.com/ArkLabsHQ/introspector/internal/interface/grpc"
+	"github.com/ArkLabsHQ/emulator/internal/config"
+	grpcservice "github.com/ArkLabsHQ/emulator/internal/interface/grpc"
 	log "github.com/sirupsen/logrus"
 )
 

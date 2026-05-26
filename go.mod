@@ -1,4 +1,4 @@
-module github.com/ArkLabsHQ/introspector
+module github.com/ArkLabsHQ/emulator
 
 go 1.26.3
 
@@ -6,16 +6,16 @@ replace github.com/btcsuite/btcd/btcec/v2 => github.com/btcsuite/btcd/btcec/v2 v
 
 replace github.com/arkade-os/go-sdk => github.com/arkade-os/go-sdk v0.8.2-0.20260303154656-f29d9e77d5c7
 
-replace github.com/ArkLabsHQ/introspector/pkg/arkade => ./pkg/arkade
+replace github.com/ArkLabsHQ/emulator/pkg/arkade => ./pkg/arkade
 
-replace github.com/ArkLabsHQ/introspector/pkg/client => ./pkg/client
+replace github.com/ArkLabsHQ/emulator/pkg/client => ./pkg/client
 
-replace github.com/ArkLabsHQ/introspector/api-spec => ./api-spec
+replace github.com/ArkLabsHQ/emulator/api-spec => ./api-spec
 
 require (
-	github.com/ArkLabsHQ/introspector/api-spec v0.0.0-00010101000000-000000000000
-	github.com/ArkLabsHQ/introspector/pkg/arkade v0.0.0-00010101000000-000000000000
-	github.com/ArkLabsHQ/introspector/pkg/client v0.0.0-00010101000000-000000000000
+	github.com/ArkLabsHQ/emulator/api-spec v0.0.0-00010101000000-000000000000
+	github.com/ArkLabsHQ/emulator/pkg/arkade v0.0.0-00010101000000-000000000000
+	github.com/ArkLabsHQ/emulator/pkg/client v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260423153230-9b5d8e96256f
 	github.com/arkade-os/arkd/pkg/errors v0.0.0-20260303153651-8615412e4dea
 	github.com/arkade-os/arkd/pkg/macaroons v0.7.1-0.20260216152434-74a173c67a37

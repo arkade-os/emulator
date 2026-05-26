@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
@@ -53,7 +53,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	assetPacket := createIssuanceAssetPacket(t, 0, assetAmount)
 	// Asset packet at index 0, P2A at index 1
 	arkadeScript := createArkadeScriptWithAssetIntrospection(t, alicePkScript, assetAmount)
-	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, publicKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -149,8 +149,8 @@ func TestOffchainTxWithAsset(t *testing.T) {
 
 	addAssetPacketToTx(t, validTx, assetPacket)
 
-	// Add the introspector packet with the arkade script for input 0
-	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+	// Add the emulator packet with the arkade script for input 0
+	addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: arkadeScript},
 	})
 
@@ -184,8 +184,8 @@ func TestOffchainTxWithAsset(t *testing.T) {
 
 	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
 
-	// Submit to introspector - should succeed as the asset introspection opcodes will validate correctly
-	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+	// Submit to emulator - should succeed as the asset introspection opcodes will validate correctly
+	_, _, err = emulatorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
 	waitForVtxos()
@@ -210,7 +210,7 @@ func TestSettlementWithAsset(t *testing.T) {
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
 
-	introspectorClient, publicKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, publicKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -329,8 +329,8 @@ func TestSettlementWithAsset(t *testing.T) {
 	issuancePacket := createIssuanceAssetPacket(t, 0, assetAmount)
 	addAssetPacketToTx(t, mintTx, issuancePacket)
 
-	// Add the introspector packet with the mint arkade script for input 0
-	addIntrospectorPacket(t, mintTx, []arkade.IntrospectorEntry{
+	// Add the emulator packet with the mint arkade script for input 0
+	addEmulatorPacket(t, mintTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: mintArkadeScript},
 	})
 
@@ -352,8 +352,8 @@ func TestSettlementWithAsset(t *testing.T) {
 
 	waitForMintVtxo := watchForPreconfirmedVtxos(t, indexerSvc, mintTx, 0)
 
-	// Submit mint tx to introspector
-	_, _, err = introspectorClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
+	// Submit mint tx to emulator
+	_, _, err = emulatorClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
 	require.NoError(t, err)
 
 	waitForMintVtxo()
@@ -462,7 +462,7 @@ func TestSettlementWithAsset(t *testing.T) {
 	intentProof.Inputs[1].Unknowns = append(intentProof.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &intentProof.Packet
-	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{
 		{Vin: 1, Script: settleArkadeScript},
 	})
 
@@ -473,14 +473,14 @@ func TestSettlementWithAsset(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
-	// Submit intent to introspector (validates the settle arkade script with transfer packet)
-	approvedIntentProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+	// Submit intent to emulator (validates the settle arkade script with transfer packet)
+	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	signedIntent := introspectorclient.Intent{
+	signedIntent := emulatorclient.Intent{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}
@@ -500,14 +500,14 @@ func TestSettlementWithAsset(t *testing.T) {
 		Tapscripts: settleTapscripts,
 	}
 
-	introspectorBatchHandler := &delegateBatchEventsHandler{
-		intentId:           intentId,
-		intent:             signedIntent,
-		vtxosToForfeit:     []client.TapscriptsVtxo{vtxo},
-		signerSession:      treeSignerSession,
-		introspectorClient: introspectorClient,
-		wallet:             bobWallet,
-		client:             grpcClient,
+	emulatorBatchHandler := &delegateBatchEventsHandler{
+		intentId:       intentId,
+		intent:         signedIntent,
+		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		signerSession:  treeSignerSession,
+		emulatorClient: emulatorClient,
+		wallet:         bobWallet,
+		client:         grpcClient,
 	}
 
 	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
@@ -517,7 +517,7 @@ func TestSettlementWithAsset(t *testing.T) {
 		stop()
 	})
 
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, introspectorBatchHandler)
+	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }

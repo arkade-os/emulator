@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -44,8 +44,8 @@ const (
 // TestCovenantHTLC exercises an HTLC whose spending rules are enforced by
 // arkade covenants instead of receiver/sender signatures.
 //
-// The VTXO is owned by a 2-of-2 multisig (arkd signer + introspector-tweaked
-// key) wrapped in a path-specific predicate closure. The introspector only
+// The VTXO is owned by a 2-of-2 multisig (arkd signer + emulator-tweaked
+// key) wrapped in a path-specific predicate closure. The emulator only
 // signs once the arkade covenant on the spending tx passes, pinning output[i]
 // to the current input — so a taker claiming several HTLCs in one tx cannot
 // collapse them onto a single output.
@@ -68,7 +68,7 @@ func TestCovenantHTLC(t *testing.T) {
 		grpcAlice.Close()
 	})
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -103,9 +103,9 @@ func TestCovenantHTLC(t *testing.T) {
 						PubKeys: []*btcec.PublicKey{
 							// server
 							aliceAddr.Signer,
-							// introspector
+							// emulator
 							arkade.ComputeArkadeScriptPublicKey(
-								introspectorPubKey,
+								emulatorPubKey,
 								arkade.ArkadeScriptHash(arkadeScript),
 							),
 						},
@@ -140,7 +140,7 @@ func TestCovenantHTLC(t *testing.T) {
 				))
 			}
 
-			addIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{
+			addEmulatorPacket(t, ptx, []arkade.EmulatorEntry{
 				{Vin: 0, Script: arkadeScript, Witness: witness},
 			})
 			return ptx, checkpoints
@@ -152,7 +152,7 @@ func TestCovenantHTLC(t *testing.T) {
 			encodedTx, err := candidateTx.B64Encode()
 			require.NoError(t, err)
 
-			_, _, err = introspectorClient.SubmitTx(
+			_, _, err = emulatorClient.SubmitTx(
 				ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 			)
 			require.Error(t, err)
@@ -180,7 +180,7 @@ func TestCovenantHTLC(t *testing.T) {
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitTx(
 			ctx, encodedValidTx, encodeCheckpoints(t, validCheckpoints),
 		)
 		require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestCovenantHTLC(t *testing.T) {
 							PubKeys: []*btcec.PublicKey{
 								aliceAddr.Signer,
 								arkade.ComputeArkadeScriptPublicKey(
-									introspectorPubKey, arkadeScriptHash,
+									emulatorPubKey, arkadeScriptHash,
 								),
 							},
 						},
@@ -248,12 +248,12 @@ func TestCovenantHTLC(t *testing.T) {
 
 		// One condition witness per input on the ark tx, plus one per
 		// checkpoint (each checkpoint has a single input).
-		entries := make([]arkade.IntrospectorEntry, numHTLCs)
+		entries := make([]arkade.EmulatorEntry, numHTLCs)
 		for i, preimage := range preimages {
 			require.NoError(t, txutils.SetArkPsbtField(
 				ptx, i, txutils.ConditionWitnessField, wire.TxWitness{preimage},
 			))
-			entries[i] = arkade.IntrospectorEntry{
+			entries[i] = arkade.EmulatorEntry{
 				Vin:     uint16(i),
 				Script:  arkadeScript,
 				Witness: wire.TxWitness{},
@@ -265,7 +265,7 @@ func TestCovenantHTLC(t *testing.T) {
 			))
 		}
 
-		addIntrospectorPacket(t, ptx, entries)
+		addEmulatorPacket(t, ptx, entries)
 
 		vouts := make([]uint32, numHTLCs)
 		for i := range numHTLCs {
@@ -276,7 +276,7 @@ func TestCovenantHTLC(t *testing.T) {
 		encodedTx, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitTx(
 			ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 		)
 		require.NoError(t, err)
@@ -295,9 +295,9 @@ func TestCovenantHTLC(t *testing.T) {
 						PubKeys: []*btcec.PublicKey{
 							// server
 							aliceAddr.Signer,
-							// introspector
+							// emulator
 							arkade.ComputeArkadeScriptPublicKey(
-								introspectorPubKey,
+								emulatorPubKey,
 								arkade.ArkadeScriptHash(arkadeScript),
 							),
 						},
@@ -320,14 +320,14 @@ func TestCovenantHTLC(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+			addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 				{Vin: 0, Script: arkadeScript, Witness: witness},
 			})
 
 			encodedTx, err := candidateTx.B64Encode()
 			require.NoError(t, err)
 
-			_, _, err = introspectorClient.SubmitTx(
+			_, _, err = emulatorClient.SubmitTx(
 				ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 			)
 			require.Error(t, err)
@@ -353,7 +353,7 @@ func TestCovenantHTLC(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: arkadeScript, Witness: witness},
 		})
 
@@ -362,7 +362,7 @@ func TestCovenantHTLC(t *testing.T) {
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitTx(
 			ctx, encodedValidTx, encodeCheckpoints(t, validCheckpoints),
 		)
 		require.NoError(t, err)

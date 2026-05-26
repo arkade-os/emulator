@@ -16,13 +16,13 @@ proto-lint:
 	@docker run --rm --volume "$(shell pwd):/workspace" --workdir /workspace buf lint
 
 run:
-	@echo "Running introspector..."
-	$(call setup_env, envs/introspector.dev.env)
-	@go run cmd/introspector.go
+	@echo "Running emulator..."
+	$(call setup_env, envs/emulator.dev.env)
+	@go run cmd/emulator.go
 
 test:
 	@echo "Running unit tests..."
-	@go test -v $$(go list ./... | grep -v '/test$$') github.com/ArkLabsHQ/introspector/pkg/arkade/... github.com/ArkLabsHQ/introspector/pkg/client/...
+	@go test -v $$(go list ./... | grep -v '/test$$') github.com/ArkLabsHQ/emulator/pkg/arkade/... github.com/ArkLabsHQ/emulator/pkg/client/...
 
 integrationtest:
 	@echo "Running integration test..."
@@ -39,15 +39,15 @@ docker-stop:
 	@docker compose -f docker-compose.regtest.yml down -v
 
 build:
-	@echo "Building introspector..."
-	@go build -o build/introspector-$(shell go env GOOS)-$(shell go env GOARCH) cmd/introspector.go
+	@echo "Building emulator..."
+	@go build -o build/emulator-$(shell go env GOOS)-$(shell go env GOARCH) cmd/emulator.go
 
 build-all:
-	@echo "Building introspector for all platforms..."
-	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/introspector-linux-amd64 cmd/introspector.go
-	@CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/introspector-linux-arm64 cmd/introspector.go
-	@CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o build/introspector-darwin-amd64 cmd/introspector.go
-	@CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o build/introspector-darwin-arm64 cmd/introspector.go
+	@echo "Building emulator for all platforms..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/emulator-linux-amd64 cmd/emulator.go
+	@CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o build/emulator-linux-arm64 cmd/emulator.go
+	@CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o build/emulator-darwin-amd64 cmd/emulator.go
+	@CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o build/emulator-darwin-arm64 cmd/emulator.go
 
 lint:
 	golangci-lint run --fix

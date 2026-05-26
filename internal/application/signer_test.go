@@ -3,7 +3,7 @@ package application
 import (
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -14,7 +14,7 @@ import (
 
 func TestResolveArkadeScriptSigner(t *testing.T) {
 	type resolveCall struct {
-		entry   arkade.IntrospectorEntry
+		entry   arkade.EmulatorEntry
 		wantKey *btcec.PrivateKey
 	}
 
@@ -24,8 +24,8 @@ func TestResolveArkadeScriptSigner(t *testing.T) {
 		nonMatchingDeprecatedKey := newResolverPrivateKey(t)
 		matchingDeprecatedKey := newResolverPrivateKey(t)
 
-		entry := arkade.IntrospectorEntry{Vin: 0, Script: []byte{txscript.OP_TRUE}}
-		mixedEntries := []arkade.IntrospectorEntry{
+		entry := arkade.EmulatorEntry{Vin: 0, Script: []byte{txscript.OP_TRUE}}
+		mixedEntries := []arkade.EmulatorEntry{
 			{Vin: 0, Script: []byte{txscript.OP_TRUE}},
 			{Vin: 1, Script: []byte{txscript.OP_FALSE}},
 		}
@@ -104,7 +104,7 @@ func TestResolveArkadeScriptSigner(t *testing.T) {
 		currentKey := newResolverPrivateKey(t)
 		deprecatedKey := newResolverPrivateKey(t)
 		packetKey := newResolverPrivateKey(t)
-		entry := arkade.IntrospectorEntry{Vin: 0, Script: []byte{txscript.OP_TRUE}}
+		entry := arkade.EmulatorEntry{Vin: 0, Script: []byte{txscript.OP_TRUE}}
 
 		tx := wire.NewMsgTx(2)
 		tx.AddTxIn(&wire.TxIn{})
@@ -118,7 +118,7 @@ func TestResolveArkadeScriptSigner(t *testing.T) {
 			current    signer
 			deprecated []signer
 			ptx        *psbt.Packet
-			entry      arkade.IntrospectorEntry
+			entry      arkade.EmulatorEntry
 			requireErr func(t *testing.T, err error)
 		}{
 			{
@@ -165,7 +165,7 @@ func newResolverPrivateKey(t *testing.T) *btcec.PrivateKey {
 	return key
 }
 
-func newResolverPacket(t *testing.T, entry arkade.IntrospectorEntry, signerPublicKey *btcec.PublicKey) *psbt.Packet {
+func newResolverPacket(t *testing.T, entry arkade.EmulatorEntry, signerPublicKey *btcec.PublicKey) *psbt.Packet {
 	t.Helper()
 
 	return newResolverPacketForEntries(t, []resolverEntrySigner{
@@ -174,7 +174,7 @@ func newResolverPacket(t *testing.T, entry arkade.IntrospectorEntry, signerPubli
 }
 
 type resolverEntrySigner struct {
-	entry           arkade.IntrospectorEntry
+	entry           arkade.EmulatorEntry
 	signerPublicKey *btcec.PublicKey
 }
 

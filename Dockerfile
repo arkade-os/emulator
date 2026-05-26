@@ -23,7 +23,7 @@ RUN cd pkg/client && go mod download
 COPY . .
 
 # ENV GOPROXY=https://goproxy.io,direct
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-X 'main.Version=${VERSION}'" -o ./bin/introspector ./cmd/introspector.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-X 'main.Version=${VERSION}'" -o ./bin/emulator ./cmd/emulator.go
 
 # Second image, running the executable
 FROM alpine:3.20
@@ -35,8 +35,8 @@ WORKDIR /app
 COPY --from=builder /app/bin/* /app/
 
 ENV PATH="/app:${PATH}"
-ENV INTROSPECTOR_DATADIR=/app/data
+ENV EMULATOR_DATADIR=/app/data
 
 VOLUME /app/data
 
-ENTRYPOINT [ "introspector" ]
+ENTRYPOINT [ "emulator" ]

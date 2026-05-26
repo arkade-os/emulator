@@ -49,7 +49,7 @@ func isValidTaprootSigHash(hashType txscript.SigHashType) bool {
 // exactly, with two deliberate departures:
 //
 //  1. The sha_outputs digest (and the per-output digest used by SIGHASH_SINGLE)
-//     is computed over a rewritten output stream where every introspector
+//     is computed over a rewritten output stream where every emulator
 //     packet entry's witness blob is omitted (witness_len = 0). Script bytes,
 //     vin ordering, entry count, co-located ARK extension packets (asset
 //     packet etc.), and every non-extension output pass through unchanged.
@@ -211,7 +211,7 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 	}
 
 	// 9. SIGHASH_SINGLE per-output digest. If the input index happens to
-	// map to the introspector-packet OP_RETURN, substitute the masked
+	// map to the emulator-packet OP_RETURN, substitute the masked
 	// version so the digest stays witness-blob-independent.
 	if sigHashMode == txscript.SigHashSingle {
 		if idx >= len(tx.TxOut) {
@@ -244,13 +244,13 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 }
 
 // maskExtensionOutput finds the single OP_RETURN output carrying an
-// introspector packet (there is at most one per tx — extension.IsExtension
+// emulator packet (there is at most one per tx — extension.IsExtension
 // returns on the first match and the extension parser rejects duplicate
 // packet types) and returns a copy with every entry's witness blob masked
 // out, along with its index in tx.TxOut.
 //
 // Returns (nil, -1, nil) when there is no such output, when the extension
-// fails to parse, or when the extension contains no introspector packet —
+// fails to parse, or when the extension contains no emulator packet —
 // masking is fail-open at any parsing boundary so a corrupted OP_RETURN
 // cannot disable digest computation.
 func maskExtensionOutput(tx *wire.MsgTx) (*wire.TxOut, int, error) {
@@ -271,13 +271,13 @@ func maskExtensionOutput(tx *wire.MsgTx) (*wire.TxOut, int, error) {
 			if !ok {
 				return nil, -1, nil
 			}
-			ip, err := DeserializeIntrospectorPacket(unknown.Data)
+			ip, err := DeserializeEmulatorPacket(unknown.Data)
 			if err != nil {
 				return nil, -1, nil
 			}
-			maskedData, err := serializeIntrospectorPacketMasked(ip)
+			maskedData, err := serializeEmulatorPacketMasked(ip)
 			if err != nil {
-				return nil, -1, fmt.Errorf("reserialize masked introspector packet: %w", err)
+				return nil, -1, fmt.Errorf("reserialize masked emulator packet: %w", err)
 			}
 			ext[j] = extension.UnknownPacket{
 				PacketType: PacketType,
@@ -289,14 +289,14 @@ func maskExtensionOutput(tx *wire.MsgTx) (*wire.TxOut, int, error) {
 			}
 			return &wire.TxOut{Value: out.Value, PkScript: newScript}, i, nil
 		}
-		// Extension present but no introspector packet inside.
+		// Extension present but no emulator packet inside.
 		return nil, -1, nil
 	}
 	return nil, -1, nil
 }
 
 // arkadeOutputsHash mirrors BIP342's sha_outputs but substitutes the single
-// introspector-packet OP_RETURN (if any) with its witness-masked form before
+// emulator-packet OP_RETURN (if any) with its witness-masked form before
 // hashing. Every other output is hashed exactly as it appears in the tx.
 func arkadeOutputsHash(tx *wire.MsgTx) ([]byte, error) {
 	masked, maskedIdx, err := maskExtensionOutput(tx)

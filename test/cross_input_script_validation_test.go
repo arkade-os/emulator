@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -46,35 +46,35 @@ func TestCrossInputScriptValidation(t *testing.T) {
 	t.Run("op_inspect_input_arkade_script_hash/invalid_input_does_not_exist", func(t *testing.T) {
 		candidateTx, checkpoints, _ := env.buildTwoInputSpend(t, scriptHashInspectorScript, scriptOne)
 
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: scriptHashInspectorScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "no introspector entry for vin 1")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "no emulator entry for vin 1")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
 	t.Run("op_inspect_input_arkade_script_hash/invalid_script_hash_mismatch", func(t *testing.T) {
 		candidateTx, checkpoints, _ := env.buildTwoInputSpend(t, scriptHashInspectorScript, nonOpOneScript)
 
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: scriptHashInspectorScript},
 			{Vin: 1, Script: nonOpOneScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
 	t.Run("op_inspect_input_arkade_script_hash/valid", func(t *testing.T) {
 		candidateTx, checkpoints, _ := env.buildTwoInputSpend(t, scriptHashInspectorScript, scriptOne)
 
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: scriptHashInspectorScript},
 			{Vin: 1, Script: scriptOne},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.emulatorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -89,11 +89,11 @@ func TestCrossInputScriptValidation(t *testing.T) {
 	t.Run("op_inspect_input_arkade_witness_hash/invalid_input_does_not_exist", func(t *testing.T) {
 		candidateTx, checkpoints, _ := env.buildTwoInputSpend(t, witnessHashInspectorScript, witnessAwareScript)
 
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: witnessHashInspectorScript},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "no introspector entry for vin 1")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "no emulator entry for vin 1")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -101,24 +101,24 @@ func TestCrossInputScriptValidation(t *testing.T) {
 		candidateTx, checkpoints, _ := env.buildTwoInputSpend(t, witnessHashInspectorScript, witnessAwareScript)
 		invalidWitness := newCrossInputWitness(t, []byte("arkade-witness-invalid"))
 
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: witnessHashInspectorScript},
 			{Vin: 1, Script: witnessAwareScript, Witness: invalidWitness},
 		})
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
 	t.Run("op_inspect_input_arkade_witness_hash/valid", func(t *testing.T) {
 		candidateTx, checkpoints, _ := env.buildTwoInputSpend(t, witnessHashInspectorScript, witnessAwareScript)
 
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: witnessHashInspectorScript},
 			{Vin: 1, Script: witnessAwareScript, Witness: validWitness},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.emulatorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -135,7 +135,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.emulatorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -148,7 +148,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.emulatorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -161,7 +161,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "OP_EQUALVERIFY failed")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "OP_EQUALVERIFY failed")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -174,7 +174,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -187,7 +187,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: inspectPacketType, Data: inspectPacketPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "packet type out of range")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "packet type out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -207,7 +207,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.emulatorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 
@@ -222,7 +222,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "OP_EQUALVERIFY failed")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "OP_EQUALVERIFY failed")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -237,7 +237,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "false stack entry at end of script execution")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "false stack entry at end of script execution")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -252,7 +252,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "input index cannot be negative")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "input index cannot be negative")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -267,7 +267,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "input index out of range")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "input index out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -282,7 +282,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 			extension.UnknownPacket{PacketType: packetType, Data: expectedPayload},
 		)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "packet type out of range")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "packet type out of range")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -298,7 +298,7 @@ func TestCrossInputScriptValidation(t *testing.T) {
 
 		removePrevoutTxFields(t, candidateTx, 0, 1)
 
-		executeAndExpectFailure(t, candidateTx, checkpoints, env.introspectorPubKey, "prevout tx not available for input 0")
+		executeAndExpectFailure(t, candidateTx, checkpoints, env.emulatorPubKey, "prevout tx not available for input 0")
 		env.submitAndExpectFailure(t, candidateTx, checkpoints)
 	})
 
@@ -344,12 +344,12 @@ func TestCrossInputScriptValidation(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 0, arkade.PrevArkTxField, *fundingPtx.UnsignedTx))
 		require.NoError(t, txutils.SetArkPsbtField(candidateTx, 1, arkade.PrevArkTxField, *fundingPtx.UnsignedTx))
-		addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: inputOneIsBobScript},
 			{Vin: 1, Script: baseScriptTwo},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, candidateTx, checkpoints, env.emulatorPubKey))
 		env.submitAndFinalize(t, candidateTx, checkpoints)
 	})
 }
@@ -362,8 +362,8 @@ type crossInputTestEnv struct {
 	bobPubKey             *btcec.PublicKey
 	grpcBob               client.TransportClient
 	aliceAddr             *arklib.Address
-	introspectorClient    introspectorclient.TransportClient
-	introspectorPubKey    *btcec.PublicKey
+	emulatorClient        emulatorclient.TransportClient
+	emulatorPubKey        *btcec.PublicKey
 	checkpointScriptBytes []byte
 	indexerSvc            indexer.Indexer
 	explorer              explorer.Explorer
@@ -396,10 +396,10 @@ func newCrossInputTestEnv(t *testing.T) *crossInputTestEnv {
 		grpcBob.Close()
 	})
 
-	// Step 2: Fund Alice and connect to the introspector service.
+	// Step 2: Fund Alice and connect to the emulator service.
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, 400000)
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -430,8 +430,8 @@ func newCrossInputTestEnv(t *testing.T) *crossInputTestEnv {
 		bobPubKey:             bobPubKey,
 		grpcBob:               grpcBob,
 		aliceAddr:             aliceAddr,
-		introspectorClient:    introspectorClient,
-		introspectorPubKey:    introspectorPubKey,
+		emulatorClient:        emulatorClient,
+		emulatorPubKey:        emulatorPubKey,
 		checkpointScriptBytes: checkpointScriptBytes,
 		indexerSvc:            indexerSvc,
 		explorer:              explorerSvc,
@@ -606,8 +606,8 @@ func (env *crossInputTestEnv) buildInspectPacketSpend(
 		addCrossInputExtensionPacket(t, candidateTx, packet)
 	}
 
-	// Step 3: Add introspector entries for the inspected input and its sibling.
-	addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+	// Step 3: Add emulator entries for the inspected input and its sibling.
+	addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: script},
 		{Vin: 1, Script: siblingScript},
 	})
@@ -638,8 +638,8 @@ func (env *crossInputTestEnv) buildInspectInputPacketSpend(
 		env.submitAndFinalize,
 	)
 
-	// Step 2: Add introspector entries for the inspected input and its sibling.
-	addIntrospectorPacket(t, candidateTx, []arkade.IntrospectorEntry{
+	// Step 2: Add emulator entries for the inspected input and its sibling.
+	addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: scriptA},
 		{Vin: 1, Script: scriptB},
 	})
@@ -669,7 +669,7 @@ func (env *crossInputTestEnv) buildSpendTemplate(t *testing.T, scriptBytes []byt
 	vtxoScript := createVtxoScriptWithArkadeScript(
 		env.bobPubKey,
 		env.aliceAddr.Signer,
-		env.introspectorPubKey,
+		env.emulatorPubKey,
 		arkade.ArkadeScriptHash(scriptBytes),
 	)
 
@@ -826,9 +826,9 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	require.NoError(t, err)
 
 	addCrossInputExtensionPacket(t, previousArkTx, packet)
-	addIntrospectorPacket(t, previousArkTx, []arkade.IntrospectorEntry{{Vin: 0, Script: baseScriptA}, {Vin: 1, Script: baseScriptB}})
+	addEmulatorPacket(t, previousArkTx, []arkade.EmulatorEntry{{Vin: 0, Script: baseScriptA}, {Vin: 1, Script: baseScriptB}})
 
-	require.NoError(t, executeArkadeScripts(t, previousArkTx, previousCheckpoints, env.introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, previousArkTx, previousCheckpoints, env.emulatorPubKey))
 	finalize(t, previousArkTx, previousCheckpoints)
 
 	prevOutputA := previousArkTx.UnsignedTx.TxOut[0]
@@ -919,17 +919,17 @@ func executeAndExpectFailure(
 	t *testing.T,
 	candidateTx *psbt.Packet,
 	candidateCheckpoints []*psbt.Packet,
-	introspectorPubKey *btcec.PublicKey,
+	emulatorPubKey *btcec.PublicKey,
 	expectedErr string,
 ) {
 	t.Helper()
 
-	err := executeArkadeScripts(t, candidateTx, candidateCheckpoints, introspectorPubKey)
+	err := executeArkadeScripts(t, candidateTx, candidateCheckpoints, emulatorPubKey)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), expectedErr)
 }
 
-// submitAndExpectFailure checks that the introspector rejects the candidate tx.
+// submitAndExpectFailure checks that the emulator rejects the candidate tx.
 func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 	t.Helper()
 
@@ -949,7 +949,7 @@ func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *
 		signedCheckpoints = append(signedCheckpoints, signed)
 	}
 
-	_, _, err = env.introspectorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
+	_, _, err = env.emulatorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to process transaction")
 }
@@ -979,8 +979,8 @@ func (env *crossInputTestEnv) submitAndFinalize(t *testing.T, candidateTx *psbt.
 		signedCheckpoints = append(signedCheckpoints, signed)
 	}
 
-	// Step 2: Submit once through introspector.
-	_, _, err = env.introspectorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
+	// Step 2: Submit once through emulator.
+	_, _, err = env.emulatorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
 	require.NoError(t, err)
 
 	// Step 3: Wait for the subscription event and assert preconfirmed/unspent.

@@ -8,10 +8,10 @@
     "/v1/finalization": {
       "post": {
         "tags": [
-          "IntrospectorService"
+          "EmulatorService"
         ],
         "description": "SubmitFinalization conditionally signs forfeit and/or boarding inputs.\nIt only signs if the signer's signature is found in the intent proof.\nconnector tree is used to verify the forfeits are part of a real batch session.\nSubmitFinalization works in sequence with SubmitIntent.\n1. SubmitIntent before intent registration.\n2. SubmitFinalization during batch finalization.",
-        "operationId": "IntrospectorService_SubmitFinalization",
+        "operationId": "EmulatorService_SubmitFinalization",
         "requestBody": {
           "content": {
             "application/json": {
@@ -49,10 +49,10 @@
     "/v1/info": {
       "get": {
         "tags": [
-          "IntrospectorService"
+          "EmulatorService"
         ],
         "description": "GetInfo returns service metadata including the base signer's public key.\nthe public key should be tweaked with the arkade script hash before being used as forfeit.",
-        "operationId": "IntrospectorService_GetInfo",
+        "operationId": "EmulatorService_GetInfo",
         "responses": {
           "200": {
             "description": "a successful response.",
@@ -80,10 +80,10 @@
     "/v1/intent": {
       "post": {
         "tags": [
-          "IntrospectorService"
+          "EmulatorService"
         ],
         "description": "SubmitIntent signs an intent proof after validating the register message\nand executing Arkade Script on the intent proof transaction.",
-        "operationId": "IntrospectorService_SubmitIntent",
+        "operationId": "EmulatorService_SubmitIntent",
         "requestBody": {
           "content": {
             "application/json": {
@@ -121,10 +121,10 @@
     "/v1/onchain-tx": {
       "post": {
         "tags": [
-          "IntrospectorService"
+          "EmulatorService"
         ],
-        "description": "SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts\non each input whose tapscript contains the introspector's tweaked key.",
-        "operationId": "IntrospectorService_SubmitOnchainTx",
+        "description": "SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts\non each input whose tapscript contains the emulator's tweaked key.",
+        "operationId": "EmulatorService_SubmitOnchainTx",
         "requestBody": {
           "content": {
             "application/json": {
@@ -162,10 +162,10 @@
     "/v1/tx": {
       "post": {
         "tags": [
-          "IntrospectorService"
+          "EmulatorService"
         ],
         "description": "SubmitTx signs an Ark transaction and its associated checkpoint\ntransactions by executing Arkade scripts on each input.\nthe script is executed only on the ark transaction, not on checkpoints.",
-        "operationId": "IntrospectorService_SubmitTx",
+        "operationId": "EmulatorService_SubmitTx",
         "requestBody": {
           "content": {
             "application/json": {
@@ -398,7 +398,7 @@
   },
   "tags": [
     {
-      "name": "IntrospectorService"
+      "name": "EmulatorService"
     }
   ]
 }

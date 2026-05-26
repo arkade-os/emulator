@@ -1,11 +1,11 @@
-module github.com/ArkLabsHQ/introspector/pkg/client
+module github.com/ArkLabsHQ/emulator/pkg/client
 
 go 1.26.3
 
-replace github.com/ArkLabsHQ/introspector/api-spec => ../../api-spec
+replace github.com/ArkLabsHQ/emulator/api-spec => ../../api-spec
 
 require (
-	github.com/ArkLabsHQ/introspector/api-spec v0.0.0-00010101000000-000000000000
+	github.com/ArkLabsHQ/emulator/api-spec v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260312030432-9ac7220f14e3
 	google.golang.org/grpc v1.79.3
 )

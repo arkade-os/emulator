@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -49,7 +49,7 @@ func TestRecursivePolicy(t *testing.T) {
 	bobAddr, err := arklib.DecodeAddressV0(bobOffchainAddr)
 	require.NoError(t, err)
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -89,7 +89,7 @@ func TestRecursivePolicy(t *testing.T) {
 	policyVtxoScript := createVtxoScriptWithArkadeScript(
 		bobPubKey,
 		bobAddr.Signer,
-		introspectorPubKey,
+		emulatorPubKey,
 		arkade.ArkadeScriptHash(arkadeScript),
 	)
 
@@ -201,7 +201,7 @@ func TestRecursivePolicy(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 
 		waitForVtxos()
@@ -215,12 +215,12 @@ func TestRecursivePolicy(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		entries := make([]arkade.IntrospectorEntry, 0, len(inputs))
+		entries := make([]arkade.EmulatorEntry, 0, len(inputs))
 		for i := range inputs {
-			entries = append(entries, arkade.IntrospectorEntry{Vin: uint16(i), Script: arkadeScript})
+			entries = append(entries, arkade.EmulatorEntry{Vin: uint16(i), Script: arkadeScript})
 		}
 
-		addIntrospectorPacket(t, candidateTx, entries)
+		addEmulatorPacket(t, candidateTx, entries)
 
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestRecursivePolicy(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	}
@@ -280,9 +280,9 @@ func TestRecursivePolicy(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	addIntrospectorPacket(t, validTx, []arkade.IntrospectorEntry{{Vin: 0, Script: arkadeScript}})
+	addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{{Vin: 0, Script: arkadeScript}})
 	require.NoError(t, txutils.SetArkPsbtField(validTx, 0, arkade.PrevArkTxField, *fundingPtx.UnsignedTx))
-	require.NoError(t, executeArkadeScripts(t, validTx, validCheckpoints, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, validTx, validCheckpoints, emulatorPubKey))
 	submitAndFinalize(validTx, validCheckpoints)
 
 	// Spend the recursive output again to prove it remains spendable.
@@ -304,8 +304,8 @@ func TestRecursivePolicy(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	addIntrospectorPacket(t, nextTx, []arkade.IntrospectorEntry{{Vin: 0, Script: arkadeScript}})
+	addEmulatorPacket(t, nextTx, []arkade.EmulatorEntry{{Vin: 0, Script: arkadeScript}})
 	require.NoError(t, txutils.SetArkPsbtField(nextTx, 0, arkade.PrevArkTxField, *validTx.UnsignedTx))
-	require.NoError(t, executeArkadeScripts(t, nextTx, nextCheckpoints, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, nextTx, nextCheckpoints, emulatorPubKey))
 	submitAndFinalize(nextTx, nextCheckpoints)
 }

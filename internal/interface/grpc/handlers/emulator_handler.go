@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	introspectorv1 "github.com/ArkLabsHQ/introspector/api-spec/protobuf/gen/introspector/v1"
-	"github.com/ArkLabsHQ/introspector/internal/application"
+	emulatorv1 "github.com/ArkLabsHQ/emulator/api-spec/protobuf/gen/emulator/v1"
+	"github.com/ArkLabsHQ/emulator/internal/application"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -25,14 +25,14 @@ func New(version string, service application.Service) *handler {
 }
 
 func (h *handler) GetInfo(
-	ctx context.Context, _ *introspectorv1.GetInfoRequest,
-) (*introspectorv1.GetInfoResponse, error) {
+	ctx context.Context, _ *emulatorv1.GetInfoRequest,
+) (*emulatorv1.GetInfoResponse, error) {
 	info, err := h.svc.GetInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return &introspectorv1.GetInfoResponse{
+	return &emulatorv1.GetInfoResponse{
 		SignerPubkey:            info.SignerPublicKey,
 		DeprecatedSignerPubkeys: append([]string(nil), info.DeprecatedSignerPublicKeys...),
 		Version:                 h.version,
@@ -40,8 +40,8 @@ func (h *handler) GetInfo(
 }
 
 func (h *handler) SubmitTx(
-	ctx context.Context, req *introspectorv1.SubmitTxRequest,
-) (*introspectorv1.SubmitTxResponse, error) {
+	ctx context.Context, req *emulatorv1.SubmitTxRequest,
+) (*emulatorv1.SubmitTxResponse, error) {
 	arkTx := req.GetArkTx()
 	checkpoints := req.GetCheckpointTxs()
 
@@ -92,15 +92,15 @@ func (h *handler) SubmitTx(
 		encodedCheckpointTxs = append(encodedCheckpointTxs, encodedCheckpointTx)
 	}
 
-	return &introspectorv1.SubmitTxResponse{
+	return &emulatorv1.SubmitTxResponse{
 		SignedArkTx:         encodedArkTx,
 		SignedCheckpointTxs: encodedCheckpointTxs,
 	}, nil
 }
 
 func (h *handler) SubmitIntent(
-	ctx context.Context, req *introspectorv1.SubmitIntentRequest,
-) (*introspectorv1.SubmitIntentResponse, error) {
+	ctx context.Context, req *emulatorv1.SubmitIntentRequest,
+) (*emulatorv1.SubmitIntentResponse, error) {
 	unsignedIntent := req.GetIntent()
 
 	if unsignedIntent == nil {
@@ -123,14 +123,14 @@ func (h *handler) SubmitIntent(
 		return nil, status.Error(codes.Internal, "failed to encode proof")
 	}
 
-	return &introspectorv1.SubmitIntentResponse{
+	return &emulatorv1.SubmitIntentResponse{
 		SignedProof: encodedProof,
 	}, nil
 }
 
 func (h *handler) SubmitFinalization(
-	ctx context.Context, req *introspectorv1.SubmitFinalizationRequest,
-) (*introspectorv1.SubmitFinalizationResponse, error) {
+	ctx context.Context, req *emulatorv1.SubmitFinalizationRequest,
+) (*emulatorv1.SubmitFinalizationResponse, error) {
 	signedIntent := req.GetSignedIntent()
 	forfeitTxs := req.GetForfeits()
 	connectorTree := req.GetConnectorTree()
@@ -201,7 +201,7 @@ func (h *handler) SubmitFinalization(
 		encodedForfeits = append(encodedForfeits, encodedForfeit)
 	}
 
-	resp := &introspectorv1.SubmitFinalizationResponse{
+	resp := &emulatorv1.SubmitFinalizationResponse{
 		SignedForfeits: encodedForfeits,
 	}
 
@@ -217,8 +217,8 @@ func (h *handler) SubmitFinalization(
 }
 
 func (h *handler) SubmitOnchainTx(
-	ctx context.Context, req *introspectorv1.SubmitOnchainTxRequest,
-) (*introspectorv1.SubmitOnchainTxResponse, error) {
+	ctx context.Context, req *emulatorv1.SubmitOnchainTxRequest,
+) (*emulatorv1.SubmitOnchainTxResponse, error) {
 	b64 := req.GetTx()
 	if len(b64) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "missing tx")
@@ -240,7 +240,7 @@ func (h *handler) SubmitOnchainTx(
 		return nil, status.Error(codes.Internal, "failed to encode tx")
 	}
 
-	return &introspectorv1.SubmitOnchainTxResponse{SignedTx: encoded}, nil
+	return &emulatorv1.SubmitOnchainTxResponse{SignedTx: encoded}, nil
 }
 
 func verifyTreeRelatedToCommitment(commitmentPtx *psbt.Packet, txTree *tree.TxTree) error {
@@ -263,7 +263,7 @@ func verifyTreeRelatedToCommitment(commitmentPtx *psbt.Packet, txTree *tree.TxTr
 	return nil
 }
 
-func parseTxTree(fromProto []*introspectorv1.TxTreeNode) (*tree.TxTree, error) {
+func parseTxTree(fromProto []*emulatorv1.TxTreeNode) (*tree.TxTree, error) {
 	flat := make(tree.FlatTxTree, 0)
 	for _, node := range fromProto {
 		flat = append(flat, tree.TxTreeNode{
@@ -284,7 +284,7 @@ func parseTxTree(fromProto []*introspectorv1.TxTreeNode) (*tree.TxTree, error) {
 	return txTree, nil
 }
 
-func parseIntent(fromProto *introspectorv1.Intent) (*application.Intent, error) {
+func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
 	proof := fromProto.GetProof()
 	message := fromProto.GetMessage()
 

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
@@ -45,14 +45,14 @@ import (
 )
 
 type delegateBatchEventsHandler struct {
-	intentId           string
-	intent             introspectorclient.Intent
-	vtxosToForfeit     []client.TapscriptsVtxo
-	signerSession      tree.SignerSession
-	introspectorClient introspectorclient.TransportClient
-	wallet             wallet.WalletService
-	client             client.TransportClient
-	explorer           explorer.Explorer
+	intentId       string
+	intent         emulatorclient.Intent
+	vtxosToForfeit []client.TapscriptsVtxo
+	signerSession  tree.SignerSession
+	emulatorClient emulatorclient.TransportClient
+	wallet         wallet.WalletService
+	client         client.TransportClient
+	explorer       explorer.Explorer
 
 	forfeitAddress string
 
@@ -215,7 +215,7 @@ func (h *delegateBatchEventsHandler) OnBatchFinalization(
 		return err
 	}
 
-	signedForfeits, signedCommitmentTx, err := h.introspectorClient.SubmitFinalization(
+	signedForfeits, signedCommitmentTx, err := h.emulatorClient.SubmitFinalization(
 		ctx, h.intent, forfeits, flatConnectorTree, event.Tx,
 	)
 	if err != nil {
@@ -430,7 +430,7 @@ func (h *boardingBatchEventsHandler) OnBatchFinalization(
 		return err
 	}
 
-	_, signedCommitmentTx, err = h.introspectorClient.SubmitFinalization(
+	_, signedCommitmentTx, err = h.emulatorClient.SubmitFinalization(
 		ctx, h.intent, []string{}, nil, signedCommitmentTx,
 	)
 	if err != nil {
@@ -774,35 +774,35 @@ func createArkadeScriptWithAssetIntrospection(t *testing.T, alicePkScript []byte
 	return arkadeScript
 }
 
-// setupIntrospectorClient creates and returns an introspector client and its signer public key
-func setupIntrospectorClient(t *testing.T, ctx context.Context) (introspectorclient.TransportClient, *btcec.PublicKey, *grpc.ClientConn) {
+// setupEmulatorClient creates and returns an emulator client and its signer public key
+func setupEmulatorClient(t *testing.T, ctx context.Context) (emulatorclient.TransportClient, *btcec.PublicKey, *grpc.ClientConn) {
 	conn, err := grpc.NewClient("localhost:7073", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 
-	introspectorClient := introspectorclient.NewGRPCClient(conn)
+	emulatorClient := emulatorclient.NewGRPCClient(conn)
 
-	introspectorInfo, err := introspectorClient.GetInfo(ctx)
+	emulatorInfo, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)
-	require.NotNil(t, introspectorInfo)
+	require.NotNil(t, emulatorInfo)
 
-	publicKeyBytes, err := hex.DecodeString(introspectorInfo.SignerPublicKey)
+	publicKeyBytes, err := hex.DecodeString(emulatorInfo.SignerPublicKey)
 	require.NoError(t, err)
 
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	require.NoError(t, err)
 
-	return introspectorClient, publicKey, conn
+	return emulatorClient, publicKey, conn
 }
 
 // createVtxoScriptWithArkadeScript creates a vtxo script with a multisig closure containing the arkade script pubkey
-func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey *btcec.PublicKey, arkadeScriptHash []byte) script.TapscriptsVtxoScript {
+func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, emulatorPubKey *btcec.PublicKey, arkadeScriptHash []byte) script.TapscriptsVtxoScript {
 	return script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
 			&script.MultisigClosure{
 				PubKeys: []*btcec.PublicKey{
 					bobPubKey,
 					aliceSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+					arkade.ComputeArkadeScriptPublicKey(emulatorPubKey, arkadeScriptHash),
 				},
 			},
 		},
@@ -810,7 +810,7 @@ func createVtxoScriptWithArkadeScript(bobPubKey, aliceSigner, introspectorPubKey
 }
 
 func createVtxoScriptWithArkadeExitClosure(
-	bobPubKey, aliceSigner, introspectorPubKey *btcec.PublicKey,
+	bobPubKey, aliceSigner, emulatorPubKey *btcec.PublicKey,
 	arkadeScriptHash []byte, csvLocktime arklib.RelativeLocktime,
 ) script.TapscriptsVtxoScript {
 	return script.TapscriptsVtxoScript{
@@ -822,7 +822,7 @@ func createVtxoScriptWithArkadeExitClosure(
 				MultisigClosure: script.MultisigClosure{
 					PubKeys: []*btcec.PublicKey{
 						bobPubKey,
-						arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+						arkade.ComputeArkadeScriptPublicKey(emulatorPubKey, arkadeScriptHash),
 					},
 				},
 				Locktime: csvLocktime,
@@ -831,11 +831,11 @@ func createVtxoScriptWithArkadeExitClosure(
 	}
 }
 
-// addIntrospectorPacket builds an IntrospectorPacket with the given entries and
+// addEmulatorPacket builds an EmulatorPacket with the given entries and
 // embeds it into the transaction's OP_RETURN output. If an existing ARK OP_RETURN
-// (e.g. from an asset packet) is present, the introspector data is merged into it.
+// (e.g. from an asset packet) is present, the emulator data is merged into it.
 // Otherwise a new OP_RETURN is inserted before the last output (P2A anchor).
-func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.IntrospectorEntry) {
+func addEmulatorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.EmulatorEntry) {
 	packet, err := arkade.NewPacket(entries...)
 	require.NoError(t, err)
 
@@ -844,7 +844,7 @@ func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.Intr
 		if !extension.IsExtension(out.PkScript) {
 			continue
 		}
-		// Parse existing extension and append the introspector packet.
+		// Parse existing extension and append the emulator packet.
 		ext, err := extension.NewExtensionFromBytes(out.PkScript)
 		if err != nil {
 			continue
@@ -878,14 +878,14 @@ func addIntrospectorPacket(t *testing.T, ptx *psbt.Packet, entries []arkade.Intr
 }
 
 // createVtxoScriptWithArkadeAndCSV creates a vtxo script with arkade closure + CSV closure
-func createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceSigner, introspectorPubKey *btcec.PublicKey, arkadeScriptHash []byte) script.TapscriptsVtxoScript {
+func createVtxoScriptWithArkadeAndCSV(bobPubKey, aliceSigner, emulatorPubKey *btcec.PublicKey, arkadeScriptHash []byte) script.TapscriptsVtxoScript {
 	return script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
 			&script.MultisigClosure{
 				PubKeys: []*btcec.PublicKey{
 					bobPubKey,
 					aliceSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+					arkade.ComputeArkadeScriptPublicKey(emulatorPubKey, arkadeScriptHash),
 				},
 			},
 			&script.CSVMultisigClosure{
@@ -991,12 +991,12 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Pa
 		prevoutIdxs:       prevoutIdxs,
 	}
 
-	packet, err := arkade.FindIntrospectorPacket(ptx.UnsignedTx)
+	packet, err := arkade.FindEmulatorPacket(ptx.UnsignedTx)
 	if err != nil {
-		return fmt.Errorf("failed to parse introspector packet: %w", err)
+		return fmt.Errorf("failed to parse emulator packet: %w", err)
 	}
 	if len(packet) == 0 {
-		return fmt.Errorf("no introspector packet found in transaction")
+		return fmt.Errorf("no emulator packet found in transaction")
 	}
 
 	for _, entry := range packet {
@@ -1016,10 +1016,10 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Pa
 }
 
 // createArkadeOnlyVtxoScript builds a VTXO script with a 2-of-2 multisig
-// (server signer + arkade-tweaked introspector key). No separate owner key.
+// (server signer + arkade-tweaked emulator key). No separate owner key.
 func createArkadeOnlyVtxoScript(
 	serverSigner *btcec.PublicKey,
-	introspectorPubKey *btcec.PublicKey,
+	emulatorPubKey *btcec.PublicKey,
 	arkadeScriptHash []byte,
 ) script.TapscriptsVtxoScript {
 	return script.TapscriptsVtxoScript{
@@ -1027,7 +1027,7 @@ func createArkadeOnlyVtxoScript(
 			&script.MultisigClosure{
 				PubKeys: []*btcec.PublicKey{
 					serverSigner,
-					arkade.ComputeArkadeScriptPublicKey(introspectorPubKey, arkadeScriptHash),
+					arkade.ComputeArkadeScriptPublicKey(emulatorPubKey, arkadeScriptHash),
 				},
 			},
 		},

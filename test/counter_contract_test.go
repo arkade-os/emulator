@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Packet types 0 and 1 are reserved for assets and introspector entries.
+// Packet types 0 and 1 are reserved for assets and emulator entries.
 const counterPacketType = 2
 
 func TestCounterContractWithPacketIntrospection(t *testing.T) {
@@ -33,7 +33,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, 50000)
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -50,7 +50,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 	counterArkadeScript := counterContractArkadeScript(t)
 	counterVtxoScript := createArkadeOnlyVtxoScript(
 		aliceAddr.Signer,
-		introspectorPubKey,
+		emulatorPubKey,
 		arkade.ArkadeScriptHash(counterArkadeScript),
 	)
 	counterTapscript := onlyForfeitScript(t, counterVtxoScript)
@@ -62,7 +62,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitTx(
 			ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 		)
 		require.NoError(t, err)
@@ -70,11 +70,11 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		waitForVtxos()
 	}
 
-	submitExpectIntrospectorFailure := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
+	submitExpectEmulatorFailure := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = introspectorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	}
@@ -110,8 +110,8 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		deployTx.UnsignedTx,
 		0,
 	)
-	require.Error(t, executeArkadeScripts(t, invalidUnlockTx, invalidUnlockCheckpoints, introspectorPubKey))
-	submitExpectIntrospectorFailure(invalidUnlockTx, invalidUnlockCheckpoints)
+	require.Error(t, executeArkadeScripts(t, invalidUnlockTx, invalidUnlockCheckpoints, emulatorPubKey))
+	submitExpectEmulatorFailure(invalidUnlockTx, invalidUnlockCheckpoints)
 
 	firstUnlockTx, firstUnlockCheckpoints := buildCounterUnlockTx(
 		t,
@@ -123,7 +123,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		1,
 	)
 	requireCounterPacket(t, firstUnlockTx.UnsignedTx, 1)
-	require.NoError(t, executeArkadeScripts(t, firstUnlockTx, firstUnlockCheckpoints, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, firstUnlockTx, firstUnlockCheckpoints, emulatorPubKey))
 	submitAndFinalize(firstUnlockTx, firstUnlockCheckpoints)
 
 	secondUnlockTx, secondUnlockCheckpoints := buildCounterUnlockTx(
@@ -144,7 +144,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		2,
 	)
 	requireCounterPacket(t, secondUnlockTx.UnsignedTx, 2)
-	require.NoError(t, executeArkadeScripts(t, secondUnlockTx, secondUnlockCheckpoints, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, secondUnlockTx, secondUnlockCheckpoints, emulatorPubKey))
 	submitAndFinalize(secondUnlockTx, secondUnlockCheckpoints)
 }
 
@@ -242,7 +242,7 @@ func buildCounterUnlockTx(
 	require.NoError(t, err)
 
 	addCounterPacket(t, counterTx, counterValue)
-	addIntrospectorPacket(t, counterTx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, counterTx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: arkadeScript},
 	})
 	require.NoError(t, txutils.SetArkPsbtField(counterTx, 0, arkade.PrevArkTxField, *prevArkTx))

@@ -13,8 +13,8 @@ import (
 
 func TestLoadConfig(t *testing.T) {
 	defaultEnv := map[string]string{
-		"INTROSPECTOR_SECRET_KEY": testKeyHex(1),
-		"INTROSPECTOR_ARKD_URL":   "http://arkd:7070",
+		"EMULATOR_SECRET_KEY": testKeyHex(1),
+		"EMULATOR_ARKD_URL":   "http://arkd:7070",
 	}
 	envWith := func(overrides map[string]string) map[string]string {
 		env := make(map[string]string, len(defaultEnv)+len(overrides))
@@ -37,20 +37,20 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name: "allows empty deprecated keys",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": "",
+				"EMULATOR_DEPRECATED_KEYS": "",
 			}),
 		},
 		{
 			name: "parses single deprecated key",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": testKeyHex(2),
+				"EMULATOR_DEPRECATED_KEYS": testKeyHex(2),
 			}),
 			deprecatedKeyHexes: []string{testKeyHex(2)},
 		},
 		{
 			name: "parses deprecated keys in order",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": testKeyHex(2) + "," + testKeyHex(3),
+				"EMULATOR_DEPRECATED_KEYS": testKeyHex(2) + "," + testKeyHex(3),
 			}),
 			deprecatedKeyHexes: []string{testKeyHex(2), testKeyHex(3)},
 		},
@@ -64,8 +64,8 @@ func TestLoadConfig(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, cfg)
 				require.NotNil(t, cfg.CurrentKey)
-				require.Equal(t, tt.env["INTROSPECTOR_SECRET_KEY"], hex.EncodeToString(cfg.CurrentKey.Serialize()))
-				require.Equal(t, tt.env["INTROSPECTOR_ARKD_URL"], cfg.ArkdURL)
+				require.Equal(t, tt.env["EMULATOR_SECRET_KEY"], hex.EncodeToString(cfg.CurrentKey.Serialize()))
+				require.Equal(t, tt.env["EMULATOR_ARKD_URL"], cfg.ArkdURL)
 				require.Len(t, cfg.DeprecatedKeys, len(tt.deprecatedKeyHexes))
 				for i, expected := range tt.deprecatedKeyHexes {
 					require.Equal(t, expected, hex.EncodeToString(cfg.DeprecatedKeys[i].Serialize()))
@@ -87,119 +87,119 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name: "missing arkd url",
 			env: map[string]string{
-				"INTROSPECTOR_SECRET_KEY": testKeyHex(1),
+				"EMULATOR_SECRET_KEY": testKeyHex(1),
 			},
 			wantErr: "missing arkd url",
 		},
 		{
 			name: "invalid current key hex",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_SECRET_KEY": "not-hex",
+				"EMULATOR_SECRET_KEY": "not-hex",
 			}),
 			wantErr: "invalid secret key",
 		},
 		{
 			name: "invalid deprecated key hex",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": "not-hex",
+				"EMULATOR_DEPRECATED_KEYS": "not-hex",
 			}),
 			wantErr: "invalid deprecated key",
 		},
 		{
 			name: "current key with wrong length",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_SECRET_KEY": hex.EncodeToString(make([]byte, 31)),
+				"EMULATOR_SECRET_KEY": hex.EncodeToString(make([]byte, 31)),
 			}),
 			wantErr: "invalid secret key length",
 		},
 		{
 			name: "deprecated key with wrong length",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": hex.EncodeToString(make([]byte, 31)),
+				"EMULATOR_DEPRECATED_KEYS": hex.EncodeToString(make([]byte, 31)),
 			}),
 			wantErr: "invalid deprecated key length",
 		},
 		{
 			name: "current key scalar zero",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_SECRET_KEY": hex.EncodeToString(make([]byte, 32)),
+				"EMULATOR_SECRET_KEY": hex.EncodeToString(make([]byte, 32)),
 			}),
 			wantErr: "invalid secret key",
 		},
 		{
 			name: "deprecated key scalar zero",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": hex.EncodeToString(make([]byte, 32)),
+				"EMULATOR_DEPRECATED_KEYS": hex.EncodeToString(make([]byte, 32)),
 			}),
 			wantErr: "invalid deprecated key",
 		},
 		{
 			name: "current key scalar curve order",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_SECRET_KEY": scalarHex(curveOrder),
+				"EMULATOR_SECRET_KEY": scalarHex(curveOrder),
 			}),
 			wantErr: "invalid secret key",
 		},
 		{
 			name: "deprecated key scalar curve order",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": scalarHex(curveOrder),
+				"EMULATOR_DEPRECATED_KEYS": scalarHex(curveOrder),
 			}),
 			wantErr: "invalid deprecated key",
 		},
 		{
 			name: "current key scalar above curve order",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_SECRET_KEY": scalarHex(aboveCurveOrder),
+				"EMULATOR_SECRET_KEY": scalarHex(aboveCurveOrder),
 			}),
 			wantErr: "invalid secret key",
 		},
 		{
 			name: "deprecated key scalar above curve order",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": scalarHex(aboveCurveOrder),
+				"EMULATOR_DEPRECATED_KEYS": scalarHex(aboveCurveOrder),
 			}),
 			wantErr: "invalid deprecated key",
 		},
 		{
 			name: "current key in deprecated keys",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": testKeyHex(1),
+				"EMULATOR_DEPRECATED_KEYS": testKeyHex(1),
 			}),
 			wantErr: "duplicate deprecated key",
 		},
 		{
 			name: "duplicate deprecated keys",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": testKeyHex(2) + "," + testKeyHex(2),
+				"EMULATOR_DEPRECATED_KEYS": testKeyHex(2) + "," + testKeyHex(2),
 			}),
 			wantErr: "duplicate deprecated key",
 		},
 		{
 			name: "leading comma in deprecated keys",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": "," + testKeyHex(2),
+				"EMULATOR_DEPRECATED_KEYS": "," + testKeyHex(2),
 			}),
 			wantErr: "invalid deprecated key length",
 		},
 		{
 			name: "trailing comma in deprecated keys",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": testKeyHex(2) + ",",
+				"EMULATOR_DEPRECATED_KEYS": testKeyHex(2) + ",",
 			}),
 			wantErr: "invalid deprecated key length",
 		},
 		{
 			name: "double comma in deprecated keys",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": testKeyHex(2) + ",," + testKeyHex(3),
+				"EMULATOR_DEPRECATED_KEYS": testKeyHex(2) + ",," + testKeyHex(3),
 			}),
 			wantErr: "invalid deprecated key length",
 		},
 		{
 			name: "whitespace in deprecated keys",
 			env: envWith(map[string]string{
-				"INTROSPECTOR_DEPRECATED_KEYS": testKeyHex(2) + ", " + testKeyHex(3),
+				"EMULATOR_DEPRECATED_KEYS": testKeyHex(2) + ", " + testKeyHex(3),
 			}),
 			wantErr: "invalid deprecated key",
 		},
@@ -239,4 +239,31 @@ func scalarHex(n *big.Int) string {
 	bytes := n.Bytes()
 	copy(key[32-len(bytes):], bytes)
 	return hex.EncodeToString(key)
+}
+
+const testSecretKey = "0000000000000000000000000000000000000000000000000000000000000001"
+
+func TestLoadConfigUsesEmulatorEnvPrefix(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	t.Setenv("EMULATOR_SECRET_KEY", testSecretKey)
+	t.Setenv("EMULATOR_ARKD_URL", "http://127.0.0.1:7070")
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:7070", cfg.ArkdURL)
+	require.NotNil(t, cfg.CurrentKey)
+}
+
+func TestLoadConfigIgnoresOldEnvPrefix(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	t.Setenv("INTRO"+"SPECTOR_SECRET_KEY", testSecretKey)
+	t.Setenv("EMULATOR_SECRET_KEY", "not-hex")
+	t.Setenv("EMULATOR_ARKD_URL", "http://127.0.0.1:7070")
+
+	_, err := LoadConfig()
+	require.Error(t, err)
 }

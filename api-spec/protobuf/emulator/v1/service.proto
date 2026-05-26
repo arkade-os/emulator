@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package introspector.v1;
+package emulator.v1;
 
 import "meshapi/gateway/annotations.proto";
 
-service IntrospectorService {
+service EmulatorService {
   // GetInfo returns service metadata including the base signer's public key.
   // the public key should be tweaked with the arkade script hash before being used as forfeit.
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse) {
@@ -46,7 +46,7 @@ service IntrospectorService {
   }
 
   // SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
-  // on each input whose tapscript contains the introspector's tweaked key.
+  // on each input whose tapscript contains the emulator's tweaked key.
   rpc SubmitOnchainTx(SubmitOnchainTxRequest) returns (SubmitOnchainTxResponse) {
     option (meshapi.gateway.http) = {
       post: "/v1/onchain-tx"

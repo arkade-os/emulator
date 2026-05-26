@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -29,7 +29,7 @@ func TestSignedPayToOutput(t *testing.T) {
 	bobWallet, _, bobPubKey := setupWallet(t, ctx)
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, 50_000)
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -63,7 +63,7 @@ func TestSignedPayToOutput(t *testing.T) {
 	contractVtxoScript := createVtxoScriptWithArkadeScript(
 		bobPubKey,
 		aliceAddr.Signer,
-		introspectorPubKey,
+		emulatorPubKey,
 		arkade.ArkadeScriptHash(arkadeScript),
 	)
 	contractTapscript := onlyForfeitScript(t, contractVtxoScript)
@@ -82,7 +82,7 @@ func TestSignedPayToOutput(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		addIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, ptx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: arkadeScript, Witness: witness},
 		})
 
@@ -92,7 +92,7 @@ func TestSignedPayToOutput(t *testing.T) {
 	t.Run("missing_authorization_signature", func(t *testing.T) {
 		ptx, checkpoints := buildSpend(wire.TxWitness{nil})
 
-		err := executeArkadeScripts(t, ptx, checkpoints, introspectorPubKey)
+		err := executeArkadeScripts(t, ptx, checkpoints, emulatorPubKey)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "OP_CHECKSIGVERIFY")
 
@@ -112,7 +112,7 @@ func TestSignedPayToOutput(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to process transaction")
 	})
@@ -122,11 +122,11 @@ func TestSignedPayToOutput(t *testing.T) {
 		authSig := signArkadeInput(
 			t, ptx, 0, authorizerKey, txscript.NewBaseTapLeaf(contractTapscript),
 		)
-		replaceIntrospectorPacket(t, ptx, []arkade.IntrospectorEntry{
+		replaceEmulatorPacket(t, ptx, []arkade.EmulatorEntry{
 			{Vin: 0, Script: arkadeScript, Witness: wire.TxWitness{authSig}},
 		})
 
-		require.NoError(t, executeArkadeScripts(t, ptx, checkpoints, introspectorPubKey))
+		require.NoError(t, executeArkadeScripts(t, ptx, checkpoints, emulatorPubKey))
 
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, ptx, 0)
 
@@ -149,10 +149,10 @@ func TestSignedPayToOutput(t *testing.T) {
 		signedPtx, err := psbt.NewFromRawBytes(strings.NewReader(signedTx), true)
 		require.NoError(t, err)
 		require.NoError(t, executeArkadeScripts(
-			t, signedPtx, checkpoints, introspectorPubKey,
+			t, signedPtx, checkpoints, emulatorPubKey,
 		))
 
-		_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 
 		waitForVtxos()
@@ -186,10 +186,10 @@ func signedPayToOutputScript(
 	return arkadeScript
 }
 
-func replaceIntrospectorPacket(
+func replaceEmulatorPacket(
 	t *testing.T,
 	ptx *psbt.Packet,
-	entries []arkade.IntrospectorEntry,
+	entries []arkade.EmulatorEntry,
 ) {
 	t.Helper()
 
@@ -207,7 +207,7 @@ func replaceIntrospectorPacket(
 		}
 	}
 
-	require.FailNow(t, "introspector packet output not found")
+	require.FailNow(t, "emulator packet output not found")
 }
 
 func signArkadeInput(

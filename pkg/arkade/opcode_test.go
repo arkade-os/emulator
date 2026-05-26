@@ -70,7 +70,7 @@ type opcodeWorld struct {
 	scriptByVin     map[int][]byte
 	execScriptByVin map[int][]byte
 	witnessByVin    map[int]wire.TxWitness
-	packet          IntrospectorPacket
+	packet          EmulatorPacket
 }
 
 var opcodeSpecs = [256]*opcodeSpec{
@@ -381,7 +381,7 @@ func TestOpcodeVectors(t *testing.T) {
 				vm, err := newOpcodeEngine(world, 0)
 				require.NoError(t, err)
 				if v.setupWorld != nil {
-					vm.introspectorPacket = world.packet
+					vm.emulatorPacket = world.packet
 				}
 				vm.SetStack(v.inputStack)
 				vm.SetAltStack(v.inputAltStack)
@@ -5031,7 +5031,7 @@ func inspectInputArkadeScriptHashSpec() *opcodeSpec {
 				name:       "valid",
 				inputStack: [][]byte{nil},
 				setupWorld: func(w *opcodeWorld) {
-					w.packet = IntrospectorPacket{{Vin: 0, Script: []byte{OP_TRUE}}}
+					w.packet = EmulatorPacket{{Vin: 0, Script: []byte{OP_TRUE}}}
 				},
 				expectedStack: [][]byte{ArkadeScriptHash([]byte{OP_TRUE})},
 			},
@@ -5050,7 +5050,7 @@ func inspectInputArkadeScriptHashSpec() *opcodeSpec {
 			{
 				name:          "missing_entry",
 				inputStack:    [][]byte{nil},
-				setupWorld:    func(w *opcodeWorld) { w.packet = IntrospectorPacket{{Vin: 1, Script: []byte{OP_TRUE}}} },
+				setupWorld:    func(w *opcodeWorld) { w.packet = EmulatorPacket{{Vin: 1, Script: []byte{OP_TRUE}}} },
 				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{
@@ -5072,14 +5072,14 @@ func inspectInputArkadeWitnessHashSpec() *opcodeSpec {
 				name:       "valid",
 				inputStack: [][]byte{nil},
 				setupWorld: func(w *opcodeWorld) {
-					w.packet = IntrospectorPacket{{Vin: 0, Witness: wire.TxWitness{{0x01}}}}
+					w.packet = EmulatorPacket{{Vin: 0, Witness: wire.TxWitness{{0x01}}}}
 				},
 			},
 			{
 				name:       "empty_witness",
 				inputStack: [][]byte{nil},
 				setupWorld: func(w *opcodeWorld) {
-					w.packet = IntrospectorPacket{{Vin: 0, Witness: wire.TxWitness{}}}
+					w.packet = EmulatorPacket{{Vin: 0, Witness: wire.TxWitness{}}}
 				},
 				expectedStack: [][]byte{make([]byte, 32)},
 			},
@@ -5098,7 +5098,7 @@ func inspectInputArkadeWitnessHashSpec() *opcodeSpec {
 			{
 				name:          "missing_entry",
 				inputStack:    [][]byte{nil},
-				setupWorld:    func(w *opcodeWorld) { w.packet = IntrospectorPacket{{Vin: 1, Witness: wire.TxWitness{{0x01}}}} },
+				setupWorld:    func(w *opcodeWorld) { w.packet = EmulatorPacket{{Vin: 1, Witness: wire.TxWitness{{0x01}}}} },
 				expectedError: txscript.ErrInvalidStackOperation,
 			},
 			{

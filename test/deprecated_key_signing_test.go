@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -34,9 +34,9 @@ import (
 func TestDeprecatedKeySigning(t *testing.T) {
 	ctx := t.Context()
 
-	introspectorClient, _, _ := setupIntrospectorClient(t, ctx)
+	emulatorClient, _, _ := setupEmulatorClient(t, ctx)
 
-	info, err := introspectorClient.GetInfo(ctx)
+	info, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, info.DeprecatedSignerPublicKeys)
 
@@ -48,22 +48,22 @@ func TestDeprecatedKeySigning(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("SubmitTx signs offchain transaction", func(t *testing.T) {
-		runSubmitTxWithDeprecatedKey(t, ctx, introspectorClient, deprecatedPubKey)
+		runSubmitTxWithDeprecatedKey(t, ctx, emulatorClient, deprecatedPubKey)
 	})
 
 	t.Run("SubmitIntent and SubmitFinalization complete batch", func(t *testing.T) {
-		runSubmitIntentFinalizationWithDeprecatedKey(t, ctx, introspectorClient, deprecatedPubKey)
+		runSubmitIntentFinalizationWithDeprecatedKey(t, ctx, emulatorClient, deprecatedPubKey)
 	})
 
 	t.Run("SubmitOnchainTx signs onchain PSBT", func(t *testing.T) {
-		runSubmitOnchainWithDeprecatedKey(t, ctx, introspectorClient, deprecatedPubKey)
+		runSubmitOnchainWithDeprecatedKey(t, ctx, emulatorClient, deprecatedPubKey)
 	})
 }
 
 func runSubmitTxWithDeprecatedKey(
 	t *testing.T,
 	ctx context.Context,
-	introspectorClient introspectorclient.TransportClient,
+	emulatorClient emulatorclient.TransportClient,
 	deprecatedPubKey *btcec.PublicKey,
 ) {
 	t.Helper()
@@ -131,7 +131,7 @@ func runSubmitTxWithDeprecatedKey(
 		checkpointScriptBytes,
 	)
 	require.NoError(t, err)
-	addIntrospectorPacket(t, tx, []arkade.IntrospectorEntry{{Vin: 0, Script: arkadeScript}})
+	addEmulatorPacket(t, tx, []arkade.EmulatorEntry{{Vin: 0, Script: arkadeScript}})
 
 	encodedTx, err := tx.B64Encode()
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func runSubmitTxWithDeprecatedKey(
 	}
 
 	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, tx, 0)
-	_, _, err = introspectorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+	_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
 	require.NoError(t, err)
 	waitForVtxos()
 }
@@ -155,7 +155,7 @@ func runSubmitTxWithDeprecatedKey(
 func runSubmitIntentFinalizationWithDeprecatedKey(
 	t *testing.T,
 	ctx context.Context,
-	introspectorClient introspectorclient.TransportClient,
+	emulatorClient emulatorclient.TransportClient,
 	deprecatedPubKey *btcec.PublicKey,
 ) {
 	t.Helper()
@@ -233,18 +233,18 @@ func runSubmitIntentFinalizationWithDeprecatedKey(
 	proof.Inputs[1].Unknowns = append(proof.Inputs[1].Unknowns, taptreeField)
 
 	intentPtx := &proof.Packet
-	addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{{Vin: 1, Script: delegateArkadeScript}})
+	addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{{Vin: 1, Script: delegateArkadeScript}})
 	require.NoError(t, txutils.SetArkPsbtField(intentPtx, 1, arkade.PrevArkTxField, *fundingTx))
 	require.NoError(t, executeArkadeScripts(t, intentPtx, nil, deprecatedPubKey))
 	encodedProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	approvedProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+	approvedProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
 		Proof:   encodedProof,
 		Message: message,
 	})
 	require.NoError(t, err)
-	signedIntent := introspectorclient.Intent{Proof: approvedProof, Message: message}
+	signedIntent := emulatorclient.Intent{Proof: approvedProof, Message: message}
 	intentID, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
@@ -260,14 +260,14 @@ func runSubmitIntentFinalizationWithDeprecatedKey(
 		Tapscripts: delegateRevealedTapscripts,
 	}
 	batchHandler := &delegateBatchEventsHandler{
-		intentId:           intentID,
-		intent:             signedIntent,
-		vtxosToForfeit:     []client.TapscriptsVtxo{vtxo},
-		signerSession:      signerSession,
-		introspectorClient: introspectorClient,
-		wallet:             aliceWallet,
-		client:             grpcClient,
-		explorer:           explorerSvc,
+		intentId:       intentID,
+		intent:         signedIntent,
+		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		signerSession:  signerSession,
+		emulatorClient: emulatorClient,
+		wallet:         aliceWallet,
+		client:         grpcClient,
+		explorer:       explorerSvc,
 	}
 	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{signerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
@@ -283,7 +283,7 @@ func runSubmitIntentFinalizationWithDeprecatedKey(
 func runSubmitOnchainWithDeprecatedKey(
 	t *testing.T,
 	ctx context.Context,
-	introspectorClient introspectorclient.TransportClient,
+	emulatorClient emulatorclient.TransportClient,
 	deprecatedPubKey *btcec.PublicKey,
 ) {
 	t.Helper()
@@ -363,7 +363,7 @@ func runSubmitOnchainWithDeprecatedKey(
 	require.NoError(t, err)
 	bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
 	require.NoError(t, err)
-	fullySigned, err := introspectorClient.SubmitOnchainTx(ctx, bobSigned)
+	fullySigned, err := emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 	require.NoError(t, err)
 	require.NotEqual(t, bobSigned, fullySigned)
 	signedPtx, err := psbt.NewFromRawBytes(strings.NewReader(fullySigned), true)

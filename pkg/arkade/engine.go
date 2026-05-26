@@ -118,14 +118,14 @@ type Engine struct {
 	// prevOutFetcher is used to look up all the previous output of
 	// taproot transactions, as that information is hashed into the
 	// sighash digest for such inputs.
-	tx                 wire.MsgTx
-	txIdx              int
-	version            uint16
-	sigCache           *txscript.SigCache
-	hashCache          *txscript.TxSigHashes
-	prevOutFetcher     ArkPrevOutFetcher
-	assetPacket        asset.Packet
-	introspectorPacket IntrospectorPacket
+	tx             wire.MsgTx
+	txIdx          int
+	version        uint16
+	sigCache       *txscript.SigCache
+	hashCache      *txscript.TxSigHashes
+	prevOutFetcher ArkPrevOutFetcher
+	assetPacket    asset.Packet
+	emulatorPacket EmulatorPacket
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -200,10 +200,10 @@ func (vm *Engine) SetAssetPacket(packet asset.Packet) {
 	vm.assetPacket = packet
 }
 
-// SetIntrospectorPacket sets the introspector packet on the engine for
+// SetEmulatorPacket sets the emulator packet on the engine for
 // cross-input Arkade script/witness introspection.
-func (vm *Engine) SetIntrospectorPacket(packet IntrospectorPacket) {
-	vm.introspectorPacket = packet
+func (vm *Engine) SetEmulatorPacket(packet EmulatorPacket) {
+	vm.emulatorPacket = packet
 }
 
 // isBranchExecuting returns whether or not the current conditional branch is

@@ -1,5 +1,5 @@
 version: v1
-name: buf.build/arkade-os/introspector
+name: buf.build/arkade-os/emulator
 deps:
   - buf.build/meshapi/grpc-api-gateway
 breaking:

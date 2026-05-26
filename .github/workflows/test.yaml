@@ -42,8 +42,8 @@ jobs:
       - name: Capture logs
         if: failure()
         run: |
-          echo "=== Introspector logs ==="
-          docker logs introspector 2>&1 || true
+          echo "=== Emulator logs ==="
+          docker logs emulator 2>&1 || true
           echo "=== Arkd logs ==="
           docker logs arkd 2>&1 || true
 

@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntrospectorPacket(t *testing.T) {
+func TestEmulatorPacket(t *testing.T) {
 	fix := readFixtures(t)
 
 	t.Run("valid", func(t *testing.T) {
@@ -23,7 +23,7 @@ func TestIntrospectorPacket(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, expected, data)
 
-				got, err := DeserializeIntrospectorPacket(data)
+				got, err := DeserializeEmulatorPacket(data)
 				require.NoError(t, err)
 				require.Len(t, got, len(f.Packet))
 
@@ -49,7 +49,7 @@ func TestIntrospectorPacket(t *testing.T) {
 				if f.Encoded != "" {
 					data, err := hex.DecodeString(f.Encoded)
 					require.NoError(t, err)
-					_, err = DeserializeIntrospectorPacket(data)
+					_, err = DeserializeEmulatorPacket(data)
 					require.Error(t, err)
 				}
 			})
@@ -57,30 +57,30 @@ func TestIntrospectorPacket(t *testing.T) {
 	})
 
 	t.Run("entry count exceeds max", func(t *testing.T) {
-		entries := make([]IntrospectorEntry, MaxEntryCount+1)
+		entries := make([]EmulatorEntry, MaxEntryCount+1)
 		for i := range entries {
-			entries[i] = IntrospectorEntry{
+			entries[i] = EmulatorEntry{
 				Vin:    uint16(i),
 				Script: []byte{0x01},
 			}
 		}
 
 		_, err := NewPacket(entries...)
-		require.EqualError(t, err, "max introspector entry count exceeded, max=1000 got=1001")
+		require.EqualError(t, err, "max emulator entry count exceeded, max=1000 got=1001")
 	})
 }
 
 type validFixture struct {
-	Name    string             `json:"name"`
-	Encoded string             `json:"encoded"`
-	Packet  IntrospectorPacket `json:"-"`
+	Name    string         `json:"name"`
+	Encoded string         `json:"encoded"`
+	Packet  EmulatorPacket `json:"-"`
 }
 
 type invalidFixture struct {
-	Name       string              `json:"name"`
-	Encoded    string              `json:"encoded"`
-	HasEntries bool                `json:"-"`
-	Entries    []IntrospectorEntry `json:"-"`
+	Name       string          `json:"name"`
+	Encoded    string          `json:"encoded"`
+	HasEntries bool            `json:"-"`
+	Entries    []EmulatorEntry `json:"-"`
 }
 
 type fixtures struct {
@@ -94,15 +94,15 @@ type rawEntry struct {
 	Witness []string `json:"witness"`
 }
 
-func decodeEntries(raw []rawEntry) []IntrospectorEntry {
-	entries := make([]IntrospectorEntry, len(raw))
+func decodeEntries(raw []rawEntry) []EmulatorEntry {
+	entries := make([]EmulatorEntry, len(raw))
 	for j, e := range raw {
 		script, _ := hex.DecodeString(e.Script)
 		witness := make(wire.TxWitness, len(e.Witness))
 		for k, w := range e.Witness {
 			witness[k], _ = hex.DecodeString(w)
 		}
-		entries[j] = IntrospectorEntry{
+		entries[j] = EmulatorEntry{
 			Vin:     e.Vin,
 			Script:  script,
 			Witness: witness,
@@ -113,7 +113,7 @@ func decodeEntries(raw []rawEntry) []IntrospectorEntry {
 
 func readFixtures(t testing.TB) fixtures {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/introspector_packet.json")
+	raw, err := os.ReadFile("testdata/emulator_packet.json")
 	require.NoError(t, err)
 
 	var rawFixtures struct {

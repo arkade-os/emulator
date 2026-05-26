@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ArkLabsHQ/introspector/pkg/arkade"
-	introspectorclient "github.com/ArkLabsHQ/introspector/pkg/client"
+	"github.com/ArkLabsHQ/emulator/pkg/arkade"
+	emulatorclient "github.com/ArkLabsHQ/emulator/pkg/client"
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
@@ -36,8 +36,8 @@ const (
 // TestCovenantDelegate exercises a non-interactive refresh of a VTXO through
 // the Ark batch settlement process, with no user signature required.
 //
-// The VTXO is owned by a 2-of-2 multisig (arkd signer + introspector-tweaked
-// key) with an extra CSV exit leaf for the user. The introspector only signs
+// The VTXO is owned by a 2-of-2 multisig (arkd signer + emulator-tweaked
+// key) with an extra CSV exit leaf for the user. The emulator only signs
 // once the arkade covenant on the spending tx passes.
 //
 // Self-send arkade script — enforces output[0] preserves the spent VTXO's
@@ -54,17 +54,17 @@ const (
 //	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
 //	OP_EQUAL                                       # values equal
 //
-// Delegate path — MultisigClosure [server, introspector_tweaked]. Any solver
+// Delegate path — MultisigClosure [server, emulator_tweaked]. Any solver
 // can trigger the refresh; the covenant acts in the user's place.
 // Exit path — CSVMultisigClosure for the user. Unilateral exit remains
-// available if the introspector or arkd refuse to cooperate.
+// available if the emulator or arkd refuse to cooperate.
 //
 // The v=2 version gate blocks off-chain Ark txs (v=3): without it a solver
 // could spend the delegate VTXO via SubmitTx in a self-send loop, burning
 // fees without ever refreshing the VTXO through a batch.
 //
 // Under the hood, the VTXO closures are :
-// Delegate: Server + Introspector
+// Delegate: Server + Emulator
 // Exit: User + CSV
 func TestCovenantDelegate(t *testing.T) {
 	ctx := t.Context()
@@ -74,7 +74,7 @@ func TestCovenantDelegate(t *testing.T) {
 		grpcAlice.Close()
 	})
 
-	introspectorClient, introspectorPubKey, conn := setupIntrospectorClient(t, ctx)
+	emulatorClient, emulatorPubKey, conn := setupEmulatorClient(t, ctx)
 	t.Cleanup(func() {
 		//nolint:errcheck
 		conn.Close()
@@ -92,14 +92,14 @@ func TestCovenantDelegate(t *testing.T) {
 	// covenant: output[0] preserves the spent VTXO (same pkScript and value)
 	delegateArkadeScript := enforceSelfSend(t)
 
-	// delegate VTXO: [server, introspector_tweaked] for refresh, [alice]+CSV for exit
+	// delegate VTXO: [server, emulator_tweaked] for refresh, [alice]+CSV for exit
 	delegateVtxoScript := script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
 			&script.MultisigClosure{
 				PubKeys: []*btcec.PublicKey{
 					aliceAddr.Signer,
 					arkade.ComputeArkadeScriptPublicKey(
-						introspectorPubKey,
+						emulatorPubKey,
 						arkade.ArkadeScriptHash(delegateArkadeScript),
 					),
 				},
@@ -174,7 +174,7 @@ func TestCovenantDelegate(t *testing.T) {
 		intentProof.Inputs[1].Unknowns = append(intentProof.Inputs[1].Unknowns, taptreeField)
 
 		intentPtx := &intentProof.Packet
-		addIntrospectorPacket(t, intentPtx, []arkade.IntrospectorEntry{
+		addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{
 			{Vin: 1, Script: delegateArkadeScript},
 		})
 		// required by OP_INSPECTINPUTSCRIPTPUBKEY on input 1
@@ -192,7 +192,7 @@ func TestCovenantDelegate(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		_, err = introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+		_, err = emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
 			Proof:   encoded,
 			Message: msg,
 		})
@@ -221,13 +221,13 @@ func TestCovenantDelegate(t *testing.T) {
 		checkpointScriptBytes,
 	)
 	require.NoError(t, err)
-	addIntrospectorPacket(t, offchainPtx, []arkade.IntrospectorEntry{
+	addEmulatorPacket(t, offchainPtx, []arkade.EmulatorEntry{
 		{Vin: 0, Script: delegateArkadeScript},
 	})
 
 	encodedOffchain, err := offchainPtx.B64Encode()
 	require.NoError(t, err)
-	_, _, err = introspectorClient.SubmitTx(
+	_, _, err = emulatorClient.SubmitTx(
 		ctx, encodedOffchain, encodeCheckpoints(t, offchainCheckpoints),
 	)
 	require.Error(t, err)
@@ -236,18 +236,18 @@ func TestCovenantDelegate(t *testing.T) {
 	validPtx, validMessage := buildIntent([]*wire.TxOut{
 		{Value: delegateAmount, PkScript: delegatePkScript},
 	})
-	require.NoError(t, executeArkadeScripts(t, validPtx, nil, introspectorPubKey))
+	require.NoError(t, executeArkadeScripts(t, validPtx, nil, emulatorPubKey))
 
 	encodedValidProof, err := validPtx.B64Encode()
 	require.NoError(t, err)
 
-	approvedProof, err := introspectorClient.SubmitIntent(ctx, introspectorclient.Intent{
+	approvedProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
 		Proof:   encodedValidProof,
 		Message: validMessage,
 	})
 	require.NoError(t, err)
 
-	signedIntent := introspectorclient.Intent{
+	signedIntent := emulatorclient.Intent{
 		Proof:   approvedProof,
 		Message: validMessage,
 	}
@@ -268,14 +268,14 @@ func TestCovenantDelegate(t *testing.T) {
 	}
 
 	handler := &delegateBatchEventsHandler{
-		intentId:           intentId,
-		intent:             signedIntent,
-		vtxosToForfeit:     []client.TapscriptsVtxo{vtxo},
-		signerSession:      signerSession,
-		introspectorClient: introspectorClient,
-		wallet:             aliceWallet,
-		client:             grpcAlice,
-		explorer:           explorerSvc,
+		intentId:       intentId,
+		intent:         signedIntent,
+		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		signerSession:  signerSession,
+		emulatorClient: emulatorClient,
+		wallet:         aliceWallet,
+		client:         grpcAlice,
+		explorer:       explorerSvc,
 	}
 
 	topics := arksdk.GetEventStreamTopics(

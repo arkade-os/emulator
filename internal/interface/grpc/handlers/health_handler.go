@@ -34,7 +34,7 @@ func (h *healthHandler) List(
 ) (*grpchealth.HealthListResponse, error) {
 	return &grpchealth.HealthListResponse{
 		Statuses: map[string]*grpchealth.HealthCheckResponse{
-			"introspector": {
+			"emulator": {
 				Status: grpchealth.HealthCheckResponse_SERVING,
 			},
 		},
