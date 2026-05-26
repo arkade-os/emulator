@@ -305,7 +305,7 @@ const (
 	OP_TXID                          = 0xf3 // 243
 	OP_INSPECTPACKET                 = 0xf4 // 244
 	OP_INSPECTINPUTPACKET            = 0xf5 // 245
-	OP_UNKNOWN246                    = 0xf6 // 246
+	OP_VERIFY_ZKP                    = 0xf6 // 246
 	OP_UNKNOWN247                    = 0xf7 // 247
 	OP_UNKNOWN248                    = 0xf8 // 248
 	OP_UNKNOWN249                    = 0xf9 // 249
@@ -606,7 +606,7 @@ var opcodeArray = [256]opcode{
 	OP_TXID:                          {OP_TXID, "OP_TXID", 1, opcodeTxId},
 	OP_INSPECTPACKET:                 {OP_INSPECTPACKET, "OP_INSPECTPACKET", 1, opcodeInspectPacket},
 	OP_INSPECTINPUTPACKET:            {OP_INSPECTINPUTPACKET, "OP_INSPECTINPUTPACKET", 1, opcodeInspectInputPacket},
-	OP_UNKNOWN246:                    {OP_UNKNOWN246, "OP_UNKNOWN246", 1, opcodeInvalid},
+	OP_VERIFY_ZKP:                    {OP_VERIFY_ZKP, "OP_VERIFY_ZKP", 1, opcodeVerifyZkp},
 	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
 	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
 	OP_UNKNOWN249:                    {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},

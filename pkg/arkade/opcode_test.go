@@ -348,7 +348,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_UNKNOWN208:                    invalidSpec(OP_UNKNOWN208),
 	OP_INSPECTPACKET:                 inspectPacketSpec(),
 	OP_INSPECTINPUTPACKET:            inspectInputPacketSpec(),
-	OP_UNKNOWN246:                    invalidSpec(OP_UNKNOWN246),
+	OP_VERIFY_ZKP:                    verifyZkpSpec(),
 	OP_UNKNOWN247:                    invalidSpec(OP_UNKNOWN247),
 	OP_UNKNOWN248:                    invalidSpec(OP_UNKNOWN248),
 	OP_UNKNOWN249:                    invalidSpec(OP_UNKNOWN249),
@@ -653,6 +653,39 @@ func nopSpec(op byte) *opcodeSpec {
 		spec.validVectors = []opcodeVector{{name: "nop"}}
 	}
 	return spec
+}
+
+// verifyZkpSpec covers OP_VERIFY_ZKP's malformed-input rejection paths.
+// Real-proof success/failure cases require gnark to produce vectors and live
+// in op_verify_zkp_test.go, which drives the handler directly with dynamic
+// fixtures. Here we only assert that obviously broken inputs are rejected.
+func verifyZkpSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_VERIFY_ZKP,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			// Mirrors checksigFromStackSpec's relaxed checker: dstack mutation
+			// is allowed on error (handler pops items before validation), but
+			// the altstack and condStack must be untouched.
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+			if c.execErr == nil {
+				require.Fail(t, "expected error from invalid input")
+			}
+		},
+		invalidVectors: []opcodeVector{
+			{
+				name:          "zkp_type byte too long",
+				inputStack:    [][]byte{{0xAA}, {0xBB}, {0xCC}, {0x01, 0x00}},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "stack underflow",
+				inputStack:    [][]byte{{0x01}},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+		},
+	}
 }
 
 func invalidSpec(op byte) *opcodeSpec {
