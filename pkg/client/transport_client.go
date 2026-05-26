@@ -9,8 +9,9 @@ import (
 )
 
 type Info struct {
-	Version         string
-	SignerPublicKey string
+	Version                    string
+	SignerPublicKey            string
+	DeprecatedSignerPublicKeys []string
 }
 
 type Intent struct {
@@ -53,8 +54,9 @@ func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
 	}
 
 	return &Info{
-		Version:         resp.GetVersion(),
-		SignerPublicKey: resp.GetSignerPubkey(),
+		Version:                    resp.GetVersion(),
+		SignerPublicKey:            resp.GetSignerPubkey(),
+		DeprecatedSignerPublicKeys: append([]string(nil), resp.GetDeprecatedSignerPubkeys()...),
 	}, nil
 }
 

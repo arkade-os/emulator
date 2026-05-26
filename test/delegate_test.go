@@ -390,20 +390,6 @@ func fundDelegate(
 	), fundingPtx.UnsignedTx
 }
 
-// randomP2TRScript returns a fresh P2TR scriptPubKey. Used for destinations
-// where the identity is irrelevant to the test.
-func randomP2TRScript(t *testing.T) []byte {
-	t.Helper()
-
-	priv, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-
-	pkScript, err := txscript.PayToTaprootScript(priv.PubKey())
-	require.NoError(t, err)
-
-	return pkScript
-}
-
 // findLeafOutpoint returns the outpoint of the vtxo tree leaf output matching
 // the given pkScript and value.
 func findLeafOutpoint(

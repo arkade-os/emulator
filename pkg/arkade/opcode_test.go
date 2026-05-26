@@ -303,8 +303,8 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_TXWEIGHT:                      txWeightSpec(),
 	OP_NUM2BIN:                       num2BinSpec(),
 	OP_BIN2NUM:                       bin2NumSpec(),
-	OP_UNKNOWN217:                    invalidSpec(OP_UNKNOWN217),
-	OP_UNKNOWN218:                    invalidSpec(OP_UNKNOWN218),
+	OP_REVERSEBYTES:                  reverseBytesSpec(),
+	OP_MODEXP:                        modexpSpec(),
 	OP_UNKNOWN219:                    invalidSpec(OP_UNKNOWN219),
 	OP_UNKNOWN220:                    invalidSpec(OP_UNKNOWN220),
 	OP_UNKNOWN221:                    invalidSpec(OP_UNKNOWN221),
@@ -1770,6 +1770,26 @@ func binaryBigNumVector(tc binaryBigNumCase) opcodeVector {
 	}
 }
 
+type ternaryBigNumCase struct {
+	name string
+	a    BigNum
+	b    BigNum
+	c    BigNum
+	out  BigNum
+}
+
+func ternaryBigNumVector(tc ternaryBigNumCase) opcodeVector {
+	return opcodeVector{
+		name: tc.name,
+		inputStack: [][]byte{
+			mustBigNumBytes(tc.a),
+			mustBigNumBytes(tc.b),
+			mustBigNumBytes(tc.c),
+		},
+		expectedStack: [][]byte{mustBigNumBytes(tc.out)},
+	}
+}
+
 func unaryBigNumVector(tc unaryBigNumCase) opcodeVector {
 	return opcodeVector{
 		name:          tc.name,
@@ -1823,6 +1843,41 @@ func arithmeticBigNumPropertyChecker(
 		a, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
 		require.NoError(t, err)
 		want, err := eval(a, b)
+		require.NoError(t, err)
+		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
+		require.NoError(t, err)
+		require.Zero(t, want.Cmp(got))
+	}
+}
+
+func ternaryArithmeticBigNumPropertyChecker(
+	eval func(a, b, c BigNum) (BigNum, error),
+	errChecks ...func(*testing.T, error),
+) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			for _, check := range errChecks {
+				check(t, c.execErr)
+			}
+			require.True(t, afterDepth <= beforeDepth && afterDepth >= beforeDepth-3)
+			return
+		}
+
+		require.Equal(t, beforeDepth-2, afterDepth)
+
+		c3, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+		require.NoError(t, err)
+		c2, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
+		require.NoError(t, err)
+		c1, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-3])
+		require.NoError(t, err)
+		want, err := eval(c1, c2, c3)
 		require.NoError(t, err)
 		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
 		require.NoError(t, err)
@@ -2338,6 +2393,230 @@ func modSpec() *opcodeSpec {
 				inputStack: [][]byte{
 					bytes.Repeat([]byte{0x01}, maxBigNumLen+1),
 					mustBigNumBytes(BigNumFromInt64(2)),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+		},
+	}
+}
+
+func modexpSpec() *opcodeSpec {
+	requireModexpError := func(t *testing.T, err error) {
+		t.Helper()
+		require.True(t,
+			errors.Is(err, ErrBigNumModulusNotPositive) ||
+				errors.Is(err, ErrBigNumNegativeExponent) ||
+				isScriptError(err, txscript.ErrInvalidStackOperation) ||
+				isScriptError(err, txscript.ErrNumberTooBig) ||
+				isScriptError(err, txscript.ErrMinimalData),
+			"unexpected modexp error: %T: %v", err, err,
+		)
+	}
+	// Largest positive value that fits in exactly maxModexpOperandLen bytes:
+	// 2^(8*maxModexpOperandLen - 1) - 1.
+	maxAtCap := new(big.Int).Lsh(big.NewInt(1), uint(8*maxModexpOperandLen-1))
+	maxAtCap.Sub(maxAtCap, big.NewInt(1))
+	modAtCap := mustBigNumFromBigInt(maxAtCap)
+	// One byte above the cap (encoded as 8 more bits of magnitude).
+	aboveCap := new(big.Int).Lsh(big.NewInt(1), uint(8*(maxModexpOperandLen+1)-1))
+	aboveCap.Sub(aboveCap, big.NewInt(1))
+	modAboveCap := mustBigNumFromBigInt(aboveCap)
+	return &opcodeSpec{
+		opcode: OP_MODEXP,
+		checkProperties: ternaryArithmeticBigNumPropertyChecker(
+			func(a, b, c BigNum) (BigNum, error) { return a.Modexp(b, c) },
+			requireModexpError,
+		),
+		validVectors: []opcodeVector{
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "small",
+					a:    BigNumFromInt64(2),
+					b:    BigNumFromInt64(10),
+					c:    BigNumFromInt64(1000),
+					out:  BigNumFromInt64(24),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "exp_zero",
+					a:    BigNumFromInt64(5),
+					b:    BigNumFromInt64(0),
+					c:    BigNumFromInt64(7),
+					out:  BigNumFromInt64(1),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "zero_pow_zero",
+					a:    BigNumFromInt64(0),
+					b:    BigNumFromInt64(0),
+					c:    BigNumFromInt64(7),
+					out:  BigNumFromInt64(1),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "base_zero_exp_positive",
+					a:    BigNumFromInt64(0),
+					b:    BigNumFromInt64(5),
+					c:    BigNumFromInt64(7),
+					out:  BigNumFromInt64(0),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "modulus_one",
+					a:    BigNumFromInt64(123456789),
+					b:    BigNumFromInt64(42),
+					c:    BigNumFromInt64(1),
+					out:  BigNumFromInt64(0),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "negative_base_even_exp",
+					a:    BigNumFromInt64(-3),
+					b:    BigNumFromInt64(2),
+					c:    BigNumFromInt64(5),
+					out:  BigNumFromInt64(4),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "negative_base_odd_exp_canonicalized",
+					a:    BigNumFromInt64(-2),
+					b:    BigNumFromInt64(3),
+					c:    BigNumFromInt64(5),
+					out:  BigNumFromInt64(2),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "fermat_inverse_small_prime",
+					a:    BigNumFromInt64(3),
+					b:    BigNumFromInt64(5),
+					c:    BigNumFromInt64(7),
+					out:  BigNumFromInt64(5),
+				},
+			),
+			ternaryBigNumVector(
+				ternaryBigNumCase{
+					name: "modulus_at_operand_cap",
+					a:    BigNumFromInt64(2),
+					b:    BigNumFromInt64(10),
+					c:    modAtCap,
+					out:  BigNumFromInt64(1024),
+				},
+			),
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name: "modulus_above_operand_cap",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(BigNumFromInt64(10)),
+					mustBigNumBytes(modAboveCap),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name: "base_above_operand_cap",
+				inputStack: [][]byte{
+					mustBigNumBytes(modAboveCap),
+					mustBigNumBytes(BigNumFromInt64(10)),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name: "exp_above_operand_cap",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(modAboveCap),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name: "modulus_zero",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(BigNumFromInt64(3)),
+					mustBigNumBytes(BigNumFromInt64(0)),
+				},
+				expectedExecErr: ErrBigNumModulusNotPositive,
+			},
+			{
+				name: "modulus_negative",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(BigNumFromInt64(3)),
+					mustBigNumBytes(BigNumFromInt64(-7)),
+				},
+				expectedExecErr: ErrBigNumModulusNotPositive,
+			},
+			{
+				name: "exp_negative",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(BigNumFromInt64(-1)),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedExecErr: ErrBigNumNegativeExponent,
+			},
+			{
+				name: "non_minimal_base",
+				inputStack: [][]byte{
+					{0x01, 0x00},
+					mustBigNumBytes(BigNumFromInt64(3)),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrMinimalData,
+			},
+			{
+				name: "non_minimal_exp",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					{0x01, 0x00},
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrMinimalData,
+			},
+			{
+				name: "non_minimal_modulus",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(BigNumFromInt64(3)),
+					{0x01, 0x00},
+				},
+				expectedError: txscript.ErrMinimalData,
+			},
+			{
+				name: "oversized_base",
+				inputStack: [][]byte{
+					bytes.Repeat([]byte{0x01}, maxBigNumLen+1),
+					mustBigNumBytes(BigNumFromInt64(3)),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name: "oversized_exp",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					bytes.Repeat([]byte{0x01}, maxBigNumLen+1),
+					mustBigNumBytes(BigNumFromInt64(7)),
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name: "oversized_modulus",
+				inputStack: [][]byte{
+					mustBigNumBytes(BigNumFromInt64(2)),
+					mustBigNumBytes(BigNumFromInt64(3)),
+					bytes.Repeat([]byte{0x01}, maxBigNumLen+1),
 				},
 				expectedError: txscript.ErrNumberTooBig,
 			},
@@ -3683,6 +3962,101 @@ func bin2NumSpec() *opcodeSpec {
 	}
 }
 
+// reverseBytesSpec verifies OP_REVERSEBYTES pops the top stack item and
+// pushes its bytes in reverse order without changing stack depth.
+func reverseBytesSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_REVERSEBYTES,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+
+			beforeDepth := len(c.before.GetStack())
+			afterDepth := len(c.after.GetStack())
+			if c.execErr != nil {
+				requireScriptErrorCodeIn(t, c.execErr,
+					txscript.ErrInvalidStackOperation,
+				)
+				require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+				return
+			}
+
+			require.Equal(t, beforeDepth, afterDepth)
+			src := c.before.GetStack()[beforeDepth-1]
+			want := slices.Clone(src)
+			slices.Reverse(want)
+			require.Equal(t, want, c.after.GetStack()[afterDepth-1])
+		},
+		validVectors: []opcodeVector{
+			{
+				name:          "empty",
+				inputStack:    [][]byte{emptyByteVector()},
+				expectedStack: [][]byte{emptyByteVector()},
+			},
+			{
+				name:          "single_byte_unchanged",
+				inputStack:    [][]byte{{0x42}},
+				expectedStack: [][]byte{{0x42}},
+			},
+			{
+				name:          "three_bytes",
+				inputStack:    [][]byte{{0x01, 0x02, 0x03}},
+				expectedStack: [][]byte{{0x03, 0x02, 0x01}},
+			},
+			{
+				name: "thirty_two_bytes",
+				inputStack: [][]byte{{
+					0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+					0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+					0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+					0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+				}},
+				expectedStack: [][]byte{{
+					0x1f, 0x1e, 0x1d, 0x1c, 0x1b, 0x1a, 0x19, 0x18,
+					0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, 0x10,
+					0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08,
+					0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
+				}},
+			},
+			{
+				// Models the post-OP_DUP shape: both stack entries alias the
+				// same backing []byte. A correct implementation must not
+				// mutate the popped buffer in place; otherwise the lower
+				// stack entry is silently corrupted.
+				name: "shared_backing_buffer_not_mutated",
+				inputStack: func() [][]byte {
+					shared := []byte{0x01, 0x02, 0x03}
+					return [][]byte{shared, shared}
+				}(),
+				expectedStack: [][]byte{{0x01, 0x02, 0x03}, {0x03, 0x02, 0x01}},
+			},
+			{
+				name:       "max_element_size_520",
+				inputStack: [][]byte{seqBytes(txscript.MaxScriptElementSize)},
+			},
+			{
+				name:       "max_element_size_minus_one_519",
+				inputStack: [][]byte{seqBytes(txscript.MaxScriptElementSize - 1)},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+		},
+	}
+}
+
+// seqBytes returns a byte slice of length n filled with the values 0,1,2,...
+// modulo 256. Used so reversal can be verified by the property checker
+// without restating the expected bytes in the test vector.
+func seqBytes(n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = byte(i)
+	}
+	return out
+}
+
 func txWeightSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode: OP_TXWEIGHT,
@@ -4816,4 +5190,12 @@ func hashBytes(h chainhash.Hash) []byte {
 func sha256Bytes(data []byte) []byte {
 	sum := sha256.Sum256(data)
 	return append([]byte(nil), sum[:]...)
+}
+
+func TestOpcodeModexpSmoke(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "OP_MODEXP", opcodeArray[OP_MODEXP].name)
+	require.Equal(t, 1, opcodeArray[OP_MODEXP].length)
+	require.NotNil(t, opcodeArray[OP_MODEXP].opfunc)
 }

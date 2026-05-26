@@ -221,6 +221,13 @@
         "title": "GetInfoResponse",
         "type": "object",
         "properties": {
+          "deprecatedSignerPubkeys": {
+            "type": "array",
+            "description": "hex-encoded compressed public keys of deprecated signers accepted for signing.",
+            "items": {
+              "type": "string"
+            }
+          },
           "signerPubkey": {
             "type": "string",
             "description": "hex-encoded compressed public key of the signer."

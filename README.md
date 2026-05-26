@@ -25,7 +25,8 @@ Returns service metadata including the signer's public key. The public key shoul
 ```json
 {
   "version": "0.0.1",
-  "signer_pubkey": "compressed_public_key"
+  "signerPubkey": "compressed_current_public_key",
+  "deprecatedSignerPubkeys": ["compressed_deprecated_public_key"]
 }
 ```
 
@@ -40,20 +41,20 @@ If this introspector is the last required non-`arkd` signer for all owned inputs
 **Request**:
 ```json
 {
-  "ark_tx": "base64_encoded_psbt",
-  "checkpoint_txs": ["base64_encoded_checkpoint_psbt1", "..."]
+  "arkTx": "base64_encoded_psbt",
+  "checkpointTxs": ["base64_encoded_checkpoint_psbt1", "..."]
 }
 ```
 
 **Response**:
 ```json
 {
-  "signed_ark_tx": "base64_encoded_signed_psbt",
-  "signed_checkpoint_txs": ["base64_encoded_signed_checkpoint_psbt1", "..."]
+  "signedArkTx": "base64_encoded_signed_psbt",
+  "signedCheckpointTxs": ["base64_encoded_signed_checkpoint_psbt1", "..."]
 }
 ```
 
-`signed_ark_tx` may be either partially signed or finalized, depending on whether this introspector is the last required non-`arkd` signer for all owned inputs matched by the introspector packet.
+`signedArkTx` may be either partially signed or finalized, depending on whether this introspector is the last required non-`arkd` signer for all owned inputs matched by the introspector packet.
 
 ### SubmitIntent
 
@@ -74,7 +75,7 @@ Signs an intent proof after validating the register message and executing Arkade
 **Response**:
 ```json
 {
-  "signed_proof": "base64_encoded_signed_psbt"
+  "signedProof": "base64_encoded_signed_psbt"
 }
 ```
 
@@ -87,12 +88,12 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
 **Request**:
 ```json
 {
-  "signed_intent": {
+  "signedIntent": {
     "proof": "base64_encoded_signed_psbt",
     "message": "base64_encoded_register_message"
   },
   "forfeits": ["base64_encoded_forfeit_psbt1", "..."],
-  "connector_tree": [
+  "connectorTree": [
     {
       "txid": "transaction_id",
       "tx": "base64_encoded_transaction",
@@ -102,15 +103,15 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
       }
     }
   ],
-  "commitment_tx": "base64_encoded_psbt"
+  "commitmentTx": "base64_encoded_psbt"
 }
 ```
 
 **Response**:
 ```json
 {
-  "signed_forfeits": ["base64_encoded_signed_forfeit_psbt1", "..."],
-  "signed_commitment_tx": "base64_encoded_signed_psbt"
+  "signedForfeits": ["base64_encoded_signed_forfeit_psbt1", "..."],
+  "signedCommitmentTx": "base64_encoded_signed_psbt"
 }
 ```
 
@@ -132,7 +133,7 @@ Inputs whose tapscript closure also contains the `arkd` signer pubkey are reject
 **Response**:
 ```json
 {
-  "signed_tx": "base64_encoded_signed_psbt"
+  "signedTx": "base64_encoded_signed_psbt"
 }
 ```
 
@@ -181,6 +182,7 @@ The service can be configured using environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `INTROSPECTOR_SECRET_KEY` | Private key for signing (hex encoded) | Required |
+| `INTROSPECTOR_DEPRECATED_KEYS` | Comma-separated deprecated private keys (hex encoded) still accepted for signing. Empty means none. CSV is strict: leading commas, trailing commas, empty entries, whitespace, duplicates, and the current key are rejected. | Empty |
 | `INTROSPECTOR_DATADIR` | Data directory path | OS-specific app data dir |
 | `INTROSPECTOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
 | `INTROSPECTOR_NO_TLS` | Disable TLS encryption | false |
@@ -305,6 +307,7 @@ and can be up to the maximum script element size. `OP_NUM2BIN` and
 | OP_RSHIFT | 153 | 0x99 | x n | x>>n | Logical right shift by n bits. Sign data is discarded. |
 | OP_NUM2BIN | 215 | 0xd7 | num size | bytes | Pads a BigNum to exactly size bytes. Fails if the number does not fit or size is negative or greater than the maximum script element size. |
 | OP_BIN2NUM | 216 | 0xd8 | bytes | num | Normalizes a byte string into a minimally encoded BigNum. |
+| OP_MODEXP | 218 | 0xda | base exp modulus | result | Pushes `base^exp mod modulus` in the canonical range `[0, modulus)`. Each operand is capped at 64 bytes. Fails if `modulus <= 0`, `exp < 0`, or any operand exceeds 64 bytes. For modular inverse over a prime `p`, pass `exp = p-2` (Fermat's little theorem). |
 
 ### Cryptography
 

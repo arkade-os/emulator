@@ -49,14 +49,12 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("no introspector packet found in transaction")
 	}
 
-	signerPublicKey := s.signer.secretKey.PubKey()
-
 	finalizerAcc := newFinalizerAccumulator(s.arkdPubKey)
 
 	var nSigned = 0
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
-		script, err := arkade.ReadArkadeScript(arkPtx, signerPublicKey, entry)
+		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.deprecatedSigners, arkPtx, entry)
 		if err != nil {
 			// there may be input/entry pairs attributed to a different signer
 			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(arkPtx.Inputs) > 1 {
@@ -75,7 +73,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		}
 		log.Debugf("execution of %x succeeded", script.Script())
 
-		if err := s.signer.signInput(arkPtx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
+		if err := matchedSigner.signInput(arkPtx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
@@ -91,7 +89,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			return nil, fmt.Errorf("failed to create prevout fetcher for checkpoint: %w", err)
 		}
 
-		if err := s.signer.signInput(checkpointPtx, 0, script.Hash(), checkpointPrevoutFetcher); err != nil {
+		if err := matchedSigner.signInput(checkpointPtx, 0, script.Hash(), checkpointPrevoutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign checkpoint input %d: %w", inputIndex, err)
 		}
 
