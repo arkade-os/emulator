@@ -348,7 +348,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_UNKNOWN208:                    invalidSpec(OP_UNKNOWN208),
 	OP_INSPECTPACKET:                 inspectPacketSpec(),
 	OP_INSPECTINPUTPACKET:            inspectInputPacketSpec(),
-	OP_UNKNOWN246:                    invalidSpec(OP_UNKNOWN246),
+	OP_SIGHASH:                       sighashSpec(),
 	OP_UNKNOWN247:                    invalidSpec(OP_UNKNOWN247),
 	OP_UNKNOWN248:                    invalidSpec(OP_UNKNOWN248),
 	OP_UNKNOWN249:                    invalidSpec(OP_UNKNOWN249),
@@ -4070,6 +4070,154 @@ func txWeightSpec() *opcodeSpec {
 		},
 		validVectors: []opcodeVector{
 			{name: "push", expectedStack: [][]byte{opcodeWorldTxWeight()}},
+		},
+	}
+}
+
+// sighashTestLeafScript is the witness script we synthesize for OP_SIGHASH
+// unit tests. The bytes are inconsequential to the digest the opcode produces
+// other than that the same script is also fed into the expected sighash
+// computation below, so anything that parses as a tapscript leaf works.
+var sighashTestLeafScript = []byte{OP_SIGHASH}
+
+// installSighashTapContext synthesizes the tapscript execution context that
+// the engine would normally populate during verifyWitnessProgram. Tests run
+// opcodes in isolation, so we wire it up directly here.
+func installSighashTapContext(vm *Engine, annex []byte) {
+	if vm.hashCache == nil {
+		vm.hashCache = txscript.NewTxSigHashes(&vm.tx, vm.prevOutFetcher)
+	}
+	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf(sighashTestLeafScript), 0,
+	)
+	if len(annex) > 0 {
+		vm.taprootCtx.annex = append([]byte(nil), annex...)
+	}
+}
+
+// expectedSighash returns the digest that OP_SIGHASH should push for the
+// given flag. Correctness of the digest (round-trip with
+// OP_CHECKSIGFROMSTACK, witness-blob masking, domain separation from the
+// BIP342 digest) is covered by dedicated tests in engine_test.go; this
+// helper is a stability check that the opcode and the helper agree.
+func expectedSighash(t *testing.T, vm *Engine, hashType txscript.SigHashType) []byte {
+	t.Helper()
+	digest, err := computeArkadeSighash(vm, hashType)
+	require.NoError(t, err)
+	return digest
+}
+
+func sighashSpec() *opcodeSpec {
+	flagBytes := func(v int64) []byte {
+		if v == 0 {
+			return emptyByteVector()
+		}
+		return scriptNum(v).Bytes()
+	}
+
+	validFlag := func(name string, hashType txscript.SigHashType) opcodeVector {
+		return opcodeVector{
+			name:       name,
+			inputStack: [][]byte{flagBytes(int64(hashType))},
+			setupVM:    func(vm *Engine) { installSighashTapContext(vm, nil) },
+		}
+	}
+
+	return &opcodeSpec{
+		opcode: OP_SIGHASH,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+
+			if c.execErr != nil {
+				// PopInt consumes the flag before validation, so on
+				// validation failures the data stack is one item
+				// shorter; on a clean underflow it is unchanged. We
+				// don't assert a specific shape here — the
+				// expectedError check on each vector is sufficient.
+				return
+			}
+
+			require.Equal(t, len(c.before.GetStack()), len(c.after.GetStack()))
+			top := c.after.GetStack()[len(c.after.GetStack())-1]
+			require.Len(t, top, 32)
+
+			// The popped flag was the only stack input on a successful
+			// run; recover it from the before-state to compute the
+			// expected digest independently.
+			beforeStack := c.before.GetStack()
+			flagBytes := beforeStack[len(beforeStack)-1]
+			flagNum, err := MakeScriptNum(flagBytes, true, maxScriptNumLen)
+			require.NoError(t, err)
+			expected := expectedSighash(t, c.before,
+				txscript.SigHashType(flagNum.Int32()))
+			require.Equal(t, expected, top)
+		},
+		validVectors: []opcodeVector{
+			validFlag("default", txscript.SigHashDefault),
+			validFlag("all", txscript.SigHashAll),
+			validFlag("none", txscript.SigHashNone),
+			validFlag("single", txscript.SigHashSingle),
+			validFlag("all_anyonecanpay",
+				txscript.SigHashAll|txscript.SigHashAnyOneCanPay),
+			validFlag("none_anyonecanpay",
+				txscript.SigHashNone|txscript.SigHashAnyOneCanPay),
+			validFlag("single_anyonecanpay",
+				txscript.SigHashSingle|txscript.SigHashAnyOneCanPay),
+			{
+				name:       "with_annex",
+				inputStack: [][]byte{flagBytes(int64(txscript.SigHashAll))},
+				setupVM: func(vm *Engine) {
+					installSighashTapContext(vm, []byte{0x50, 0xab, 0xcd})
+				},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{
+				name:          "no_context",
+				inputStack:    [][]byte{flagBytes(int64(txscript.SigHashAll))},
+				expectedError: txscript.ErrReservedOpcode,
+			},
+			{
+				name:          "underflow",
+				setupVM:       func(vm *Engine) { installSighashTapContext(vm, nil) },
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "unknown_flag",
+				inputStack:    [][]byte{scriptNum(0x04).Bytes()},
+				setupVM:       func(vm *Engine) { installSighashTapContext(vm, nil) },
+				expectedError: txscript.ErrInvalidSigHashType,
+			},
+			{
+				name:          "anyonecanpay_only",
+				inputStack:    [][]byte{scriptNum(0x80).Bytes()},
+				setupVM:       func(vm *Engine) { installSighashTapContext(vm, nil) },
+				expectedError: txscript.ErrInvalidSigHashType,
+			},
+			{
+				name:          "flag_too_large",
+				inputStack:    [][]byte{scriptNum(256).Bytes()},
+				setupVM:       func(vm *Engine) { installSighashTapContext(vm, nil) },
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name:          "flag_negative",
+				inputStack:    [][]byte{scriptNum(-1).Bytes()},
+				setupVM:       func(vm *Engine) { installSighashTapContext(vm, nil) },
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name:       "single_without_output",
+				inputStack: [][]byte{flagBytes(int64(txscript.SigHashSingle))},
+				setupWorld: func(w *opcodeWorld) {
+					// Drop all outputs so input index >= len(TxOut).
+					w.tx.TxOut = nil
+				},
+				setupVM:       func(vm *Engine) { installSighashTapContext(vm, nil) },
+				expectedError: txscript.ErrInvalidSigHashType,
+			},
 		},
 	}
 }
