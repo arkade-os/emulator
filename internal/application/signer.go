@@ -1,6 +1,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/ArkLabsHQ/introspector/pkg/arkade"
@@ -52,4 +53,31 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 	})
 
 	return nil
+}
+
+func resolveArkadeScriptSigner(
+	current signer,
+	deprecated []signer,
+	ptx *psbt.Packet,
+	entry arkade.IntrospectorEntry,
+) (signer, *arkade.ArkadeScript, error) {
+	script, err := arkade.ReadArkadeScript(ptx, current.secretKey.PubKey(), entry)
+	if err == nil {
+		return current, script, nil
+	}
+	if !errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) {
+		return signer{}, nil, err
+	}
+
+	for _, deprecatedSigner := range deprecated {
+		script, err := arkade.ReadArkadeScript(ptx, deprecatedSigner.secretKey.PubKey(), entry)
+		if err == nil {
+			return deprecatedSigner, script, nil
+		}
+		if !errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) {
+			return signer{}, nil, err
+		}
+	}
+
+	return signer{}, nil, err
 }
