@@ -46,12 +46,9 @@ type taprootExecutionCtx struct {
 	tapLeaf     txscript.TapLeaf
 	tapLeafHash chainhash.Hash
 
-	// opGroupRemaining holds the remaining per-input execution count for each
-	// opcode group in the active ComputeLimits, indexed by group index. It is
-	// initialized lazily on the first charge so the limits in effect at
-	// execution time (possibly overridden after this context was created) are
-	// the ones applied.
-	opGroupRemaining []int
+	// opCounts tracks how many times each limited opcode has executed for this
+	// input. It is allocated lazily on the first charge.
+	opCounts map[byte]int
 
 	mustSucceed bool
 
@@ -151,10 +148,10 @@ type Engine struct {
 	inputAmount    int64
 	taprootCtx     *taprootExecutionCtx
 
-	// limits is the per-input opcode-execution compute brake. It is set to the
-	// compiled DefaultComputeLimits by NewEngine and may be replaced before
-	// execution via WithComputeLimits.
-	limits *compiledComputeLimits
+	// limits is the per-input opcode-execution compute brake. NewEngine sets it
+	// to DefaultComputeLimits; it may be replaced before execution via
+	// WithComputeLimits.
+	limits ComputeLimits
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -323,27 +320,25 @@ func (vm *Engine) executeOpcode(op *opcode, data []byte) error {
 	return op.opfunc(op, data, vm)
 }
 
-// chargeOpcode decrements the per-input execution budget for the group that op
-// belongs to, if any. It returns an error once a group's budget is exhausted.
-// Ungrouped opcodes, executions outside a tapscript context, and engines with
-// no compute limits configured are never charged. Group budgets are seeded
-// lazily on first charge from the active limits.
+// chargeOpcode counts one execution of op and returns an error once op exceeds
+// its configured per-input limit. Opcodes with no limit, and executions outside
+// a tapscript context, are never charged.
 func (vm *Engine) chargeOpcode(op byte) error {
-	if vm.taprootCtx == nil || vm.limits == nil {
+	if vm.taprootCtx == nil {
 		return nil
 	}
-	g := vm.limits.groupOf[op]
-	if g < 0 {
+	limit, ok := vm.limits[op]
+	if !ok {
 		return nil
 	}
-	if vm.taprootCtx.opGroupRemaining == nil {
-		vm.taprootCtx.opGroupRemaining = append([]int(nil), vm.limits.limits...)
+	if vm.taprootCtx.opCounts == nil {
+		vm.taprootCtx.opCounts = make(map[byte]int)
 	}
-	vm.taprootCtx.opGroupRemaining[g]--
-	if vm.taprootCtx.opGroupRemaining[g] < 0 {
+	vm.taprootCtx.opCounts[op]++
+	if vm.taprootCtx.opCounts[op] > limit {
 		return scriptError(txscript.ErrScriptTooBig,
-			fmt.Sprintf("opcode group %q exceeded execution limit of %d",
-				vm.limits.names[g], vm.limits.limits[g]))
+			fmt.Sprintf("opcode %s exceeded execution limit of %d",
+				opcodeArray[op].name, limit))
 	}
 	return nil
 }
@@ -840,7 +835,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		hashCache:      hashCache,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
-		limits:         defaultCompiledLimits,
+		limits:         defaultComputeLimits,
 	}
 
 	// The signature script must only contain data pushes.

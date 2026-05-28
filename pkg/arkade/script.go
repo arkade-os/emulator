@@ -36,13 +36,10 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 }
 
 // WithComputeLimits overrides the per-input opcode-execution compute brake for
-// this execution. Without it the engine uses DefaultComputeLimits. It panics on
-// an invalid configuration (see ComputeLimits.Validate); callers handling
-// untrusted configs should validate before constructing the option.
+// this execution. Without it the engine uses DefaultComputeLimits.
 func WithComputeLimits(c ComputeLimits) ExecuteOption {
-	compiled := c.compile()
 	return func(engine *Engine) {
-		engine.limits = compiled
+		engine.limits = c
 	}
 }
 

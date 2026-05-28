@@ -7,20 +7,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// limitOnlyOp1 builds an engine whose only compute group is OP_1 with the given
-// limit, with a tapscript execution context active so charges take effect.
+// limitOnlyOp1 builds an engine whose only compute limit is OP_1, with a
+// tapscript execution context active so charges take effect.
 func limitOnlyOp1(t *testing.T, limit int) *Engine {
 	t.Helper()
 	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
 	require.NoError(t, err)
 	vm.taprootCtx = &taprootExecutionCtx{}
-	vm.limits = ComputeLimits{Groups: []OpcodeGroup{
-		{Name: "test", Limit: limit, Opcodes: []byte{OP_1}},
-	}}.compile()
+	vm.limits = ComputeLimits{OP_1: limit}
 	return vm
 }
 
-func TestChargeOpcodeEnforcesGroupLimit(t *testing.T) {
+func TestChargeOpcodeEnforcesLimit(t *testing.T) {
 	vm := limitOnlyOp1(t, 2)
 
 	require.NoError(t, invokeOpcodeWithData(OP_1, nil, vm))
@@ -47,14 +45,12 @@ func TestChargeOpcodeIgnoresDeadBranch(t *testing.T) {
 		txscript.ErrScriptTooBig)
 }
 
-func TestChargeOpcodeUngroupedIsUnlimited(t *testing.T) {
-	// OP_1 is not in any group here, so it is never charged.
+func TestChargeOpcodeUnlistedIsUnlimited(t *testing.T) {
+	// OP_1 has no limit here, so it is never charged.
 	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
 	require.NoError(t, err)
 	vm.taprootCtx = &taprootExecutionCtx{}
-	vm.limits = ComputeLimits{Groups: []OpcodeGroup{
-		{Name: "test", Limit: 0, Opcodes: []byte{OP_ECADD}},
-	}}.compile()
+	vm.limits = ComputeLimits{OP_ECADD: 0}
 
 	for range 100 {
 		require.NoError(t, invokeOpcodeWithData(OP_1, nil, vm))
@@ -63,8 +59,8 @@ func TestChargeOpcodeUngroupedIsUnlimited(t *testing.T) {
 
 // TestComputeLimitPairingTripsBeforePerCallCap is the acceptance-criterion
 // test: a script that repeats OP_ECPAIRING with each call well within the
-// per-call pair cap (maxECPairingCount) still fails once the group's call-count
-// limit is exhausted, under the default limits.
+// per-call pair cap (maxECPairingCount) still fails once OP_ECPAIRING's
+// execution limit is exhausted, under the default limits.
 func TestComputeLimitPairingTripsBeforePerCallCap(t *testing.T) {
 	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
 	require.NoError(t, err)
@@ -72,8 +68,8 @@ func TestComputeLimitPairingTripsBeforePerCallCap(t *testing.T) {
 		txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
 	)
 
-	// Default ec-pairing limit is 2. Each call uses a single pair — far below
-	// the 16-pair per-call cap — so only the count limit can stop it.
+	// Default OP_ECPAIRING limit is 2. Each call uses a single pair — far below
+	// the 16-pair per-call cap — so only the execution limit can stop it.
 	for range 2 {
 		vm.SetStack(pairingFalseVectors())
 		require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
@@ -83,10 +79,10 @@ func TestComputeLimitPairingTripsBeforePerCallCap(t *testing.T) {
 		txscript.ErrScriptTooBig)
 }
 
-// TestComputeLimitSigGroupCountsEveryExecution locks in the post-sigops
-// behavior: the sig group counts every CHECKSIG execution, including
-// empty-signature calls that BIP-342 used to exempt.
-func TestComputeLimitSigGroupCountsEveryExecution(t *testing.T) {
+// TestComputeLimitSigCountsEveryExecution locks in the post-sigops behavior:
+// CHECKSIG is counted on every execution, including empty-signature calls that
+// BIP-342 used to exempt.
+func TestComputeLimitSigCountsEveryExecution(t *testing.T) {
 	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
 	require.NoError(t, err)
 	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
@@ -98,7 +94,7 @@ func TestComputeLimitSigGroupCountsEveryExecution(t *testing.T) {
 	pubkey := make([]byte, 32)
 	pushSig := func() { vm.SetStack([][]byte{{}, pubkey}) }
 
-	// Default sig limit is 50.
+	// Default OP_CHECKSIG limit is 50.
 	for range 50 {
 		pushSig()
 		require.NoError(t, invokeOpcodeWithData(OP_CHECKSIG, nil, vm))
@@ -110,7 +106,7 @@ func TestComputeLimitSigGroupCountsEveryExecution(t *testing.T) {
 
 // TestWithComputeLimitsOverridesDefault verifies the override applies even
 // though it runs after the taproot context was created (as it does in
-// ArkadeScript.Execute), thanks to lazy budget initialization.
+// ArkadeScript.Execute).
 func TestWithComputeLimitsOverridesDefault(t *testing.T) {
 	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
 	require.NoError(t, err)
@@ -118,10 +114,8 @@ func TestWithComputeLimitsOverridesDefault(t *testing.T) {
 		txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
 	)
 
-	// OP_1 is unlimited under the default config; the override caps it at 1.
-	WithComputeLimits(ComputeLimits{Groups: []OpcodeGroup{
-		{Name: "test", Limit: 1, Opcodes: []byte{OP_1}},
-	}})(vm)
+	// OP_1 is unlimited by default; the override caps it at 1.
+	WithComputeLimits(ComputeLimits{OP_1: 1})(vm)
 
 	require.NoError(t, invokeOpcodeWithData(OP_1, nil, vm))
 	requireScriptErrorCode(t, invokeOpcodeWithData(OP_1, nil, vm),
@@ -134,9 +128,7 @@ func TestChargeOpcodeNoTaprootContextIsUnlimited(t *testing.T) {
 	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
 	require.NoError(t, err)
 	vm.taprootCtx = nil
-	vm.limits = ComputeLimits{Groups: []OpcodeGroup{
-		{Name: "test", Limit: 0, Opcodes: []byte{OP_1}},
-	}}.compile()
+	vm.limits = ComputeLimits{OP_1: 0}
 
 	require.NoError(t, invokeOpcodeWithData(OP_1, nil, vm))
 }
