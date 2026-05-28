@@ -36,8 +36,8 @@ const (
 )
 
 // taprootExecutionCtx houses the special context-specific information we need
-// to validate a taproot script spend. This includes the annex, the running sig
-// op count tally, and other relevant information.
+// to validate a taproot script spend. This includes the annex, the per-input
+// opcode-group execution budgets, and other relevant information.
 type taprootExecutionCtx struct {
 	annex []byte
 
@@ -46,47 +46,31 @@ type taprootExecutionCtx struct {
 	tapLeaf     txscript.TapLeaf
 	tapLeafHash chainhash.Hash
 
-	sigOpsBudget int32
+	// opGroupRemaining holds the remaining per-input execution count for each
+	// opcode group in the active ComputeLimits, indexed by group index. It is
+	// initialized lazily on the first charge so the limits in effect at
+	// execution time (possibly overridden after this context was created) are
+	// the ones applied.
+	opGroupRemaining []int
 
 	mustSucceed bool
 
 	trackCodeSep bool
 }
 
-// sigOpsDelta is both the starting budget for sig ops for tapscript
-// verification, as well as the decrease in the total budget when we encounter
-// a signature.
-const sigOpsDelta = 50
-
-// tallysigOp attempts to decrease the current sig ops budget by sigOpsDelta.
-// An error is returned if after subtracting the delta, the budget is below
-// zero.
-func (t *taprootExecutionCtx) tallysigOp() error {
-	t.sigOpsBudget -= sigOpsDelta
-
-	if t.sigOpsBudget < 0 {
-		return scriptError(txscript.ErrTaprootMaxSigOps, "")
-	}
-
-	return nil
-}
-
 // newTaprootExecutionCtx returns a fresh instance of the taproot execution
 // context.
-func newTaprootExecutionCtx(inputWitnessSize int32) *taprootExecutionCtx {
+func newTaprootExecutionCtx() *taprootExecutionCtx {
 	return &taprootExecutionCtx{
 		codeSepPos:   blankCodeSepValue,
-		sigOpsBudget: sigOpsDelta + inputWitnessSize,
 		trackCodeSep: true,
 	}
 }
 
 // newTaprootExecutionCtxForLeaf returns a fresh taproot execution context for
 // the given tapscript leaf.
-func newTaprootExecutionCtxForLeaf(
-	tapLeaf txscript.TapLeaf, inputWitnessSize int32,
-) *taprootExecutionCtx {
-	ctx := newTaprootExecutionCtx(inputWitnessSize)
+func newTaprootExecutionCtxForLeaf(tapLeaf txscript.TapLeaf) *taprootExecutionCtx {
+	ctx := newTaprootExecutionCtx()
 	ctx.tapLeaf = tapLeaf
 	ctx.tapLeafHash = tapLeaf.TapHash()
 	return ctx
@@ -166,6 +150,11 @@ type Engine struct {
 	witnessProgram []byte
 	inputAmount    int64
 	taprootCtx     *taprootExecutionCtx
+
+	// limits is the per-input opcode-execution compute brake. It is set to the
+	// compiled DefaultComputeLimits by NewEngine and may be replaced before
+	// execution via WithComputeLimits.
+	limits *compiledComputeLimits
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -327,7 +316,36 @@ func (vm *Engine) executeOpcode(op *opcode, data []byte) error {
 		}
 	}
 
+	if err := vm.chargeOpcode(op.value); err != nil {
+		return err
+	}
+
 	return op.opfunc(op, data, vm)
+}
+
+// chargeOpcode decrements the per-input execution budget for the group that op
+// belongs to, if any. It returns an error once a group's budget is exhausted.
+// Ungrouped opcodes, executions outside a tapscript context, and engines with
+// no compute limits configured are never charged. Group budgets are seeded
+// lazily on first charge from the active limits.
+func (vm *Engine) chargeOpcode(op byte) error {
+	if vm.taprootCtx == nil || vm.limits == nil {
+		return nil
+	}
+	g := vm.limits.groupOf[op]
+	if g < 0 {
+		return nil
+	}
+	if vm.taprootCtx.opGroupRemaining == nil {
+		vm.taprootCtx.opGroupRemaining = append([]int(nil), vm.limits.limits...)
+	}
+	vm.taprootCtx.opGroupRemaining[g]--
+	if vm.taprootCtx.opGroupRemaining[g] < 0 {
+		return scriptError(txscript.ErrScriptTooBig,
+			fmt.Sprintf("opcode group %q exceeded execution limit of %d",
+				vm.limits.names[g], vm.limits.limits[g]))
+	}
+	return nil
 }
 
 // checkValidPC returns an error if the current script position is not valid for
@@ -365,9 +383,7 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 
 	// At this point, we know taproot is active, so we'll populate
 	// the taproot execution context.
-	vm.taprootCtx = newTaprootExecutionCtx(
-		int32(witness.SerializeSize()),
-	)
+	vm.taprootCtx = newTaprootExecutionCtx()
 
 	// If we can detect the annex, then drop that off the stack,
 	// we'll only need it to compute the sighash later.
@@ -824,6 +840,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		hashCache:      hashCache,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
+		limits:         defaultCompiledLimits,
 	}
 
 	// The signature script must only contain data pushes.

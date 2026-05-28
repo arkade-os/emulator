@@ -35,6 +35,17 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
+// WithComputeLimits overrides the per-input opcode-execution compute brake for
+// this execution. Without it the engine uses DefaultComputeLimits. It panics on
+// an invalid configuration (see ComputeLimits.Validate); callers handling
+// untrusted configs should validate before constructing the option.
+func WithComputeLimits(c ComputeLimits) ExecuteOption {
+	compiled := c.compile()
+	return func(engine *Engine) {
+		engine.limits = compiled
+	}
+}
+
 // ArkPrevOutFetcher extends txscript.PrevOutputFetcher with the ability to
 // look up previous ark transactions by outpoint. Both methods are keyed by
 // the spending input's outpoint but serve different purposes:
@@ -148,9 +159,7 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
 
-	engine.taprootCtx = newTaprootExecutionCtxForLeaf(
-		s.spendingTapLeaf, int32(s.witness.SerializeSize()),
-	)
+	engine.taprootCtx = newTaprootExecutionCtxForLeaf(s.spendingTapLeaf)
 	// Arkade scripts execute from the emulator packet, not from the
 	// spending tapleaf whose hash the sighash commits to.
 	engine.taprootCtx.trackCodeSep = false

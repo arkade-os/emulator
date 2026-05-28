@@ -1801,14 +1801,6 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	// Account for changes in the sig ops budget after this
-	// execution, but only for non-empty signatures.
-	if len(fullSigBytes) > 0 {
-		if err := vm.taprootCtx.tallysigOp(); err != nil {
-			return err
-		}
-	}
-
 	// Empty public keys immediately cause execution to fail.
 	if len(pkBytes) == 0 {
 		return scriptError(txscript.ErrTaprootPubkeyIsEmpty, "")
@@ -1884,15 +1876,6 @@ func opcodeCheckSigAdd(op *opcode, data []byte, vm *Engine) error {
 	sigBytes, err := vm.dstack.PopByteArray()
 	if err != nil {
 		return err
-	}
-
-	// Only non-empty signatures count towards the total tapscript sig op
-	// limit.
-	if len(sigBytes) != 0 {
-		// Account for changes in the sig ops budget after this execution.
-		if err := vm.taprootCtx.tallysigOp(); err != nil {
-			return err
-		}
 	}
 
 	// Empty public keys immediately cause execution to fail.
