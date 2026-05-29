@@ -61,7 +61,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
-			arkade.WithComputeLimits(s.computeLimits),
+			arkade.WithExactComputeLimits(s.computeLimits),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}

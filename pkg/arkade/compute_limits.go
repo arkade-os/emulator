@@ -47,3 +47,14 @@ func DefaultComputeLimits() ComputeLimits {
 		OP_MODEXP:            64,   // ~60 µs at the 64-byte operand cap
 	}
 }
+
+func cloneComputeLimits(c ComputeLimits) ComputeLimits {
+	if c == nil {
+		return nil
+	}
+	clone := make(ComputeLimits, len(c))
+	for op, limit := range c {
+		clone[op] = limit
+	}
+	return clone
+}

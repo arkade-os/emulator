@@ -293,6 +293,16 @@ func TestParseComputeLimitsOverridesMultipleOpcodesWithSpaces(t *testing.T) {
 	require.Equal(t, 128, got[arkade.OP_MODEXP])
 }
 
+func TestParseComputeLimitsEmptyValueRemovesLimit(t *testing.T) {
+	got, err := parseComputeLimits("OP_ECADD=")
+	require.NoError(t, err)
+
+	_, ok := got[arkade.OP_ECADD]
+	require.False(t, ok)
+	require.Equal(t, arkade.DefaultComputeLimits()[arkade.OP_ECPAIRING],
+		got[arkade.OP_ECPAIRING])
+}
+
 func TestParseComputeLimitsUnknownOpcodeErrors(t *testing.T) {
 	_, err := parseComputeLimits("OP_NOT_A_REAL_OPCODE=5")
 	require.ErrorContains(t, err, "OP_NOT_A_REAL_OPCODE")

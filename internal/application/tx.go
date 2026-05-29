@@ -68,7 +68,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			arkPtx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
-			arkade.WithComputeLimits(s.computeLimits),
+			arkade.WithExactComputeLimits(s.computeLimits),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}

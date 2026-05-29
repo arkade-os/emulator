@@ -138,7 +138,12 @@ func parseComputeLimits(raw string) (arkade.ComputeLimits, error) {
 		if !ok {
 			return nil, fmt.Errorf("unknown opcode %q in compute limits", name)
 		}
-		limit, err := strconv.Atoi(strings.TrimSpace(value))
+		value = strings.TrimSpace(value)
+		if value == "" {
+			delete(limits, op)
+			continue
+		}
+		limit, err := strconv.Atoi(value)
 		if err != nil {
 			return nil, fmt.Errorf("invalid limit for opcode %q: %w", name, err)
 		}

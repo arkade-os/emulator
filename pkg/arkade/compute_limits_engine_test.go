@@ -122,6 +122,44 @@ func TestWithComputeLimitsOverridesDefault(t *testing.T) {
 		txscript.ErrScriptTooBig)
 }
 
+func TestWithComputeLimitsMergesWithDefaults(t *testing.T) {
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
+	)
+
+	WithComputeLimits(ComputeLimits{OP_ECPAIRING: 8})(vm)
+
+	pubkey := make([]byte, 32)
+	pushSig := func() { vm.SetStack([][]byte{{}, pubkey}) }
+	for range 50 {
+		pushSig()
+		require.NoError(t, invokeOpcodeWithData(OP_CHECKSIG, nil, vm))
+	}
+	pushSig()
+	requireScriptErrorCode(t, invokeOpcodeWithData(OP_CHECKSIG, nil, vm),
+		txscript.ErrScriptTooBig)
+}
+
+func TestWithExactComputeLimitsCanRemoveDefaultLimit(t *testing.T) {
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
+	)
+	limits := DefaultComputeLimits()
+	delete(limits, OP_CHECKSIG)
+
+	WithExactComputeLimits(limits)(vm)
+
+	pubkey := make([]byte, 32)
+	for range 100 {
+		vm.SetStack([][]byte{{}, pubkey})
+		require.NoError(t, invokeOpcodeWithData(OP_CHECKSIG, nil, vm))
+	}
+}
+
 func TestWithComputeLimitsNilKeepsDefaultLimits(t *testing.T) {
 	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
 	require.NoError(t, err)
