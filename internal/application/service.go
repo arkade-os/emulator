@@ -7,6 +7,7 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/go-sdk/client"
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -60,9 +61,10 @@ type service struct {
 	deprecatedPublicKeys []string
 	arkdClient           client.TransportClient
 	arkdPubKey           *btcec.PublicKey
+	computeLimits        arkade.ComputeLimits
 }
 
-func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdURL string) (Service, error) {
+func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdURL string, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
@@ -111,6 +113,7 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		deprecatedPublicKeys: deprecatedPublicKeys,
 		arkdClient:           arkdClient,
 		arkdPubKey:           arkdPubKey,
+		computeLimits:        computeLimits,
 	}, nil
 }
 

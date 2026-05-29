@@ -4088,7 +4088,7 @@ func installSighashTapContext(vm *Engine, annex []byte) {
 		vm.hashCache = txscript.NewTxSigHashes(&vm.tx, vm.prevOutFetcher)
 	}
 	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
-		txscript.NewBaseTapLeaf(sighashTestLeafScript), 0,
+		txscript.NewBaseTapLeaf(sighashTestLeafScript),
 	)
 	if len(annex) > 0 {
 		vm.taprootCtx.annex = append([]byte(nil), annex...)

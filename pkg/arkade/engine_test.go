@@ -2463,7 +2463,7 @@ func arkadeDigest(
 		hashCache:      txscript.NewTxSigHashes(tx, fetcher),
 		prevOutFetcher: fetcher,
 		taprootCtx: newTaprootExecutionCtxForLeaf(
-			txscript.NewBaseTapLeaf(leafScript), 0,
+			txscript.NewBaseTapLeaf(leafScript),
 		),
 	}
 	digest, err := computeArkadeSighash(vm, hashType)
@@ -2819,7 +2819,7 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 					hashCache:      txscript.NewTxSigHashes(baseTx, fetcher),
 					prevOutFetcher: fetcher,
 					taprootCtx: newTaprootExecutionCtxForLeaf(
-						txscript.NewBaseTapLeaf(leafScript), 0,
+						txscript.NewBaseTapLeaf(leafScript),
 					),
 				}
 				arkadeSigMsg, err := buildArkadeSigMsg(vm, f.flag)
@@ -2887,7 +2887,7 @@ func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
 				hashCache:      txscript.NewTxSigHashes(tx, fetcher),
 				prevOutFetcher: fetcher,
 				taprootCtx: newTaprootExecutionCtxForLeaf(
-					txscript.NewBaseTapLeaf(leafScript), 0,
+					txscript.NewBaseTapLeaf(leafScript),
 				),
 			}
 
@@ -2940,7 +2940,7 @@ func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
 	const codeSepPos = uint32(1)
 	const flag = txscript.SigHashAll
 	taprootCtx := newTaprootExecutionCtxForLeaf(
-		txscript.NewBaseTapLeaf(leafScript), 0,
+		txscript.NewBaseTapLeaf(leafScript),
 	)
 	taprootCtx.annex = annex
 	taprootCtx.codeSepPos = codeSepPos
