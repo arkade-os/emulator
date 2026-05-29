@@ -27,6 +27,11 @@ func (c ComputeLimits) Validate() error {
 // single-threaded) to bound worst-case per-input CPU well below the
 // multi-second cases an unbounded script could reach.
 func DefaultComputeLimits() ComputeLimits {
+	// Aggregate-cost note: this table is deliberately a simple per-opcode
+	// lookup, not a grouped or weighted budget. If every listed opcode is pushed
+	// to its independent cap, the measured heavy-opcode aggregate is ~37 ms per
+	// input on an Apple M4 Pro. That is looser than the ~24 ms grouped design,
+	// but keeps the policy easy to read, configure, and reason about for now.
 	return ComputeLimits{
 		// Schnorr-class signature verification, ~84 µs each.
 		OP_CHECKSIG:          50,
@@ -42,7 +47,3 @@ func DefaultComputeLimits() ComputeLimits {
 		OP_MODEXP:            64,   // ~60 µs at the 64-byte operand cap
 	}
 }
-
-// defaultComputeLimits is the shared, read-only default applied by NewEngine to
-// every engine that does not override it via WithComputeLimits.
-var defaultComputeLimits = DefaultComputeLimits()

@@ -308,6 +308,16 @@ func TestParseComputeLimitsMalformedPairErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestParseComputeLimitsEmptyPairErrors(t *testing.T) {
+	_, err := parseComputeLimits(",")
+	require.Error(t, err)
+}
+
+func TestParseComputeLimitsTrailingCommaErrors(t *testing.T) {
+	_, err := parseComputeLimits("OP_ECPAIRING=8,")
+	require.Error(t, err)
+}
+
 func TestParseComputeLimitsNegativeErrors(t *testing.T) {
 	_, err := parseComputeLimits("OP_ECPAIRING=-1")
 	require.Error(t, err)

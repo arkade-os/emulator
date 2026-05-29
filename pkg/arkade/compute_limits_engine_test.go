@@ -122,6 +122,40 @@ func TestWithComputeLimitsOverridesDefault(t *testing.T) {
 		txscript.ErrScriptTooBig)
 }
 
+func TestWithComputeLimitsNilKeepsDefaultLimits(t *testing.T) {
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
+	)
+
+	WithComputeLimits(nil)(vm)
+
+	pubkey := make([]byte, 32)
+	pushSig := func() { vm.SetStack([][]byte{{}, pubkey}) }
+	for range 50 {
+		pushSig()
+		require.NoError(t, invokeOpcodeWithData(OP_CHECKSIG, nil, vm))
+	}
+	pushSig()
+	requireScriptErrorCode(t, invokeOpcodeWithData(OP_CHECKSIG, nil, vm),
+		txscript.ErrScriptTooBig)
+}
+
+func TestNewEngineDefaultLimitsAreIndependent(t *testing.T) {
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+	vm.limits[OP_1] = 0
+
+	next, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+	next.taprootCtx = newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
+	)
+
+	require.NoError(t, invokeOpcodeWithData(OP_1, nil, next))
+}
+
 func TestChargeOpcodeNoTaprootContextIsUnlimited(t *testing.T) {
 	// With no tapscript context there is no per-input budget, even for an
 	// opcode that would otherwise be limited to zero executions.

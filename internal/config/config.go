@@ -125,7 +125,8 @@ func parseComputeLimits(raw string) (arkade.ComputeLimits, error) {
 	for pair := range strings.SplitSeq(raw, ",") {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
-			continue
+			return nil, fmt.Errorf(
+				"invalid empty compute limit override in %q", raw)
 		}
 		name, value, ok := strings.Cut(pair, "=")
 		if !ok {

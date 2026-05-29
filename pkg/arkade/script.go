@@ -36,9 +36,12 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 }
 
 // WithComputeLimits overrides the per-input opcode-execution compute brake for
-// this execution. Without it the engine uses DefaultComputeLimits.
+// this execution. A nil map means no override; the engine keeps its default.
 func WithComputeLimits(c ComputeLimits) ExecuteOption {
 	return func(engine *Engine) {
+		if c == nil {
+			return
+		}
 		engine.limits = c
 	}
 }

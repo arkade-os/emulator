@@ -835,7 +835,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		hashCache:      hashCache,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
-		limits:         defaultComputeLimits,
+		limits:         DefaultComputeLimits(),
 	}
 
 	// The signature script must only contain data pushes.
