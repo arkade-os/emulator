@@ -151,9 +151,6 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 	engine.taprootCtx = newTaprootExecutionCtxForLeaf(
 		s.spendingTapLeaf, int32(s.witness.SerializeSize()),
 	)
-	// Arkade scripts execute from the emulator packet, not from the
-	// spending tapleaf whose hash the sighash commits to.
-	engine.taprootCtx.trackCodeSep = false
 
 	for _, opt := range opts {
 		opt(engine)

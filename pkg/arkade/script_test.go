@@ -57,9 +57,9 @@ func TestArkadeScriptExecuteUsesSpendingTapLeafForSighash(t *testing.T) {
 		txscript.NewMultiPrevOutFetcher(prevOuts), nil, nil,
 	)
 	sighashes := txscript.NewTxSigHashes(tx, prevOutFetcher)
-	digest, err := CalcTapscriptSignaturehash(
+	digest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		closureTapLeaf,
+		closureTapLeaf, BlankCodeSepValue,
 	)
 	require.NoError(t, err)
 
@@ -74,7 +74,7 @@ func TestArkadeScriptExecuteUsesSpendingTapLeafForSighash(t *testing.T) {
 	require.NoError(t, script.Execute(tx, prevOutFetcher, 0))
 }
 
-func TestArkadeScriptExecuteDoesNotUsePacketCodeSeparatorForSighash(t *testing.T) {
+func TestArkadeScriptExecuteUsesCodeSeparatorForSighash(t *testing.T) {
 	t.Parallel()
 
 	signingKey, _ := btcec.PrivKeyFromBytes([]byte{
@@ -84,6 +84,9 @@ func TestArkadeScriptExecuteDoesNotUsePacketCodeSeparatorForSighash(t *testing.T
 		0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40,
 	})
 	pubKeyX := schnorr.SerializePubKey(signingKey.PubKey())
+	// OP_CODESEPARATOR is the first opcode (position 0). Per BIP342 it sets
+	// codesep_pos to its own opcode position, which the following OP_CHECKSIG
+	// must commit to.
 	arkadeScript, err := txscript.NewScriptBuilder().
 		AddOp(OP_CODESEPARATOR).
 		AddData(pubKeyX).
@@ -111,21 +114,145 @@ func TestArkadeScriptExecuteDoesNotUsePacketCodeSeparatorForSighash(t *testing.T
 		txscript.NewMultiPrevOutFetcher(prevOuts), nil, nil,
 	)
 	sighashes := txscript.NewTxSigHashes(tx, prevOutFetcher)
-	digest, err := CalcTapscriptSignaturehash(
+
+	const codeSepPos = uint32(0) // OP_CODESEPARATOR is opcode 0 in the script.
+
+	// A signature that commits to the executed code-separator position must
+	// verify.
+	digest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		spendingTapLeaf,
+		spendingTapLeaf, codeSepPos,
 	)
 	require.NoError(t, err)
-
 	sig, err := schnorr.Sign(signingKey, digest)
 	require.NoError(t, err)
-
 	script := &ArkadeScript{
 		script:          arkadeScript,
 		witness:         wire.TxWitness{sig.Serialize()},
 		spendingTapLeaf: spendingTapLeaf,
 	}
-	require.NoError(t, script.Execute(tx, prevOutFetcher, 0))
+	require.NoError(t, script.Execute(tx, prevOutFetcher, 0),
+		"signature committing to the executed codesep position must verify")
+
+	// A signature that ignores the code separator (blank codesep_pos, the
+	// pre-BIP342 behavior) must now be rejected.
+	staleDigest, err := CalcArkadeScriptSignatureHash(
+		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
+		spendingTapLeaf, BlankCodeSepValue,
+	)
+	require.NoError(t, err)
+	staleSig, err := schnorr.Sign(signingKey, staleDigest)
+	require.NoError(t, err)
+	staleScript := &ArkadeScript{
+		script:          arkadeScript,
+		witness:         wire.TxWitness{staleSig.Serialize()},
+		spendingTapLeaf: spendingTapLeaf,
+	}
+	require.Error(t, staleScript.Execute(tx, prevOutFetcher, 0),
+		"signature ignoring the code separator must fail")
+}
+
+func TestArkadeScriptExecuteUpdatesCodeSepPosOnCodeSeparator(t *testing.T) {
+	t.Parallel()
+
+	// OP_CODESEPARATOR is opcode 0; OP_TRUE leaves a truthy stack so execution
+	// completes successfully and we can observe codesep_pos at each step.
+	arkadeScript := []byte{OP_CODESEPARATOR, OP_TRUE}
+
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{0x04}, Index: 0}
+	tx := &wire.MsgTx{
+		Version: 2,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: outpoint,
+			Sequence:         0xffffffff,
+		}},
+		TxOut: []*wire.TxOut{{
+			Value:    900,
+			PkScript: []byte{OP_TRUE},
+		}},
+	}
+	prevOuts := map[wire.OutPoint]*wire.TxOut{
+		outpoint: {Value: 1_000, PkScript: []byte{OP_1, 0x20}},
+	}
+	prevOutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(prevOuts), nil, nil,
+	)
+
+	script := &ArkadeScript{
+		script:          arkadeScript,
+		spendingTapLeaf: txscript.NewBaseTapLeaf([]byte{OP_TRUE}),
+	}
+
+	var seen []uint32
+	err := script.Execute(tx, prevOutFetcher, 0,
+		WithDebugCallback(func(_ *StepInfo, e *Engine) error {
+			seen = append(seen, e.taprootCtx.codeSepPos)
+			return nil
+		}),
+	)
+	require.NoError(t, err)
+
+	// The callback fires once for the initial state, then after each step.
+	require.GreaterOrEqual(t, len(seen), 2)
+	require.Equal(t, BlankCodeSepValue, seen[0],
+		"codesep_pos must start at the blank sentinel")
+	require.Equal(t, uint32(0), seen[1],
+		"codesep_pos must equal the OP_CODESEPARATOR opcode position after it executes")
+}
+
+func TestArkadeScriptExecuteOpSighashUsesCodeSeparatorPosition(t *testing.T) {
+	t.Parallel()
+
+	spendingTapLeaf := txscript.NewBaseTapLeaf([]byte{OP_TRUE})
+
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{0x05}, Index: 0}
+	tx := &wire.MsgTx{
+		Version: 2,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: outpoint,
+			Sequence:         0xffffffff,
+		}},
+		TxOut: []*wire.TxOut{{
+			Value:    900,
+			PkScript: []byte{OP_TRUE},
+		}},
+	}
+	prevOuts := map[wire.OutPoint]*wire.TxOut{
+		outpoint: {Value: 1_000, PkScript: []byte{OP_1, 0x20}},
+	}
+	prevOutFetcher := newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(prevOuts), nil, nil,
+	)
+	sighashes := txscript.NewTxSigHashes(tx, prevOutFetcher)
+
+	expectedDigest, err := CalcArkadeScriptSignatureHash(
+		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
+		spendingTapLeaf, 0,
+	)
+	require.NoError(t, err)
+	blankDigest, err := CalcArkadeScriptSignatureHash(
+		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
+		spendingTapLeaf, BlankCodeSepValue,
+	)
+	require.NoError(t, err)
+	require.NotEqual(t, blankDigest, expectedDigest,
+		"test requires the code separator position to affect OP_SIGHASH")
+
+	arkadeScript, err := txscript.NewScriptBuilder().
+		AddOp(OP_CODESEPARATOR).
+		AddOp(OP_0).
+		AddOp(OP_SIGHASH).
+		AddData(expectedDigest).
+		AddOp(OP_EQUAL).
+		Script()
+	require.NoError(t, err)
+
+	script := &ArkadeScript{
+		script:          arkadeScript,
+		spendingTapLeaf: spendingTapLeaf,
+	}
+	require.NoError(t, script.Execute(tx, prevOutFetcher, 0),
+		"OP_SIGHASH must include the last executed OP_CODESEPARATOR position")
 }
 
 func TestReadArkadeScriptRejectsNonBaseSpendingTapLeafVersion(t *testing.T) {

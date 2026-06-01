@@ -30,9 +30,9 @@ const (
 )
 
 const (
-	// blankCodeSepValue is the value of the code separator position in the
-	// tapscript sighash when no code separator was found in the script.
-	blankCodeSepValue = math.MaxUint32
+	// BlankCodeSepValue is the value of the code separator position in the
+	// tapscript sighash when no code separator was executed in the script.
+	BlankCodeSepValue uint32 = math.MaxUint32
 )
 
 // taprootExecutionCtx houses the special context-specific information we need
@@ -49,8 +49,6 @@ type taprootExecutionCtx struct {
 	sigOpsBudget int32
 
 	mustSucceed bool
-
-	trackCodeSep bool
 }
 
 // sigOpsDelta is both the starting budget for sig ops for tapscript
@@ -75,9 +73,8 @@ func (t *taprootExecutionCtx) tallysigOp() error {
 // context.
 func newTaprootExecutionCtx(inputWitnessSize int32) *taprootExecutionCtx {
 	return &taprootExecutionCtx{
-		codeSepPos:   blankCodeSepValue,
+		codeSepPos:   BlankCodeSepValue,
 		sigOpsBudget: sigOpsDelta + inputWitnessSize,
-		trackCodeSep: true,
 	}
 }
 
@@ -140,9 +137,6 @@ type Engine struct {
 	// the current program counter.  Note that it differs from the actual byte
 	// index into the script and is really only used for disassembly purposes.
 	//
-	// lastCodeSep specifies the position within the current script of the last
-	// OP_CODESEPARATOR.
-	//
 	// tokenizer provides the token stream of the current script being executed
 	// and doubles as state tracking for the program counter within the script.
 	//
@@ -157,7 +151,6 @@ type Engine struct {
 	scripts        [][]byte
 	scriptIdx      int
 	opcodeIdx      int
-	lastCodeSep    int
 	tokenizer      ScriptTokenizer
 	dstack         stack
 	astack         stack
@@ -660,7 +653,6 @@ func (vm *Engine) Step() (done bool, err error) {
 			vm.scriptIdx++
 		}
 
-		vm.lastCodeSep = 0
 		if vm.scriptIdx >= len(vm.scripts) {
 			return true, nil
 		}
