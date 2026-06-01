@@ -481,7 +481,7 @@ func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.ArkClien
 
 	amountBtc := strings.TrimSuffix(btcutil.Amount(amount).Format(btcutil.AmountBTC), " BTC")
 
-	_, err = runCommand("nigiri", "faucet", boardingAddress, amountBtc)
+	_, err = onchainFaucet(boardingAddress, amountBtc)
 	require.NoError(t, err)
 
 	time.Sleep(5 * time.Second)
@@ -603,7 +603,7 @@ func submitWithArkd(
 ) {
 	t.Helper()
 
-	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	encodedTx, err := candidateTx.B64Encode()

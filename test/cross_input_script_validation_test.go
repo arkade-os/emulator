@@ -414,7 +414,7 @@ func newCrossInputTestEnv(t *testing.T) *crossInputTestEnv {
 
 	indexerSvc := setupIndexer(t)
 
-	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	recipientPrivKey, err := btcec.NewPrivateKey()

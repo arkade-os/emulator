@@ -179,7 +179,7 @@ func TestRecursivePolicy(t *testing.T) {
 	alicePkScript, err := txscript.PayToTaprootScript(alicePubKey)
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	submitAndFinalize := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {

@@ -197,8 +197,8 @@ The service can be configured using environment variables:
 
 - Go 1.26+
 - Docker and Docker Compose
+- Node.js 18+ (to drive the [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) stack for integration testing)
 - Buf CLI (for protocol buffer generation)
-- [Nigiri](https://nigiri.vulpem.com) (for integration testing)
 
 ### Building
 
@@ -223,12 +223,22 @@ make run
 # Run unit tests
 make test
 
-# Run docker regtest environment
-nigiri start
+# Bring up the regtest base stack (Bitcoin Core + Fulcrum + mempool) via the
+# arkade-regtest Node CLI (replaces `nigiri start`). Esplora's REST API is served
+# by mempool under /api (http://localhost:3000/api on the host,
+# http://mempool_web/api in-network).
+git clone https://github.com/ArkLabsHQ/arkade-regtest.git regtest
+REGTEST_PROFILES=base node regtest/regtest.mjs start
+
+# Run the emulator + arkd docker environment
 make docker-run
 
 # Run integration tests
 make integrationtest
+
+# Tear down
+make docker-stop
+node regtest/regtest.mjs clean
 ```
 
 ## Supported Opcodes

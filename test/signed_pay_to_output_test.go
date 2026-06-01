@@ -44,7 +44,7 @@ func TestSignedPayToOutput(t *testing.T) {
 	indexerSvc := setupIndexer(t)
 
 	explorerSvc, err := mempoolexplorer.NewExplorer(
-		"http://localhost:3000", arklib.BitcoinRegTest,
+		"http://localhost:3000/api", arklib.BitcoinRegTest,
 	)
 	require.NoError(t, err)
 
