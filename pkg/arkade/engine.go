@@ -30,9 +30,9 @@ const (
 )
 
 const (
-	// BlankCodeSepValue is the value of the code separator position in the
+	// blankCodeSepValue is the value of the code separator position in the
 	// tapscript sighash when no code separator was executed in the script.
-	BlankCodeSepValue uint32 = math.MaxUint32
+	blankCodeSepValue uint32 = math.MaxUint32
 )
 
 // taprootExecutionCtx houses the special context-specific information we need
@@ -73,7 +73,7 @@ func (t *taprootExecutionCtx) tallysigOp() error {
 // context.
 func newTaprootExecutionCtx(inputWitnessSize int32) *taprootExecutionCtx {
 	return &taprootExecutionCtx{
-		codeSepPos:   BlankCodeSepValue,
+		codeSepPos:   blankCodeSepValue,
 		sigOpsBudget: sigOpsDelta + inputWitnessSize,
 	}
 }

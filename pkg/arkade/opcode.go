@@ -1774,7 +1774,7 @@ func opcodeCodeSeparator(op *opcode, data []byte, vm *Engine) error {
 // The process of verifying a signature requires calculating the arkade
 // tapscript signature hash in the same way the transaction signer did.  The
 // digest commits to the spending tapleaf hash and the opcode position of the
-// last executed OP_CODESEPARATOR, or BlankCodeSepValue if none executed.
+// last executed OP_CODESEPARATOR, or math.MaxUint32 if none executed.
 //
 // Stack transformation: [... signature pubkey] -> [... bool]
 func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {

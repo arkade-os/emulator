@@ -79,8 +79,7 @@ func computeArkadeSighash(vm *Engine,
 // The byte layout mirrors BIP342's tapscript sigMsg with arkade's witness
 // masking and "ArkadeTapSighash" final tag. Callers should pass the active
 // Bitcoin spending tapleaf whose hash the signature commits to. Pass
-// BlankCodeSepValue when no OP_CODESEPARATOR executed before the signature
-// opcode.
+// math.MaxUint32 when no OP_CODESEPARATOR executed before the signature opcode.
 func CalcArkadeScriptSignatureHash(
 	sigHashes *txscript.TxSigHashes,
 	hashType txscript.SigHashType,

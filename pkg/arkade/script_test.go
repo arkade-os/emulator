@@ -59,7 +59,7 @@ func TestArkadeScriptExecuteUsesSpendingTapLeafForSighash(t *testing.T) {
 	sighashes := txscript.NewTxSigHashes(tx, prevOutFetcher)
 	digest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		closureTapLeaf, BlankCodeSepValue,
+		closureTapLeaf, blankCodeSepValue,
 	)
 	require.NoError(t, err)
 
@@ -138,7 +138,7 @@ func TestArkadeScriptExecuteUsesCodeSeparatorForSighash(t *testing.T) {
 	// pre-BIP342 behavior) must now be rejected.
 	staleDigest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		spendingTapLeaf, BlankCodeSepValue,
+		spendingTapLeaf, blankCodeSepValue,
 	)
 	require.NoError(t, err)
 	staleSig, err := schnorr.Sign(signingKey, staleDigest)
@@ -194,7 +194,7 @@ func TestArkadeScriptExecuteUpdatesCodeSepPosOnCodeSeparator(t *testing.T) {
 
 	// The callback fires once for the initial state, then after each step.
 	require.GreaterOrEqual(t, len(seen), 2)
-	require.Equal(t, BlankCodeSepValue, seen[0],
+	require.Equal(t, blankCodeSepValue, seen[0],
 		"codesep_pos must start at the blank sentinel")
 	require.Equal(t, uint32(0), seen[1],
 		"codesep_pos must equal the OP_CODESEPARATOR opcode position after it executes")
@@ -232,7 +232,7 @@ func TestArkadeScriptExecuteOpSighashUsesCodeSeparatorPosition(t *testing.T) {
 	require.NoError(t, err)
 	blankDigest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		spendingTapLeaf, BlankCodeSepValue,
+		spendingTapLeaf, blankCodeSepValue,
 	)
 	require.NoError(t, err)
 	require.NotEqual(t, blankDigest, expectedDigest,
