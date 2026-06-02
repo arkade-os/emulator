@@ -6,7 +6,7 @@
 
 _Emulator is a signing service for the [Arkade](https://docs.arkadeos.com/) protocol, executing [Arkade Script](https://docs.arkadeos.com/experimental/arkade-script)._
 
-This is achieved by signing any Ark transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `emulator_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go) (`"ArkScriptHash"`). The Arkade script is revealed via an [Emulator Packet](pkg/arkade/emulator_packet.go) committed inside an ARK extension OP_RETURN output. An ARK extension is a TLV stream prefixed with magic bytes `ARK` (`0x41524b`); the Emulator Packet is one of its packet types (`0x01`), containing per-input entries with the script bytecode and optional witness arguments.
+This is achieved by signing any Arkade transaction (offchain or intent proof) expecting the signature of a [tweaked public key](pkg/arkade/tweak.go). The tweaked key is `emulator_key + hash(arkade_script)`, where the script hash is a [tagged hash](pkg/arkade/tweak.go) (`"ArkScriptHash"`). The Arkade script is revealed via an [Emulator Packet](pkg/arkade/emulator_packet.go) committed inside an ARK extension OP_RETURN output. An ARK extension is a TLV stream prefixed with magic bytes `ARK` (`0x41524b`); the Emulator Packet is one of its packet types (`0x01`), containing per-input entries with the script bytecode and optional witness arguments.
 
 ## ArkadeScript examples
 
@@ -32,9 +32,9 @@ Returns service metadata including the signer's public key. The public key shoul
 
 ### SubmitTx
 
-Validates and signs the Ark transaction inputs owned by this emulator, and signs their matching checkpoint transactions. Arkade scripts are executed only on the Ark transaction, not on checkpoints.
+Validates and signs the Arkade transaction inputs owned by this emulator, and signs their matching checkpoint transactions. Arkade scripts are executed only on the Arkade transaction, not on checkpoints.
 
-If this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet, each checkpoint PSBT must already include any other required non-`arkd` signatures; otherwise the request fails. In that case, the emulator submits the signed transaction set to `arkd`, merges `arkd`'s checkpoint signatures, finalizes the transaction, and returns the finalized Ark PSBT plus updated checkpoint PSBTs. Otherwise it returns only this emulator's added signatures without calling `arkd`.
+If this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet, each checkpoint PSBT must already include any other required non-`arkd` signatures; otherwise the request fails. In that case, the emulator submits the signed transaction set to `arkd`, merges `arkd`'s checkpoint signatures, finalizes the transaction, and returns the finalized Arkade PSBT plus updated checkpoint PSBTs. Otherwise it returns only this emulator's added signatures without calling `arkd`.
 
 **Endpoint**: `POST /v1/tx`
 
@@ -173,7 +173,7 @@ The serialized packet is the value of an outer TLV record `(0x01, varint(content
 
 ### Consensus relevance
 
-The Arkade opcodes `OP_INSPECTPACKET` (`0xf4`) and `OP_INSPECTINPUTPACKET` (`0xf5`) read the raw packet bytes for a given type from the current transaction or a previous Ark transaction's extension. Any Arkade script that uses these opcodes is sensitive to the exact serialized form of the packet — i.e. the wire format above is part of the consensus surface for those scripts, and changes to it must be treated as a protocol change.
+The Arkade opcodes `OP_INSPECTPACKET` (`0xf4`) and `OP_INSPECTINPUTPACKET` (`0xf5`) read the raw packet bytes for a given type from the current transaction or a previous Arkade transaction's extension. Any Arkade script that uses these opcodes is sensitive to the exact serialized form of the packet — i.e. the wire format above is part of the consensus surface for those scripts, and changes to it must be treated as a protocol change.
 
 ## Configuration
 
@@ -279,7 +279,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTPACKET | 244 | 0xf4 | packet_type | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the current transaction's extension. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. |
-| OP_INSPECTINPUTPACKET | 245 | 0xf5 | packet_type input_index | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the ark extension of the previous ark transaction spent by the input at `input_index`. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. Fails on negative / out-of-range `input_index`. |
+| OP_INSPECTINPUTPACKET | 245 | 0xf5 | packet_type input_index | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the ARK extension of the previous Arkade transaction spent by the input at `input_index`. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. Fails on negative / out-of-range `input_index`. |
 
 ### Data Manipulation
 
