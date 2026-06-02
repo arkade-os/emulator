@@ -16,6 +16,15 @@ func TestChargeOpcodeEnforcesLimit(t *testing.T) {
 		txscript.ErrScriptTooBig)
 }
 
+func TestChargeOpcodeZeroLimitForbidsExecution(t *testing.T) {
+	vm := limitOnlyOp1(t, 0)
+
+	// A limit of 0 disables the opcode entirely: the very first execution
+	// already exceeds the budget.
+	requireScriptErrorCode(t, invokeOpcodeWithData(OP_1, nil, vm),
+		txscript.ErrScriptTooBig)
+}
+
 func TestChargeOpcodeIgnoresDeadBranch(t *testing.T) {
 	vm := limitOnlyOp1(t, 1)
 
