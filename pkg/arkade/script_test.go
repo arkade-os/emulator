@@ -59,7 +59,7 @@ func TestArkadeScriptExecuteUsesSpendingTapLeafForSighash(t *testing.T) {
 	sighashes := txscript.NewTxSigHashes(tx, prevOutFetcher)
 	digest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		closureTapLeaf, blankCodeSepValue,
+		closureTapLeaf,
 	)
 	require.NoError(t, err)
 
@@ -121,7 +121,7 @@ func TestArkadeScriptExecuteUsesCodeSeparatorForSighash(t *testing.T) {
 	// verify.
 	digest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		spendingTapLeaf, codeSepPos,
+		spendingTapLeaf, WithCodeSepPosition(codeSepPos),
 	)
 	require.NoError(t, err)
 	sig, err := schnorr.Sign(signingKey, digest)
@@ -138,7 +138,7 @@ func TestArkadeScriptExecuteUsesCodeSeparatorForSighash(t *testing.T) {
 	// pre-BIP342 behavior) must now be rejected.
 	staleDigest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		spendingTapLeaf, blankCodeSepValue,
+		spendingTapLeaf,
 	)
 	require.NoError(t, err)
 	staleSig, err := schnorr.Sign(signingKey, staleDigest)
@@ -227,12 +227,12 @@ func TestArkadeScriptExecuteOpSighashUsesCodeSeparatorPosition(t *testing.T) {
 
 	expectedDigest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		spendingTapLeaf, 0,
+		spendingTapLeaf, WithCodeSepPosition(0),
 	)
 	require.NoError(t, err)
 	blankDigest, err := CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-		spendingTapLeaf, blankCodeSepValue,
+		spendingTapLeaf,
 	)
 	require.NoError(t, err)
 	require.NotEqual(t, blankDigest, expectedDigest,
@@ -389,7 +389,7 @@ func TestArkadeScriptExecuteCodeSepInUnexecutedBranchIgnored(t *testing.T) {
 		t.Helper()
 		digest, err := CalcArkadeScriptSignatureHash(
 			sighashes, txscript.SigHashDefault, tx, 0, prevOutFetcher,
-			spendingTapLeaf, codeSepPos,
+			spendingTapLeaf, WithCodeSepPosition(codeSepPos),
 		)
 		require.NoError(t, err)
 		sig, err := schnorr.Sign(signingKey, digest)

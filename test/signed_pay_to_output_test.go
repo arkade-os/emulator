@@ -2,7 +2,6 @@ package test
 
 import (
 	"encoding/hex"
-	"math"
 	"strings"
 	"testing"
 
@@ -231,7 +230,7 @@ func signArkadeInput(
 	sighashes := txscript.NewTxSigHashes(ptx.UnsignedTx, prevOutFetcher)
 	message, err := arkade.CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, ptx.UnsignedTx,
-		inputIndex, prevOutFetcher, tapLeaf, math.MaxUint32,
+		inputIndex, prevOutFetcher, tapLeaf,
 	)
 	require.NoError(t, err)
 

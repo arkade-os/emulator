@@ -73,13 +73,42 @@ func computeArkadeSighash(vm *Engine,
 	return digest[:], nil
 }
 
+// arkadeSigHashOptions holds the optional parameters that modify the arkade
+// tapscript sighash digest.
+type arkadeSigHashOptions struct {
+	codeSepPos uint32
+}
+
+// defaultArkadeSigHashOptions returns the default sighash options, with the
+// code separator position blank (no OP_CODESEPARATOR executed).
+func defaultArkadeSigHashOptions() *arkadeSigHashOptions {
+	return &arkadeSigHashOptions{
+		codeSepPos: blankCodeSepValue,
+	}
+}
+
+// ArkadeSigHashOption defines a functional option that modifies the arkade
+// tapscript sighash digest.
+type ArkadeSigHashOption func(*arkadeSigHashOptions)
+
+// WithCodeSepPosition specifies the opcode position of the last
+// OP_CODESEPARATOR executed before the signature opcode. When omitted, the
+// position is blank (math.MaxUint32), matching the BIP342 default for scripts
+// that contain no OP_CODESEPARATOR.
+func WithCodeSepPosition(codeSepPos uint32) ArkadeSigHashOption {
+	return func(o *arkadeSigHashOptions) {
+		o.codeSepPos = codeSepPos
+	}
+}
+
 // CalcArkadeScriptSignatureHash returns the non-standard arkade tapscript
 // signature hash used by OP_CHECKSIG and OP_SIGHASH inside arkade scripts.
 //
 // The byte layout mirrors BIP342's tapscript sigMsg with arkade's witness
 // masking and "ArkadeTapSighash" final tag. Callers should pass the active
-// Bitcoin spending tapleaf whose hash the signature commits to. Pass
-// math.MaxUint32 when no OP_CODESEPARATOR executed before the signature opcode.
+// Bitcoin spending tapleaf whose hash the signature commits to. When an
+// OP_CODESEPARATOR executed before the signature opcode, supply its position
+// via WithCodeSepPosition; otherwise the position defaults to blank.
 func CalcArkadeScriptSignatureHash(
 	sigHashes *txscript.TxSigHashes,
 	hashType txscript.SigHashType,
@@ -87,7 +116,7 @@ func CalcArkadeScriptSignatureHash(
 	idx int,
 	prevOutFetcher ArkPrevOutFetcher,
 	tapLeaf txscript.TapLeaf,
-	codeSepPos uint32,
+	opts ...ArkadeSigHashOption,
 ) ([]byte, error) {
 	if sigHashes == nil {
 		return nil, fmt.Errorf("nil sighash cache")
@@ -99,8 +128,13 @@ func CalcArkadeScriptSignatureHash(
 		return nil, fmt.Errorf("nil prevout fetcher")
 	}
 
+	options := defaultArkadeSigHashOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	taprootCtx := newTaprootExecutionCtxForLeaf(tapLeaf, 0)
-	taprootCtx.codeSepPos = codeSepPos
+	taprootCtx.codeSepPos = options.codeSepPos
 
 	vm := &Engine{
 		tx:             *tx,
