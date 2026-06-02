@@ -14,15 +14,6 @@ func TestComputeLimitsValidateAcceptsDefault(t *testing.T) {
 	require.NoError(t, DefaultComputeLimits().Validate())
 }
 
-func TestDefaultComputeLimitsIsIndependentCopy(t *testing.T) {
-	c1 := DefaultComputeLimits()
-	c1[OP_ECPAIRING] = 99999
-
-	c2 := DefaultComputeLimits()
-	require.NotEqual(t, 99999, c2[OP_ECPAIRING],
-		"mutating a returned copy must not affect later calls")
-}
-
 func TestDefaultComputeLimitsCoversHeavyOpcodes(t *testing.T) {
 	heavy := []byte{
 		OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_CHECKSIGADD,

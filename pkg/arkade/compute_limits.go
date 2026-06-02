@@ -22,10 +22,6 @@ func (c ComputeLimits) Validate() error {
 // DefaultComputeLimits returns the canonical per-input execution caps for the
 // heavy opcodes. It returns a fresh map so callers may modify their copy
 // without affecting the engine default.
-//
-// Limits are calibrated from the issue #81 benchmark table (Apple Silicon,
-// single-threaded) to bound worst-case per-input CPU well below the
-// multi-second cases an unbounded script could reach.
 func DefaultComputeLimits() ComputeLimits {
 	// Aggregate-cost note: this table is deliberately a simple per-opcode
 	// lookup, not a grouped or weighted budget. If every listed opcode is pushed

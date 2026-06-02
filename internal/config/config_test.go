@@ -337,10 +337,11 @@ func TestLoadConfigParsesComputeLimitsOverride(t *testing.T) {
 	cfg, err := loadConfigForTest(t, map[string]string{
 		"EMULATOR_SECRET_KEY":     testKeyHex(1),
 		"EMULATOR_ARKD_URL":       "http://arkd:7070",
-		"EMULATOR_COMPUTE_LIMITS": "OP_ECPAIRING=8",
+		"EMULATOR_COMPUTE_LIMITS": "OP_ECPAIRING=8,OP_MODEXP=128",
 	})
 	require.NoError(t, err)
 	require.Equal(t, 8, cfg.ComputeLimits[arkade.OP_ECPAIRING])
+	require.Equal(t, 128, cfg.ComputeLimits[arkade.OP_MODEXP])
 }
 
 func TestLoadConfigDefaultsComputeLimitsWhenUnset(t *testing.T) {

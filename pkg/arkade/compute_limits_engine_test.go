@@ -7,17 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// limitOnlyOp1 builds an engine whose only compute limit is OP_1, with a
-// tapscript execution context active so charges take effect.
-func limitOnlyOp1(t *testing.T, limit int) *Engine {
-	t.Helper()
-	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
-	require.NoError(t, err)
-	vm.taprootCtx = &taprootExecutionCtx{}
-	vm.limits = ComputeLimits{OP_1: limit}
-	return vm
-}
-
 func TestChargeOpcodeEnforcesLimit(t *testing.T) {
 	vm := limitOnlyOp1(t, 2)
 
@@ -203,4 +192,15 @@ func TestChargeOpcodeNoTaprootContextIsUnlimited(t *testing.T) {
 	vm.limits = ComputeLimits{OP_1: 0}
 
 	require.NoError(t, invokeOpcodeWithData(OP_1, nil, vm))
+}
+
+// limitOnlyOp1 builds an engine whose only compute limit is OP_1, with a
+// tapscript execution context active so charges take effect.
+func limitOnlyOp1(t *testing.T, limit int) *Engine {
+	t.Helper()
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+	vm.taprootCtx = &taprootExecutionCtx{}
+	vm.limits = ComputeLimits{OP_1: limit}
+	return vm
 }
