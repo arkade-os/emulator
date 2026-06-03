@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -23,6 +25,7 @@ const (
 	TLSExtraDomains = "TLS_EXTRA_DOMAINS"
 	LogLevel        = "LOG_LEVEL"
 	ArkdURL         = "ARKD_URL"
+	ComputeLimits   = "COMPUTE_LIMITS"
 )
 
 var (
@@ -43,6 +46,7 @@ type Config struct {
 	TLSExtraIPs     []string
 	TLSExtraDomains []string
 	ArkdURL         string
+	ComputeLimits   arkade.ComputeLimits
 }
 
 func LoadConfig() (*Config, error) {
@@ -84,6 +88,11 @@ func LoadConfig() (*Config, error) {
 	logLevel := viper.GetInt(LogLevel)
 	log.SetLevel(log.Level(logLevel))
 
+	computeLimits, err := parseComputeLimits(viper.GetString(ComputeLimits))
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		CurrentKey:      currentKey,
 		DeprecatedKeys:  deprecatedKeys,
@@ -93,11 +102,58 @@ func LoadConfig() (*Config, error) {
 		TLSExtraIPs:     viper.GetStringSlice(TLSExtraIPs),
 		TLSExtraDomains: viper.GetStringSlice(TLSExtraDomains),
 		ArkdURL:         viper.GetString(ArkdURL),
+		ComputeLimits:   computeLimits,
 	}
 	if cfg.ArkdURL == "" {
 		return nil, fmt.Errorf("missing arkd url")
 	}
 	return cfg, nil
+}
+
+// parseComputeLimits builds the per-input opcode compute brake from the
+// EMULATOR_COMPUTE_LIMITS override, applied on top of the engine defaults. The
+// override is a comma-separated list of OPCODE=limit pairs, e.g.
+// "OP_ECPAIRING=8,OP_MODEXP=128"; an empty value yields the defaults unchanged.
+// It errors on an unknown opcode name, a non-integer limit, or a negative
+// limit.
+func parseComputeLimits(raw string) (arkade.ComputeLimits, error) {
+	limits := arkade.DefaultComputeLimits()
+	if strings.TrimSpace(raw) == "" {
+		return limits, nil
+	}
+
+	for pair := range strings.SplitSeq(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			return nil, fmt.Errorf(
+				"invalid empty compute limit override in %q", raw)
+		}
+		name, value, ok := strings.Cut(pair, "=")
+		if !ok {
+			return nil, fmt.Errorf(
+				"invalid compute limit override %q, want OPCODE=limit", pair)
+		}
+		name = strings.TrimSpace(name)
+		op, ok := arkade.OpcodeByName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown opcode %q in compute limits", name)
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			delete(limits, op)
+			continue
+		}
+		limit, err := strconv.Atoi(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid limit for opcode %q: %w", name, err)
+		}
+		limits[op] = limit
+	}
+
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
+	return limits, nil
 }
 
 func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
@@ -124,5 +180,5 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 }
 
 func (c *Config) AppService(ctx context.Context) (application.Service, error) {
-	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL)
+	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL, c.ComputeLimits)
 }

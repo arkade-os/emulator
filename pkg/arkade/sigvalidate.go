@@ -102,7 +102,7 @@ func CalcTapscriptSignaturehash(
 		txIdx:          idx,
 		hashCache:      sigHashes,
 		prevOutFetcher: prevOutFetcher,
-		taprootCtx:     newTaprootExecutionCtxForLeaf(tapLeaf, 0),
+		taprootCtx:     newTaprootExecutionCtxForLeaf(tapLeaf),
 	}
 
 	return computeArkadeSighash(vm, hashType)
