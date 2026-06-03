@@ -2178,7 +2178,14 @@ func opcodeCat(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	vm.dstack.PushByteArray(append(x1, x2...))
+	// Stack objects may share backing arrays (e.g. data pushes alias the
+	// script buffer and OP_PICK copies items by reference), so the result must
+	// be a freshly allocated buffer. Using append(x1, x2...) directly can write
+	// into x1's spare capacity and corrupt the script or other stack items.
+	result := make([]byte, 0, len(x1)+len(x2))
+	result = append(result, x1...)
+	result = append(result, x2...)
+	vm.dstack.PushByteArray(result)
 	return nil
 }
 
