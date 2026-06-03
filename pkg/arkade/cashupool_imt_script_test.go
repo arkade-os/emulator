@@ -1,6 +1,7 @@
 package arkade
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"math/big"
 	"testing"
@@ -10,8 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This file verifies an Indexed Merkle Tree (IMT) non-membership proof entirely
-// inside an Arkade Script, mirroring the off-chain reference in
+// This file verifies an Indexed Merkle Tree (IMT) non-membership proof and a
+// coupled non-membership + insert update entirely inside an Arkade Script,
+// mirroring the off-chain reference in
 // github.com/arkade-os/emulator/pkg/arkade/cashupool (imt.go).
 //
 // The on-chain core is a positional Merkle walk that recomputes a root from a
@@ -185,6 +187,121 @@ func buildIMTNonMembershipScript(d int, prevRoot []byte) []byte {
 	return script
 }
 
+// buildIMTInsertScript builds a locking script that verifies a coupled
+// non-membership + insert update: it proves k is absent under prevRoot and that
+// inserting k transitions the tree to newRoot, via the IMT dual update.
+//
+// Witness layout (bottom of stack first):
+//
+//	[ low.Value, low.Next, lowIdx, lowPath[0..D-1], k, appendIdx, szSibs[0..D-1] ]
+func buildIMTInsertScript(d int, prevRoot, newRoot []byte) []byte {
+	bld := txscript.NewScriptBuilder()
+
+	const (
+		lowValIdx  = 0
+		lowNextIdx = 1
+		lowIdxIdx  = 2
+		lowPathIdx = 3
+	)
+	kIdx := lowPathIdx + d
+	appendIdxIdx := kIdx + 1
+	szSibsIdx := appendIdxIdx + 1 // szSibs[i] at szSibsIdx+i
+
+	depth := szSibsIdx + d // number of witness items pushed by SetStack
+
+	data := func(v []byte) { bld.AddData(v); depth++ }
+	i64 := func(v int64) { bld.AddInt64(v); depth++ }
+	op := func(o byte, delta int) { bld.AddOp(o); depth += delta }
+	rawOp := func(o byte) { bld.AddOp(o) }
+
+	pick := func(baseIdx int) {
+		i64(int64(depth - 1 - baseIdx))
+		op(OP_PICK, 0)
+	}
+
+	be32 := func(baseIdx int) {
+		pick(baseIdx)
+		i64(33)
+		op(OP_NUM2BIN, -1)
+		op(OP_REVERSEBYTES, 0)
+		i64(32)
+		op(OP_RIGHT, -1)
+	}
+
+	// --- non-membership (identical checks to Stage A) ---
+	be32(lowValIdx)
+	be32(lowNextIdx)
+	op(OP_CAT, -1)
+	op(OP_SHA256, 0)
+	imtRecomputeRoot(d, lowIdxIdx, lowPathIdx, op, rawOp, i64, pick)
+	data(prevRoot)
+	op(OP_EQUALVERIFY, -2)
+
+	pick(lowValIdx)
+	pick(kIdx)
+	op(OP_LESSTHAN, -1)
+	pick(lowNextIdx)
+	op(OP_0, 1)
+	op(OP_NUMEQUAL, -1)
+	pick(kIdx)
+	pick(lowNextIdx)
+	op(OP_LESSTHAN, -1)
+	op(OP_BOOLOR, -1)
+	op(OP_BOOLAND, -1)
+	op(OP_VERIFY, -1)
+
+	// --- insert (coupled dual update) ---
+
+	// 1. lowPrimeHash = SHA256(be32(low.Value) || be32(k)); root1 from low slot.
+	be32(lowValIdx)  // [... be32(low.Value)]
+	be32(kIdx)       // [... be32(low.Value) be32(k)]
+	op(OP_CAT, -1)   // [... le64]
+	op(OP_SHA256, 0) // [... lowPrimeHash]
+	imtRecomputeRoot(d, lowIdxIdx, lowPathIdx, op, rawOp, i64, pick)
+	// [... root1]; keep it on the alt stack for the next two checks.
+	op(OP_TOALTSTACK, -1) // alt: [root1]
+
+	// 2. recompute(EMPTY, appendIdx, szSibs) == root1: append slot is empty and
+	//    szSibs are consistent with root1.
+	emptyLeaf := cashupool.EmptyLeafHash()
+	data(emptyLeaf) // [... EMPTY]
+	imtRecomputeRoot(d, appendIdxIdx, szSibsIdx, op, rawOp, i64, pick)
+	op(OP_FROMALTSTACK, 1) // [... rootEmpty root1]
+	op(OP_DUP, 1)          // [... rootEmpty root1 root1]
+	op(OP_TOALTSTACK, -1)  // alt: [root1]; [... rootEmpty root1]
+	op(OP_EQUALVERIFY, -2) // assert rootEmpty == root1
+
+	// 3. newLeafHash = SHA256(be32(k) || be32(low.Next)); recompute over the
+	//    append slot and assert == newRoot.
+	be32(kIdx)       // [... be32(k)]
+	be32(lowNextIdx) // [... be32(k) be32(low.Next)]
+	op(OP_CAT, -1)   // [... le64]
+	op(OP_SHA256, 0) // [... newLeafHash]
+	imtRecomputeRoot(d, appendIdxIdx, szSibsIdx, op, rawOp, i64, pick)
+	data(newRoot)          // [... rootNew newRoot]
+	op(OP_EQUALVERIFY, -2) // assert rootNew == newRoot
+
+	// Drop the cached root1 left on the alt stack.
+	op(OP_FROMALTSTACK, 1) // [... root1]
+	op(OP_DROP, -1)        // [...]
+
+	// All checks passed; clear the witness items so the engine sees a single
+	// truthy result.
+	for depth >= 2 {
+		op(OP_2DROP, -2)
+	}
+	for depth >= 1 {
+		op(OP_DROP, -1)
+	}
+	op(OP_1, 1) // success
+
+	script, err := bld.Script()
+	if err != nil {
+		panic(err)
+	}
+	return script
+}
+
 // imtNonMembershipWitness builds the witness stack for the non-membership
 // script: [ low.Value, low.Next, lowIdx, lowPath[0..D-1], k ].
 func imtNonMembershipWitness(low cashupool.Leaf, lowIdx uint32, lowPath [][]byte, k *big.Int) [][]byte {
@@ -196,6 +313,20 @@ func imtNonMembershipWitness(low cashupool.Leaf, lowIdx uint32, lowPath [][]byte
 		w = append(w, s)
 	}
 	w = append(w, encodeBig(k))
+	return w
+}
+
+// imtInsertWitness extends the non-membership witness with the insert proof:
+// [ ..., k, appendIdx, szSibs[0..D-1] ].
+func imtInsertWitness(
+	low cashupool.Leaf, lowIdx uint32, lowPath [][]byte, k *big.Int,
+	appendIdx uint32, szSibs [][]byte,
+) [][]byte {
+	w := imtNonMembershipWitness(low, lowIdx, lowPath, k)
+	w = append(w, encodeBig(new(big.Int).SetUint64(uint64(appendIdx))))
+	for _, s := range szSibs {
+		w = append(w, s)
+	}
 	return w
 }
 
@@ -278,6 +409,74 @@ func TestIMTNonMembershipScript(t *testing.T) {
 
 		script := buildIMTNonMembershipScript(imtD, tree.Root())
 		w := imtNonMembershipWitness(low, lowIdx, lowPath, k2)
+		require.Error(t, runArkadeScript(t, script, w))
+	})
+}
+
+func TestIMTInsertScript(t *testing.T) {
+	t.Parallel()
+
+	// setup returns a fresh tree (with a couple of seed leaves) plus a valid
+	// insert proof for key k.
+	setup := func(t *testing.T) (prevRoot, newRoot []byte, low cashupool.Leaf,
+		lowIdx uint32, lowPath [][]byte, k *big.Int, appendIdx uint32, szSibs [][]byte) {
+		t.Helper()
+		tree := cashupool.NewIMT(imtD)
+		for _, tag := range []string{"imt-seed-1", "imt-seed-2"} {
+			kk := imtKFromTag(tag)
+			lo, li, lp := tree.NonMembership(kk)
+			tree.Insert(kk, lo, li, lp)
+		}
+		k = imtKFromTag("imt-a")
+		low, lowIdx, lowPath = tree.NonMembership(k)
+		prevRoot = append([]byte(nil), tree.Root()...) // BEFORE insert
+		var root1 []byte
+		root1, newRoot, szSibs, appendIdx = tree.Insert(k, low, lowIdx, lowPath)
+
+		// Sanity: in-script-equivalent root computations match the reference.
+		lowPrime := cashupool.Leaf{Value: low.Value, Next: k}
+		require.Equal(t, root1, cashupool.RecomputeRoot(imtD, lowIdx, lowPrime.Hash(), lowPath))
+		require.Equal(t, root1, cashupool.RecomputeRoot(imtD, appendIdx, cashupool.EmptyLeafHash(), szSibs))
+		newLeaf := cashupool.Leaf{Value: k, Next: low.Next}
+		require.Equal(t, newRoot, cashupool.RecomputeRoot(imtD, appendIdx, newLeaf.Hash(), szSibs))
+		return
+	}
+
+	t.Run("valid insert verifies", func(t *testing.T) {
+		prevRoot, newRoot, low, lowIdx, lowPath, k, appendIdx, szSibs := setup(t)
+		script := buildIMTInsertScript(imtD, prevRoot, newRoot)
+		w := imtInsertWitness(low, lowIdx, lowPath, k, appendIdx, szSibs)
+		require.NoError(t, runArkadeScript(t, script, w))
+	})
+
+	t.Run("wrong newRoot fails", func(t *testing.T) {
+		prevRoot, newRoot, low, lowIdx, lowPath, k, appendIdx, szSibs := setup(t)
+		badRoot := append([]byte(nil), newRoot...)
+		badRoot[0] ^= 0x01
+		script := buildIMTInsertScript(imtD, prevRoot, badRoot)
+		w := imtInsertWitness(low, lowIdx, lowPath, k, appendIdx, szSibs)
+		require.Error(t, runArkadeScript(t, script, w))
+	})
+
+	t.Run("tampered szSibs fails", func(t *testing.T) {
+		prevRoot, newRoot, low, lowIdx, lowPath, k, appendIdx, szSibs := setup(t)
+		bad := make([][]byte, len(szSibs))
+		copy(bad, szSibs)
+		tampered := append([]byte(nil), bad[0]...)
+		tampered[0] ^= 0x01
+		bad[0] = tampered
+		script := buildIMTInsertScript(imtD, prevRoot, newRoot)
+		w := imtInsertWitness(low, lowIdx, lowPath, k, appendIdx, bad)
+		require.Error(t, runArkadeScript(t, script, w))
+	})
+
+	t.Run("insert proof for a different k fails", func(t *testing.T) {
+		prevRoot, newRoot, low, lowIdx, lowPath, _, appendIdx, szSibs := setup(t)
+		// Use a different key than the one the proof was built for.
+		kOther := imtKFromTag("imt-different")
+		require.False(t, bytes.Equal(encodeBig(kOther), encodeBig(imtKFromTag("imt-a"))))
+		script := buildIMTInsertScript(imtD, prevRoot, newRoot)
+		w := imtInsertWitness(low, lowIdx, lowPath, kOther, appendIdx, szSibs)
 		require.Error(t, runArkadeScript(t, script, w))
 	})
 }
