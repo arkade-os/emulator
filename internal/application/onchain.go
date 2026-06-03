@@ -57,7 +57,12 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 		}
 
 		log.Debugf("executing arkade script: %x", script.Script())
-		if err := script.Execute(ptx.UnsignedTx, prevOutFetcher, inputIndex); err != nil {
+		if err := script.Execute(
+			ptx.UnsignedTx,
+			prevOutFetcher,
+			inputIndex,
+			arkade.WithExactComputeLimits(s.computeLimits),
+		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
 		log.Debugf("execution of %x succeeded", script.Script())

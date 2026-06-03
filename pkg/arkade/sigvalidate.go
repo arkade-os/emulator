@@ -133,7 +133,7 @@ func CalcArkadeScriptSignatureHash(
 		opt(options)
 	}
 
-	taprootCtx := newTaprootExecutionCtxForLeaf(tapLeaf, 0)
+	taprootCtx := newTaprootExecutionCtxForLeaf(tapLeaf)
 	taprootCtx.codeSepPos = options.codeSepPos
 
 	vm := &Engine{
