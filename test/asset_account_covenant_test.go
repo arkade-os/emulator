@@ -90,7 +90,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 	})
 
 	indexerSvc := setupIndexer(t)
-	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	infos, err := grpcAlice.GetInfo(ctx)

@@ -25,9 +25,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSubmitOnchainTx funds an arkade-tweaked P2TR address directly via
-// `nigiri faucet`, then spends it via a plain Bitcoin transaction where the
-// emulator co-signs after running the embedded arkade script.
+// TestSubmitOnchainTx funds an arkade-tweaked P2TR address directly via the
+// regtest Bitcoin Core node, then spends it via a plain Bitcoin transaction
+// where the emulator co-signs after running the embedded arkade script.
 func TestSubmitOnchainTx(t *testing.T) {
 	ctx := context.Background()
 
@@ -93,12 +93,12 @@ func TestSubmitOnchainTx(t *testing.T) {
 	require.NoError(t, err)
 	tapAddrStr := tapAddr.EncodeAddress()
 
-	// --- Fund the address via nigiri ---
-	_, err = runCommand("nigiri", "faucet", tapAddrStr, "0.01")
+	// --- Fund the address via the regtest Bitcoin Core node ---
+	_, err = onchainFaucet(tapAddrStr, "0.01")
 	require.NoError(t, err)
 
 	explorerSvc, err := mempoolexplorer.NewExplorer(
-		"http://localhost:3000", arklib.BitcoinRegTest,
+		"http://localhost:3000/api", arklib.BitcoinRegTest,
 	)
 	require.NoError(t, err)
 
@@ -106,8 +106,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 	fundingUtxo := waitForUtxo(t, explorerSvc, tapAddrStr, 60*time.Second)
 
 	// Mine a block so the funding tx is confirmed.
-	_, err = runCommand("nigiri", "rpc", "-generate", "1")
-	require.NoError(t, err)
+	require.NoError(t, mineBlocks(1))
 
 	rawFundingHex, err := explorerSvc.GetTxHex(fundingUtxo.Txid)
 	require.NoError(t, err)
@@ -337,16 +336,13 @@ func TestSubmitOnchainTx(t *testing.T) {
 		require.NoError(t, err)
 		exitAddrStr := exitAddr.EncodeAddress()
 
-		_, err = runCommand("nigiri", "faucet", exitAddrStr, "0.01")
+		_, err = onchainFaucet(exitAddrStr, "0.01")
 		require.NoError(t, err)
 
 		exitUtxo := waitForUtxo(t, explorerSvc, exitAddrStr, 60*time.Second)
 
 		// Mine CSV + 1 blocks so the relative locktime is satisfied.
-		for i := uint32(0); i < csvBlocks+1; i++ {
-			_, err = runCommand("nigiri", "rpc", "-generate", "1")
-			require.NoError(t, err)
-		}
+		require.NoError(t, mineBlocks(int(csvBlocks+1)))
 
 		exitRawHex, err := explorerSvc.GetTxHex(exitUtxo.Txid)
 		require.NoError(t, err)

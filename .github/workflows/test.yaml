@@ -29,9 +29,16 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.3'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      - name: Run Nigiri
-        uses: vulpemventures/nigiri-github-action@v1
+      - name: Start regtest base stack (Bitcoin Core + Fulcrum + mempool)
+        run: |
+          # Temporary: track the unmerged #27 branch so regtest.mjs exists.
+          # Switch back to master once ArkLabsHQ/arkade-regtest#27 merges.
+          git clone --branch denigiri-regtest https://github.com/ArkLabsHQ/arkade-regtest.git regtest
+          REGTEST_PROFILES=base node regtest/regtest.mjs start
 
       - name: Run regtest environment
         run: make docker-run
@@ -50,3 +57,7 @@ jobs:
       - name: Tear down
         if: always()
         run: make docker-stop
+
+      - name: Tear down regtest stack
+        if: always()
+        run: node regtest/regtest.mjs clean || true

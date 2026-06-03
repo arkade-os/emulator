@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -90,7 +91,7 @@ func TestSubmitOffchain(t *testing.T) {
 	altIntroWallet, _, altIntroPubKey := setupWallet(t, ctx)
 	emulatorClient, emulatorPublicKey, _ := setupEmulatorClient(t, ctx)
 	indexerSvc := setupIndexer(t)
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	bobPaysAliceContract := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, emulatorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
@@ -724,7 +725,7 @@ func TestSettlement(t *testing.T) {
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
@@ -892,15 +893,13 @@ func TestBoarding(t *testing.T) {
 	require.NoError(t, err)
 
 	// faucet the contract address with onchain funds
-	faucetOutput, err := runCommand("nigiri", "faucet", contractBtcAddr.EncodeAddress())
+	faucetTxid, err := onchainFaucet(contractBtcAddr.EncodeAddress(), "")
 	require.NoError(t, err)
-
-	faucetTxid := strings.TrimSpace(strings.TrimPrefix(faucetOutput, "txId:"))
 
 	time.Sleep(5 * time.Second)
 
 	// get the raw transaction to find the contract output
-	rawTxHex, err := runCommand("nigiri", "rpc", "getrawtransaction", faucetTxid)
+	rawTxHex, err := bitcoinCli("getrawtransaction", faucetTxid)
 	require.NoError(t, err)
 
 	rawTxBytes, err := hex.DecodeString(strings.TrimSpace(rawTxHex))
@@ -991,7 +990,7 @@ func TestBoarding(t *testing.T) {
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
@@ -1148,7 +1147,7 @@ func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	invalidArkadeScript, err := txscript.NewScriptBuilder().
@@ -1407,8 +1406,7 @@ func runCommand(name string, arg ...string) (string, error) {
 }
 
 func generateBlock() error {
-	_, err := runCommand("nigiri", "rpc", "--generate", "1")
-	return err
+	return mineBlocks(1)
 }
 
 var ErrAlreadySetup = errors.New("already setup")
@@ -1518,8 +1516,7 @@ func setupServerWalletAndCLI() error {
 	const numberOfFaucet = 15 // must cover the liquidity needed for all tests
 
 	for i := 0; i < numberOfFaucet; i++ {
-		_, err = runCommand("nigiri", "faucet", addr.Address)
-		if err != nil {
+		if _, err = onchainFaucet(addr.Address, ""); err != nil {
 			return fmt.Errorf("failed to fund wallet: %s", err)
 		}
 	}
@@ -1528,7 +1525,7 @@ func setupServerWalletAndCLI() error {
 
 	if _, err := runArkCommand(
 		"init", "--server-url", "localhost:7070", "--password", password,
-		"--explorer", "http://chopsticks:3000",
+		"--explorer", "http://mempool_web/api",
 	); err != nil {
 		return fmt.Errorf("error initializing ark config: %s", err)
 	}
@@ -1556,6 +1553,52 @@ func setupServerWalletAndCLI() error {
 func runArkCommand(arg ...string) (string, error) {
 	args := append([]string{"ark"}, arg...)
 	return runDockerExec("arkd", args...)
+}
+
+// bitcoinCliArgs is the bitcoin-cli prefix used to drive the regtest Bitcoin
+// Core node inside the `bitcoin` container of the arkade-regtest stack.
+var bitcoinCliArgs = []string{
+	"exec", "bitcoin",
+	"bitcoin-cli", "-regtest", "-rpcuser=admin1", "-rpcpassword=123",
+}
+
+// bitcoinCli runs `bitcoin-cli <arg...>` inside the `bitcoin` container and
+// returns the trimmed stdout. It replaces the old `nigiri rpc <arg...>`
+// passthrough.
+func bitcoinCli(arg ...string) (string, error) {
+	args := append(append([]string{}, bitcoinCliArgs...), arg...)
+	out, err := runCommand("docker", args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// mineBlocks mines n blocks to the node wallet (bitcoin-cli -generate n),
+// replacing the old `nigiri rpc -generate n`.
+func mineBlocks(n int) error {
+	_, err := bitcoinCli("-generate", strconv.Itoa(n))
+	return err
+}
+
+// onchainFaucet sends amountBtc to address from the Bitcoin Core node wallet
+// and mines one block to confirm it, then returns the funding txid. It replaces
+// the old `nigiri faucet <address> <amountBtc>` (nigiri auto-mined; the
+// arkade-regtest stack does not, so we mine 1 block here to preserve the
+// confirm-on-faucet behavior). Defaults to 1 BTC when amountBtc is empty,
+// matching nigiri's default faucet amount.
+func onchainFaucet(address, amountBtc string) (string, error) {
+	if amountBtc == "" {
+		amountBtc = "1"
+	}
+	txid, err := bitcoinCli("sendtoaddress", address, amountBtc)
+	if err != nil {
+		return "", err
+	}
+	if err := mineBlocks(1); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(txid), nil
 }
 
 func runDockerExec(container string, arg ...string) (string, error) {

@@ -72,7 +72,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
 	require.NoError(t, err)
 
-	_, err = runCommand("nigiri", "faucet", boardingAddress)
+	_, err = onchainFaucet(boardingAddress, "")
 	require.NoError(t, err)
 
 	time.Sleep(5 * time.Second)
@@ -229,7 +229,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 		RevealedTapscripts: []string{hex.EncodeToString(arkadeTapscript)},
 	}
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	// ========================================

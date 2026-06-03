@@ -65,7 +65,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 
 	indexerSvc := setupIndexer(t)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	// =========================================================================

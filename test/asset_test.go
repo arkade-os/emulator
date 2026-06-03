@@ -157,7 +157,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	signedTx, err := bobWallet.SignTransaction(
@@ -216,7 +216,7 @@ func TestSettlementWithAsset(t *testing.T) {
 		conn.Close()
 	})
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000/api", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	// =========================================================================
