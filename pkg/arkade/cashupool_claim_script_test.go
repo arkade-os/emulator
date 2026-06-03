@@ -780,6 +780,32 @@ func (env *ClaimEnv) craftClaimTx(
 	return tx, fetcher
 }
 
+// prepareDoubleSpend crafts a second claim of an already-spent token. The
+// attacker can only replay the stale (pre-insert) non-membership proof from the
+// original claim, but the pool has advanced: the current tx's PrevRoot must
+// equal the new parent.NewRoot, while the replayed low-leaf recomputes to the
+// old root, so the IMT non-membership EQUALVERIFY fails.
+func (env *ClaimEnv) prepareDoubleSpend(orig claimArtifacts) claimArtifacts {
+	// The replayed claim reuses orig's witness verbatim (same token + same stale
+	// IMT proof). It claims to transition the CURRENT pool state (env's advanced
+	// view) by re-inserting nf: this.PrevRoot = parent.NewRoot (advanced),
+	// this.Size = parentSize+1.
+	parentNewRoot := append([]byte(nil), env.parentRoot...)
+	parentSize := env.parentSize
+
+	a := orig
+	a.witness = append([][]byte(nil), orig.witness...)
+	// The packet claims continuity with the advanced pool, but the IMT proof is
+	// stale: prevRoot in the packet = parentNewRoot (advanced), newRoot is a
+	// best-effort guess derived off-chain replay (the engine rejects regardless
+	// because the stale low proof cannot recompute to the advanced prevRoot).
+	a.prevRoot = parentNewRoot
+	a.newRoot = orig.newRoot
+	a.thisSize = parentSize + 1
+	a.tx, a.fetcher = env.craftClaimTx(parentNewRoot, parentSize, a.prevRoot, a.newRoot, a.thisSize)
+	return a
+}
+
 // genesisPrevRoot returns the all-zero 32-byte root used as the genesis
 // PrevRoot of the very first pool state.
 func (env *ClaimEnv) genesisPrevRoot() []byte { return make([]byte, 32) }
@@ -833,4 +859,101 @@ func TestClaimScript(t *testing.T) {
 		a := env.prepareClaim(claimSecret("claim-valid"))
 		require.NoError(t, env.runClaim(a))
 	})
+
+	t.Run("double-spend rejected", func(t *testing.T) {
+		env := newClaimEnv(t)
+		secret := claimSecret("claim-ds")
+		a1 := env.prepareClaim(secret)
+		require.NoError(t, env.runClaim(a1))
+		// Claiming the SAME secret again: the nullifier is now in the tree, so
+		// the only proof the attacker has is the stale pre-insert one, which no
+		// longer recomputes to the advanced pool root. The IMT phase must fail.
+		a2 := env.prepareDoubleSpend(a1)
+		require.Error(t, env.runClaim(a2))
+	})
+
+	t.Run("tampered e rejected", func(t *testing.T) {
+		env := newClaimEnv(t)
+		a := env.prepareClaim(claimSecret("claim-e"))
+		// e is witness index wE.
+		badE := new(big.Int).Add(new(big.Int).SetBytes(reverseForBig(a.witness[wE])), big.NewInt(1))
+		badE.Mod(badE, btcec.S256().N)
+		a.witness[wE] = encodeBig(badE)
+		require.Error(t, env.runClaim(a))
+	})
+
+	t.Run("wrong claimant value rejected", func(t *testing.T) {
+		env := newClaimEnv(t)
+		a := env.prepareClaim(claimSecret("claim-cv"))
+		a.tx.TxOut[0].Value = claimDenomSat + 1
+		require.Error(t, env.runClaim(a))
+	})
+
+	t.Run("wrong pool value rejected", func(t *testing.T) {
+		env := newClaimEnv(t)
+		a := env.prepareClaim(claimSecret("claim-pv"))
+		a.tx.TxOut[1].Value = claimPoolValue - claimDenomSat - 1
+		require.Error(t, env.runClaim(a))
+	})
+
+	t.Run("broken continuity rejected", func(t *testing.T) {
+		env := newClaimEnv(t)
+		a := env.prepareClaim(claimSecret("claim-cont"))
+		// Corrupt the parent packet so this.PrevRoot != parent.NewRoot.
+		parentTx := a.fetcher.(*testArkPrevOutFetcher).arkTxs[a.tx.TxIn[0].PreviousOutPoint]
+		corruptParent := corruptPoolStateNewRoot(t, parentTx)
+		a.fetcher.(*testArkPrevOutFetcher).arkTxs[a.tx.TxIn[0].PreviousOutPoint] = corruptParent
+		require.Error(t, env.runClaim(a))
+	})
+
+	t.Run("wrong newRoot rejected", func(t *testing.T) {
+		env := newClaimEnv(t)
+		a := env.prepareClaim(claimSecret("claim-nr"))
+		// Corrupt this tx's packet NewRoot so the IMT insert assertion fails.
+		badRoot := append([]byte(nil), a.newRoot...)
+		badRoot[0] ^= 0x01
+		a.tx.TxOut[2] = mustExtTxOut(t, cashupool.PoolState{
+			PrevRoot: a.prevRoot, NewRoot: badRoot, Size: a.thisSize,
+		})
+		require.Error(t, env.runClaim(a))
+	})
+}
+
+// reverseForBig reverses a little-endian Arkade number encoding into big-endian
+// so it can be loaded with big.Int.SetBytes.
+func reverseForBig(le []byte) []byte {
+	be := make([]byte, len(le))
+	for i := range le {
+		be[len(le)-1-i] = le[i]
+	}
+	return be
+}
+
+// corruptPoolStateNewRoot returns a copy of parentTx whose 0x05 PoolState has a
+// flipped NewRoot byte, breaking this.PrevRoot == parent.NewRoot continuity.
+func corruptPoolStateNewRoot(t *testing.T, parentTx *wire.MsgTx) *wire.MsgTx {
+	t.Helper()
+	state, err := cashupool.ParsePoolState(parentExtData(t, parentTx))
+	require.NoError(t, err)
+	state.NewRoot = append([]byte(nil), state.NewRoot...)
+	state.NewRoot[0] ^= 0x01
+
+	cp := parentTx.Copy()
+	cp.TxOut[1] = mustExtTxOut(t, state)
+	return cp
+}
+
+// parentExtData extracts the raw 0x05 PoolState payload from a parent tx's
+// extension output by re-parsing its extension.
+func parentExtData(t *testing.T, parentTx *wire.MsgTx) []byte {
+	t.Helper()
+	ext, err := extension.NewExtensionFromTx(parentTx)
+	require.NoError(t, err)
+	for _, pkt := range ext {
+		if up, ok := pkt.(extension.UnknownPacket); ok && up.PacketType == cashuPoolPacketType {
+			return up.Data
+		}
+	}
+	t.Fatalf("parent tx has no 0x05 PoolState extension")
+	return nil
 }
