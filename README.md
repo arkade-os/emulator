@@ -12,6 +12,7 @@ This is achieved by signing any Arkade transaction (offchain or intent proof) ex
 
 - [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
 - [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant is a self-send (preserves the input's scriptPubKey + value on output 0) gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
+- [`pkg/arkade/cashupool_claim_script_test.go`](pkg/arkade/cashupool_claim_script_test.go) — **Trust-minimized Cashu ecash exit.** A shared fixed-denomination pool VTXO whose `ClaimScript` verifies a real Cashu token in-script (NUT-00 `hash_to_curve` + NUT-12 r-blinded DLEQ over the EC opcodes), proves the token's nullifier is unspent and inserts it into an Indexed Merkle Tree (positional Merkle walk), and a recursive covenant rolls the pool state forward via a `0x05` extension packet — no mint involvement. The no-SNARK sibling of the v1-zec shielded-pool design; off-chain reference in [`pkg/arkade/cashupool/`](pkg/arkade/cashupool/).
 
 ## API
 
