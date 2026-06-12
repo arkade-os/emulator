@@ -388,8 +388,8 @@ func readerContractArkadeScript(t *testing.T, mainAssetTxid chainhash.Hash) []by
 	arkadeScript, err := txscript.NewScriptBuilder().
 		// Verify main contract asset at input 0.
 		AddInt64(0).               // input index
-		AddData(mainAssetTxid[:]). // asset txid (genesis tx hash)
-		AddInt64(0).               // group index in current packet
+		AddData(mainAssetTxid[:]). // canonical asset_txid (genesis tx hash)
+		AddInt64(0).               // canonical asset_gidx (issuance index)
 		AddOp(arkade.OP_INSPECTINASSETLOOKUP).
 		AddOp(arkade.OP_1).
 		AddOp(arkade.OP_EQUALVERIFY). // found flag == 1

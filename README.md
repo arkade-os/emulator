@@ -357,16 +357,22 @@ These opcodes allow incremental SHA256 hashing by maintaining hash state on the 
 
 ### Asset Introspection Opcodes
 
-These opcodes provide access to the Arkade Asset V1 packet embedded in the transaction. Asset IDs are represented as two stack items: (txid32, gidx_u16).
+These opcodes provide access to the Arkade Asset V1 packet embedded in the transaction.
+
+An **Asset ID** is the canonical, position-independent identity of an asset. It is represented as two consecutive stack items, `asset_txid asset_gidx`, where `asset_txid` (32 bytes) is the asset's issuance transaction ID and `asset_gidx` is the group index at which the asset was issued (a minimally encoded ScriptNum in `0..65535`). For a fresh issuance the Asset ID is `(this transaction's ID, k)`, where `k` is the group's position in this packet.
+
+`k` is reserved throughout for a **current packet group position** — the index of a group in this transaction's packet. It is distinct from `asset_gidx`: the two coincide only for fresh issuances. Use `OP_FINDASSETGROUPBYASSETID` to convert a canonical Asset ID into the `k` consumed by the structural per-group opcodes.
+
+An intent input's source transaction ID is **not** an Asset ID; it is available through `OP_INSPECTASSETGROUP` and is never emitted or matched by the canonical opcodes.
 
 #### Packet & Groups
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTNUMASSETGROUPS | 229 | 0xe5 | Nothing | K | Returns the number of asset groups in the packet. |
-| OP_INSPECTASSETGROUPASSETID | 230 | 0xe6 | k | txid32 gidx_u16 | Returns the Asset ID of group k. Fresh groups use this transaction's ID. |
-| OP_INSPECTASSETGROUPCTRL | 231 | 0xe7 | k | -1 or txid32 gidx_u16 | Returns the control Asset ID if present, else -1. |
-| OP_FINDASSETGROUPBYASSETID | 232 | 0xe8 | txid32 gidx_u16 | -1 or k | Finds group index by Asset ID, or -1 if absent. |
+| OP_INSPECTASSETGROUPASSETID | 230 | 0xe6 | k | asset_txid asset_gidx | Returns the canonical Asset ID of packet group k. Fresh groups use this transaction's ID and k. |
+| OP_INSPECTASSETGROUPCTRL | 231 | 0xe7 | k | control_asset_txid control_asset_gidx 1, or empty_bytes 0 0 | Returns the canonical Asset ID of the control asset and a success flag, or `empty_bytes 0 0` when absent. References stored by packet group index are resolved to their canonical Asset ID. |
+| OP_FINDASSETGROUPBYASSETID | 232 | 0xe8 | asset_txid asset_gidx | k 1, or 0 0 | Converts a canonical Asset ID to its current packet group position k with a success flag, or `0 0` when the Asset ID is not in the packet. |
 
 #### Metadata
 
@@ -392,13 +398,13 @@ These opcodes provide access to the Arkade Asset V1 packet embedded in the trans
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTOUTASSETCOUNT | 237 | 0xed | o | n | Returns number of asset entries assigned to output o. |
-| OP_INSPECTOUTASSETAT | 238 | 0xee | o t | txid32 gidx_u16 amount | Returns t-th asset at output o. Amount is pushed as a BigNum. |
-| OP_INSPECTOUTASSETLOOKUP | 239 | 0xef | o txid32 gidx_u16 | amount or -1 | Returns amount of asset at output o, or -1 if not found. Amount is pushed as a BigNum. |
+| OP_INSPECTOUTASSETAT | 238 | 0xee | o t | asset_txid asset_gidx amount | Returns the canonical Asset ID and amount of the t-th asset entry at output o. `asset_gidx` is the issuance group index, directly consumable by OP_INSPECTOUTASSETLOOKUP. Amount is pushed as a BigNum. |
+| OP_INSPECTOUTASSETLOOKUP | 239 | 0xef | o asset_txid asset_gidx | amount 1, or 0 0 | Returns the amount of the asset with the given canonical Asset ID at output o and a success flag, or `0 0` when absent. Amount is pushed as a BigNum. |
 
 #### Cross-Input (Packet-Declared)
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTINASSETCOUNT | 240 | 0xf0 | i | n | Returns number of assets declared for input i. |
-| OP_INSPECTINASSETAT | 241 | 0xf1 | i t | txid32 gidx_u16 amount | Returns t-th asset declared for input i. Amount is pushed as a BigNum. |
-| OP_INSPECTINASSETLOOKUP | 242 | 0xf2 | i txid32 gidx_u16 | amount or -1 | Returns declared amount for asset at input i, or -1 if not found. Amount is pushed as a BigNum. |
+| OP_INSPECTINASSETAT | 241 | 0xf1 | i t | asset_txid asset_gidx amount | Returns the canonical Asset ID and amount of the t-th asset entry declared for input i. `asset_txid` is always the issuance transaction ID, never an intent input's source txid. Amount is pushed as a BigNum. |
+| OP_INSPECTINASSETLOOKUP | 242 | 0xf2 | i asset_txid asset_gidx | amount 1, or 0 0 | Returns the declared amount for the asset with the given canonical Asset ID at input i and a success flag, or `0 0` when absent. An intent input's source txid is never accepted as the Asset ID. Amount is pushed as a BigNum. |

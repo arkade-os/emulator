@@ -65,8 +65,9 @@ const (
 //
 // Educational simplifications: the covenants do not pin the asset_id (and
 // drop the NUMASSETGROUPS == 1 gate). Asset substitution is therefore
-// possible and should be mitigated in production by pinning (txid, gidx)
-// on every OP_INSPECTOUTASSETAT call. Bob's account is also assumed empty
+// possible and should be mitigated in production by pinning the canonical
+// AssetID (asset_txid, asset_gidx) on every OP_INSPECTOUTASSETAT call. Bob's
+// account is also assumed empty
 // (0 USDT) before the claim, which lets bobClaim pin output[1] USDT to 50.
 func TestAssetAccountCovenant(t *testing.T) {
 	ctx := t.Context()
@@ -261,9 +262,9 @@ func TestAssetAccountCovenant(t *testing.T) {
 //	output[1] = alice account  (330 sats + 45 USDT, full pkScript match)
 //	output[2] = solver fee     (330 sats + 5 USDT, *any* pkScript)
 //
-// OP_INSPECTOUTASSETAT pushes (txid, gidx, amount). We drop txid+gidx with
-// OP_NIP OP_NIP and keep only the amount — see the test doc on the
-// asset-substitution caveat.
+// OP_INSPECTOUTASSETAT pushes (asset_txid, asset_gidx, amount). We drop the
+// canonical AssetID with OP_NIP OP_NIP and keep only the amount — see the test
+// doc on the asset-substitution caveat.
 func enforceSolverRouting(t *testing.T, bobClaimPk, aliceAccountPk []byte) []byte {
 	t.Helper()
 	s, err := txscript.NewScriptBuilder().
