@@ -117,6 +117,38 @@ func TestNewOpcodes(t *testing.T) {
 			},
 		},
 		{
+			// OP_CAT must enforce the per-element size limit
+			// (MaxScriptElementSize == 520 bytes) on its result. Repeatedly
+			// duplicating and concatenating doubles the element size each
+			// round; without the limit this is an exponential-growth DoS.
+			// Starting from a 200-byte element: 200 -> 400 -> 800, so the
+			// second OP_CAT must fail.
+			name: "OP_CAT_growth_limit",
+			script: txscript.NewScriptBuilder().
+				AddOp(OP_DUP).AddOp(OP_CAT). // 200 -> 400
+				AddOp(OP_DUP).AddOp(OP_CAT), // 400 -> 800 (must fail)
+			cases: []testCase{
+				{
+					valid: false,
+					tx: &wire.MsgTx{
+						Version: 1,
+						TxIn: []*wire.TxIn{
+							{
+								PreviousOutPoint: wire.OutPoint{
+									Hash:  chainhash.Hash{},
+									Index: 0,
+								},
+							},
+						},
+					},
+					txIdx:       0,
+					inputAmount: 0,
+					stack:       [][]byte{bytes.Repeat([]byte{0x01}, 200)},
+					errText:     "exceeds max allowed size",
+				},
+			},
+		},
+		{
 			name:   "OP_DIV",
 			script: txscript.NewScriptBuilder().AddOp(OP_DIV).AddOp(OP_3).AddOp(OP_EQUAL),
 			cases: []testCase{
@@ -2463,7 +2495,7 @@ func arkadeDigest(
 		hashCache:      txscript.NewTxSigHashes(tx, fetcher),
 		prevOutFetcher: fetcher,
 		taprootCtx: newTaprootExecutionCtxForLeaf(
-			txscript.NewBaseTapLeaf(leafScript), 0,
+			txscript.NewBaseTapLeaf(leafScript),
 		),
 	}
 	digest, err := computeArkadeSighash(vm, hashType)
@@ -2819,7 +2851,7 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 					hashCache:      txscript.NewTxSigHashes(baseTx, fetcher),
 					prevOutFetcher: fetcher,
 					taprootCtx: newTaprootExecutionCtxForLeaf(
-						txscript.NewBaseTapLeaf(leafScript), 0,
+						txscript.NewBaseTapLeaf(leafScript),
 					),
 				}
 				arkadeSigMsg, err := buildArkadeSigMsg(vm, f.flag)
@@ -2887,7 +2919,7 @@ func TestArkadeSighashByteLayoutMatchesBIP342(t *testing.T) {
 				hashCache:      txscript.NewTxSigHashes(tx, fetcher),
 				prevOutFetcher: fetcher,
 				taprootCtx: newTaprootExecutionCtxForLeaf(
-					txscript.NewBaseTapLeaf(leafScript), 0,
+					txscript.NewBaseTapLeaf(leafScript),
 				),
 			}
 
@@ -2940,7 +2972,7 @@ func TestArkadeSighashByteLayoutMatchesBIP342WithAnnexAndCodeSep(t *testing.T) {
 	const codeSepPos = uint32(1)
 	const flag = txscript.SigHashAll
 	taprootCtx := newTaprootExecutionCtxForLeaf(
-		txscript.NewBaseTapLeaf(leafScript), 0,
+		txscript.NewBaseTapLeaf(leafScript),
 	)
 	taprootCtx.annex = annex
 	taprootCtx.codeSepPos = codeSepPos

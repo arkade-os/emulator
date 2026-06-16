@@ -228,7 +228,7 @@ func signArkadeInput(
 		PrevOutputFetcher: txscript.NewMultiPrevOutFetcher(prevouts),
 	}
 	sighashes := txscript.NewTxSigHashes(ptx.UnsignedTx, prevOutFetcher)
-	message, err := arkade.CalcTapscriptSignaturehash(
+	message, err := arkade.CalcArkadeScriptSignatureHash(
 		sighashes, txscript.SigHashDefault, ptx.UnsignedTx,
 		inputIndex, prevOutFetcher, tapLeaf,
 	)

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
@@ -266,4 +267,88 @@ func TestLoadConfigIgnoresOldEnvPrefix(t *testing.T) {
 
 	_, err := LoadConfig()
 	require.Error(t, err)
+}
+
+func TestParseComputeLimitsEmptyReturnsDefaults(t *testing.T) {
+	got, err := parseComputeLimits("")
+	require.NoError(t, err)
+	require.Equal(t, arkade.DefaultComputeLimits(), got)
+}
+
+func TestParseComputeLimitsOverridesSingleOpcode(t *testing.T) {
+	got, err := parseComputeLimits("OP_ECPAIRING=8")
+	require.NoError(t, err)
+
+	require.Equal(t, 8, got[arkade.OP_ECPAIRING])
+	// Unspecified opcodes keep their defaults.
+	require.Equal(t, arkade.DefaultComputeLimits()[arkade.OP_MODEXP],
+		got[arkade.OP_MODEXP])
+}
+
+func TestParseComputeLimitsOverridesMultipleOpcodesWithSpaces(t *testing.T) {
+	got, err := parseComputeLimits(" OP_ECPAIRING=8 , OP_MODEXP=128 ")
+	require.NoError(t, err)
+
+	require.Equal(t, 8, got[arkade.OP_ECPAIRING])
+	require.Equal(t, 128, got[arkade.OP_MODEXP])
+}
+
+func TestParseComputeLimitsEmptyValueRemovesLimit(t *testing.T) {
+	got, err := parseComputeLimits("OP_ECADD=")
+	require.NoError(t, err)
+
+	_, ok := got[arkade.OP_ECADD]
+	require.False(t, ok)
+	require.Equal(t, arkade.DefaultComputeLimits()[arkade.OP_ECPAIRING],
+		got[arkade.OP_ECPAIRING])
+}
+
+func TestParseComputeLimitsUnknownOpcodeErrors(t *testing.T) {
+	_, err := parseComputeLimits("OP_NOT_A_REAL_OPCODE=5")
+	require.ErrorContains(t, err, "OP_NOT_A_REAL_OPCODE")
+}
+
+func TestParseComputeLimitsNonIntegerErrors(t *testing.T) {
+	_, err := parseComputeLimits("OP_ECPAIRING=lots")
+	require.Error(t, err)
+}
+
+func TestParseComputeLimitsMalformedPairErrors(t *testing.T) {
+	_, err := parseComputeLimits("OP_ECPAIRING")
+	require.Error(t, err)
+}
+
+func TestParseComputeLimitsEmptyPairErrors(t *testing.T) {
+	_, err := parseComputeLimits(",")
+	require.Error(t, err)
+}
+
+func TestParseComputeLimitsTrailingCommaErrors(t *testing.T) {
+	_, err := parseComputeLimits("OP_ECPAIRING=8,")
+	require.Error(t, err)
+}
+
+func TestParseComputeLimitsNegativeErrors(t *testing.T) {
+	_, err := parseComputeLimits("OP_ECPAIRING=-1")
+	require.Error(t, err)
+}
+
+func TestLoadConfigParsesComputeLimitsOverride(t *testing.T) {
+	cfg, err := loadConfigForTest(t, map[string]string{
+		"EMULATOR_SECRET_KEY":     testKeyHex(1),
+		"EMULATOR_ARKD_URL":       "http://arkd:7070",
+		"EMULATOR_COMPUTE_LIMITS": "OP_ECPAIRING=8,OP_MODEXP=128",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 8, cfg.ComputeLimits[arkade.OP_ECPAIRING])
+	require.Equal(t, 128, cfg.ComputeLimits[arkade.OP_MODEXP])
+}
+
+func TestLoadConfigDefaultsComputeLimitsWhenUnset(t *testing.T) {
+	cfg, err := loadConfigForTest(t, map[string]string{
+		"EMULATOR_SECRET_KEY": testKeyHex(1),
+		"EMULATOR_ARKD_URL":   "http://arkd:7070",
+	})
+	require.NoError(t, err)
+	require.Equal(t, arkade.DefaultComputeLimits(), cfg.ComputeLimits)
 }

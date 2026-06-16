@@ -335,18 +335,22 @@ func (b assetLookupCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcod
 	}
 
 	var txid []byte
-	groupIdx := int64(0)
+	// Generate a canonical AssetID (asset_txid, asset_gidx) for the selected
+	// group rather than its current packet position.
+	assetGidx := int64(0)
 	if world.world.assetPacket != nil && len(world.world.assetPacket) > 0 {
-		group := world.world.assetPacket[int(data[1])%len(world.world.assetPacket)]
-		groupIdx = int64(int(data[1]) % len(world.world.assetPacket))
+		k := int(data[1]) % len(world.world.assetPacket)
+		group := world.world.assetPacket[k]
 		if group.AssetId == nil {
 			assetTxid := world.world.tx.TxHash()
 			txid = cloneBytes(assetTxid[:])
+			assetGidx = int64(k)
 		} else {
 			txid = cloneBytes(group.AssetId.Txid[:])
+			assetGidx = int64(group.AssetId.Index)
 		}
 		if data[2]&1 == 1 {
-			groupIdx = int64(len(world.world.assetPacket) + int(data[1]%4))
+			assetGidx += int64(len(world.world.assetPacket))
 		}
 	}
 	if len(txid) == 0 {
@@ -355,7 +359,7 @@ func (b assetLookupCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcod
 	if data[3]&1 == 1 {
 		txid[0] ^= 0xff
 	}
-	c.stackPushes = [][]byte{scriptNum(index).Bytes(), txid, scriptNum(groupIdx).Bytes()}
+	c.stackPushes = [][]byte{scriptNum(index).Bytes(), txid, scriptNum(assetGidx).Bytes()}
 	return c
 }
 

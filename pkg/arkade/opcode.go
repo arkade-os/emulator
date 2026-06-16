@@ -1751,8 +1751,8 @@ func opcodeHash256(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeCodeSeparator stores the current script offset as the most recently
-// seen OP_CODESEPARATOR which is used during signature checking.
+// opcodeCodeSeparator stores the current opcode position as the most recently
+// executed OP_CODESEPARATOR for BIP342-style signature hashing.
 //
 // This opcode does not change the contents of the data stack.
 func opcodeCodeSeparator(op *opcode, data []byte, vm *Engine) error {
@@ -1762,10 +1762,7 @@ func opcodeCodeSeparator(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrReservedOpcode, str)
 	}
 
-	vm.lastCodeSep = int(vm.tokenizer.ByteIndex())
-	if vm.taprootCtx.trackCodeSep {
-		vm.taprootCtx.codeSepPos = uint32(vm.tokenizer.OpcodePosition())
-	}
+	vm.taprootCtx.codeSepPos = uint32(vm.tokenizer.OpcodePosition())
 
 	return nil
 }
@@ -1774,14 +1771,10 @@ func opcodeCodeSeparator(op *opcode, data []byte, vm *Engine) error {
 // signature and replaces them with a bool which indicates if the signature was
 // successfully verified.
 //
-// The process of verifying a signature requires calculating a signature hash in
-// the same way the transaction signer did.  It involves hashing portions of the
-// transaction based on the hash type byte (which is the final byte of the
-// signature) and the portion of the script starting from the most recent
-// OP_CODESEPARATOR (or the beginning of the script if there are none) to the
-// end of the script (with any other OP_CODESEPARATORs removed).  Once this
-// "script hash" is calculated, the signature is checked using standard
-// cryptographic methods against the provided public key.
+// The process of verifying a signature requires calculating the arkade
+// tapscript signature hash in the same way the transaction signer did.  The
+// digest commits to the spending tapleaf hash and the opcode position of the
+// last executed OP_CODESEPARATOR, or math.MaxUint32 if none executed.
 //
 // Stack transformation: [... signature pubkey] -> [... bool]
 func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
@@ -1799,14 +1792,6 @@ func opcodeCheckSig(op *opcode, data []byte, vm *Engine) error {
 	fullSigBytes, err := vm.dstack.PopByteArray()
 	if err != nil {
 		return err
-	}
-
-	// Account for changes in the sig ops budget after this
-	// execution, but only for non-empty signatures.
-	if len(fullSigBytes) > 0 {
-		if err := vm.taprootCtx.tallysigOp(); err != nil {
-			return err
-		}
 	}
 
 	// Empty public keys immediately cause execution to fail.
@@ -1884,15 +1869,6 @@ func opcodeCheckSigAdd(op *opcode, data []byte, vm *Engine) error {
 	sigBytes, err := vm.dstack.PopByteArray()
 	if err != nil {
 		return err
-	}
-
-	// Only non-empty signatures count towards the total tapscript sig op
-	// limit.
-	if len(sigBytes) != 0 {
-		// Account for changes in the sig ops budget after this execution.
-		if err := vm.taprootCtx.tallysigOp(); err != nil {
-			return err
-		}
 	}
 
 	// Empty public keys immediately cause execution to fail.
@@ -2176,6 +2152,12 @@ func opcodeCat(op *opcode, data []byte, vm *Engine) error {
 	x1, err := vm.dstack.PopByteArray()
 	if err != nil {
 		return err
+	}
+
+	if len(x1)+len(x2) > txscript.MaxScriptElementSize {
+		str := fmt.Sprintf("concatenated size %d exceeds max allowed size %d",
+			len(x1)+len(x2), txscript.MaxScriptElementSize)
+		return scriptError(txscript.ErrElementTooBig, str)
 	}
 
 	vm.dstack.PushByteArray(append(x1, x2...))

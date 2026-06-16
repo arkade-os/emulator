@@ -1342,12 +1342,35 @@ func catSpec() *opcodeSpec {
 				inputStack:    [][]byte{{0x01}, {0x02}},
 				expectedStack: [][]byte{{0x01, 0x02}},
 			},
+			{
+				// Concatenating to exactly MaxScriptElementSize (520) is
+				// allowed; only results strictly larger are rejected.
+				name: "result_at_max_element_size",
+				inputStack: [][]byte{
+					bytes.Repeat([]byte{0x01}, 260),
+					bytes.Repeat([]byte{0x02}, 260),
+				},
+				expectedStack: [][]byte{
+					append(bytes.Repeat([]byte{0x01}, 260), bytes.Repeat([]byte{0x02}, 260)...),
+				},
+			},
 		},
 		invalidVectors: []opcodeVector{
 			{
 				name:          "underflow",
 				inputStack:    [][]byte{{0x01}},
 				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				// Two individually valid (<=520 byte) operands whose
+				// concatenation exceeds MaxScriptElementSize (520) must
+				// fail rather than produce an oversized stack element.
+				name: "result_exceeds_max_element_size",
+				inputStack: [][]byte{
+					bytes.Repeat([]byte{0x01}, 300),
+					bytes.Repeat([]byte{0x02}, 300),
+				},
+				expectedError: txscript.ErrElementTooBig,
 			},
 		},
 	}
@@ -1492,6 +1515,7 @@ func byteTransformPropertyChecker(op byte) opcodePropertyChecker {
 				txscript.ErrInvalidIndex,
 				txscript.ErrNumberTooBig,
 				txscript.ErrMinimalData,
+				txscript.ErrElementTooBig,
 			)
 			require.LessOrEqual(t, afterDepth, beforeDepth)
 			return
@@ -4088,7 +4112,7 @@ func installSighashTapContext(vm *Engine, annex []byte) {
 		vm.hashCache = txscript.NewTxSigHashes(&vm.tx, vm.prevOutFetcher)
 	}
 	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
-		txscript.NewBaseTapLeaf(sighashTestLeafScript), 0,
+		txscript.NewBaseTapLeaf(sighashTestLeafScript),
 	)
 	if len(annex) > 0 {
 		vm.taprootCtx.annex = append([]byte(nil), annex...)

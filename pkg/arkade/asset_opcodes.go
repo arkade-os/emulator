@@ -18,8 +18,9 @@ func opcodeInspectNumAssetGroups(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeInspectAssetGroupAssetId pops a group index k and pushes the asset ID (txid, index) for that group.
-// If the group has no AssetId, pushes the current transaction hash and k.
+// opcodeInspectAssetGroupAssetId pops a packet group position k and pushes the
+// canonical AssetID (asset_txid, asset_gidx) of that group. A fresh issuance
+// derives its identity from the current transaction hash and k.
 func opcodeInspectAssetGroupAssetId(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -34,17 +35,9 @@ func opcodeInspectAssetGroupAssetId(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "group index out of range")
 	}
 
-	group := vm.assetPacket[int(k)]
-
-	if group.AssetId == nil {
-		txHash := vm.tx.TxHash()
-		vm.dstack.PushByteArray(txHash[:])
-		vm.dstack.PushInt(scriptNum(k))
-		return nil
-	}
-
-	vm.dstack.PushByteArray(group.AssetId.Txid[:])
-	vm.dstack.PushInt(scriptNum(group.AssetId.Index))
+	id := resolveAssetID(vm.tx.TxHash(), int(k), vm.assetPacket[int(k)])
+	vm.dstack.PushByteArray(id.Txid[:])
+	vm.dstack.PushInt(scriptNum(id.Index))
 	return nil
 }
 
@@ -83,66 +76,39 @@ func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	if group.ControlAsset.Type == asset.AssetRefByGroup {
-		if group.ControlAsset.GroupIndex >= uint16(len(vm.assetPacket)) {
+		k := int(group.ControlAsset.GroupIndex)
+		if k >= len(vm.assetPacket) {
 			return scriptError(txscript.ErrInvalidStackOperation, "control asset group index out of range")
 		}
-		ctrlGroup := vm.assetPacket[group.ControlAsset.GroupIndex]
-		if ctrlGroup.AssetId == nil {
-			// Referenced group is a fresh issuance, use current tx hash and the group index
-			txHash := vm.tx.TxHash()
-			vm.dstack.PushByteArray(txHash[:])
-			vm.dstack.PushInt(scriptNum(group.ControlAsset.GroupIndex))
-			vm.dstack.PushInt(1)
-		} else {
-			vm.dstack.PushByteArray(ctrlGroup.AssetId.Txid[:])
-			vm.dstack.PushInt(scriptNum(ctrlGroup.AssetId.Index))
-			vm.dstack.PushInt(1)
-		}
+		id := resolveAssetID(vm.tx.TxHash(), k, vm.assetPacket[k])
+		vm.dstack.PushByteArray(id.Txid[:])
+		vm.dstack.PushInt(scriptNum(id.Index))
+		vm.dstack.PushInt(1)
 		return nil
 	}
 
 	return scriptError(txscript.ErrInvalidStackOperation, "invalid control asset type")
 }
 
-// opcodeFindAssetGroupByAssetId pops an asset ID (gidx, txid) and searches for
-// the matching group index.
-// Found:   pushes group index, 1.
+// opcodeFindAssetGroupByAssetId pops a canonical AssetID (asset_txid asset_gidx)
+// and searches for the packet group whose resolved canonical AssetID matches.
+// Found:   pushes the packet group position k, 1.
 // Missing: pushes 0, 0.
 func opcodeFindAssetGroupByAssetId(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
 	}
 
-	gidx, err := vm.dstack.PopInt()
+	searchTxid, searchGidx, err := popAssetID(vm)
 	if err != nil {
 		return err
 	}
 
-	txidBytes, err := vm.dstack.PopByteArray()
-	if err != nil {
-		return err
-	}
-
-	if len(txidBytes) != 32 {
-		return scriptError(txscript.ErrInvalidStackOperation, "invalid txid length")
-	}
-
-	var searchTxid chainhash.Hash
-	copy(searchTxid[:], txidBytes)
-
-	for i, group := range vm.assetPacket {
-		if group.AssetId == nil {
-			txHash := vm.tx.TxHash()
-			if txHash.IsEqual(&searchTxid) && scriptNum(i) == gidx {
-				vm.dstack.PushInt(scriptNum(i))
-				vm.dstack.PushInt(1)
-				return nil
-			}
-			continue
-		}
-
-		if group.AssetId.Txid.IsEqual(&searchTxid) && scriptNum(group.AssetId.Index) == gidx {
-			vm.dstack.PushInt(scriptNum(i))
+	txHash := vm.tx.TxHash()
+	for k, group := range vm.assetPacket {
+		id := resolveAssetID(txHash, k, group)
+		if assetIDEqual(id, searchTxid, searchGidx) {
+			vm.dstack.PushInt(scriptNum(k))
 			vm.dstack.PushInt(1)
 			return nil
 		}
@@ -349,7 +315,8 @@ func opcodeInspectOutAssetCount(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeInspectOutAssetAt pops asset index t and output index o, then pushes the asset entry (txid, gidx, amount).
+// opcodeInspectOutAssetAt pops asset index t and output index o, then pushes the
+// asset entry as its canonical AssetID (asset_txid asset_gidx) and amount.
 func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -372,19 +339,13 @@ func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 	txHash := vm.tx.TxHash()
 	idx := 0
 
-	for gidx, group := range vm.assetPacket {
-		var assetTxid chainhash.Hash
-		if group.AssetId == nil {
-			assetTxid = txHash
-		} else {
-			assetTxid = group.AssetId.Txid
-		}
-
+	for k, group := range vm.assetPacket {
+		id := resolveAssetID(txHash, k, group)
 		for _, output := range group.Outputs {
 			if uint32(output.Vout) == uint32(o) {
 				if scriptNum(idx) == t {
-					vm.dstack.PushByteArray(assetTxid[:])
-					vm.dstack.PushInt(scriptNum(gidx))
+					vm.dstack.PushByteArray(id.Txid[:])
+					vm.dstack.PushInt(scriptNum(id.Index))
 					if err := vm.dstack.PushBigNum(BigNumFromUint64(output.Amount)); err != nil {
 						return err
 					}
@@ -398,7 +359,8 @@ func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 	return scriptError(txscript.ErrInvalidStackOperation, "asset index out of range")
 }
 
-// opcodeInspectOutAssetLookup pops gidx, txid, and output index o, then looks up the asset amount.
+// opcodeInspectOutAssetLookup pops a canonical AssetID (asset_txid asset_gidx)
+// and an output index o, then looks up the matching asset output amount.
 // Found:     pushes the amount as a minimally-encoded BigNum, then 1 (success flag).
 // Not found: pushes 0 (BigNum), then 0 (failure flag).
 func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
@@ -406,12 +368,7 @@ func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
 	}
 
-	gidx, err := vm.dstack.PopInt()
-	if err != nil {
-		return err
-	}
-
-	txidBytes, err := vm.dstack.PopByteArray()
+	searchTxid, searchGidx, err := popAssetID(vm)
 	if err != nil {
 		return err
 	}
@@ -421,28 +378,11 @@ func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	if len(txidBytes) != 32 {
-		return scriptError(txscript.ErrInvalidStackOperation, "invalid txid length")
-	}
-
-	var searchTxid chainhash.Hash
-	copy(searchTxid[:], txidBytes)
-
 	txHash := vm.tx.TxHash()
 
-	for groupIdx, group := range vm.assetPacket {
-		if scriptNum(groupIdx) != gidx {
-			continue
-		}
-
-		var assetTxid chainhash.Hash
-		if group.AssetId == nil {
-			assetTxid = txHash
-		} else {
-			assetTxid = group.AssetId.Txid
-		}
-
-		if !assetTxid.IsEqual(&searchTxid) {
+	for k, group := range vm.assetPacket {
+		id := resolveAssetID(txHash, k, group)
+		if !assetIDEqual(id, searchTxid, searchGidx) {
 			continue
 		}
 
@@ -488,7 +428,10 @@ func opcodeInspectInAssetCount(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeInspectInAssetAt pops asset index t and input index i, then pushes the asset entry (txid, gidx, amount).
+// opcodeInspectInAssetAt pops asset index t and input index i, then pushes the
+// asset entry as its canonical AssetID (asset_txid asset_gidx) and amount. The
+// emitted asset_txid is always the asset's issuance transaction ID, never an
+// intent input's intent_txid.
 func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
@@ -511,26 +454,13 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 	txHash := vm.tx.TxHash()
 	idx := 0
 
-	for gidx, group := range vm.assetPacket {
-		var assetTxid chainhash.Hash
-		if group.AssetId == nil {
-			assetTxid = txHash
-		} else {
-			assetTxid = group.AssetId.Txid
-		}
-
+	for k, group := range vm.assetPacket {
+		id := resolveAssetID(txHash, k, group)
 		for _, input := range group.Inputs {
 			if uint32(input.Vin) == uint32(i) {
 				if scriptNum(idx) == t {
-					var inputTxid chainhash.Hash
-					if input.Type == asset.AssetInputTypeIntent {
-						inputTxid = input.Txid
-					} else {
-						inputTxid = assetTxid
-					}
-
-					vm.dstack.PushByteArray(inputTxid[:])
-					vm.dstack.PushInt(scriptNum(gidx))
+					vm.dstack.PushByteArray(id.Txid[:])
+					vm.dstack.PushInt(scriptNum(id.Index))
 					if err := vm.dstack.PushBigNum(BigNumFromUint64(input.Amount)); err != nil {
 						return err
 					}
@@ -544,7 +474,10 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 	return scriptError(txscript.ErrInvalidStackOperation, "asset index out of range")
 }
 
-// opcodeInspectInAssetLookup pops gidx, txid, and input index i, then looks up the asset amount.
+// opcodeInspectInAssetLookup pops a canonical AssetID (asset_txid asset_gidx)
+// and an input index i, then looks up the matching asset input amount. Matching
+// is by canonical AssetID only; an intent input's intent_txid is never accepted
+// as a substitute for the issuance asset_txid.
 // Found:     pushes the amount as a minimally-encoded BigNum, then 1 (success flag).
 // Not found: pushes 0 (BigNum), then 0 (failure flag).
 func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
@@ -552,12 +485,7 @@ func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
 	}
 
-	gidx, err := vm.dstack.PopInt()
-	if err != nil {
-		return err
-	}
-
-	txidBytes, err := vm.dstack.PopByteArray()
+	searchTxid, searchGidx, err := popAssetID(vm)
 	if err != nil {
 		return err
 	}
@@ -567,40 +495,16 @@ func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	if len(txidBytes) != 32 {
-		return scriptError(txscript.ErrInvalidStackOperation, "invalid txid length")
-	}
-
-	var searchTxid chainhash.Hash
-	copy(searchTxid[:], txidBytes)
-
 	txHash := vm.tx.TxHash()
 
-	for groupIdx, group := range vm.assetPacket {
-		if scriptNum(groupIdx) != gidx {
+	for k, group := range vm.assetPacket {
+		id := resolveAssetID(txHash, k, group)
+		if !assetIDEqual(id, searchTxid, searchGidx) {
 			continue
 		}
 
-		var assetTxid chainhash.Hash
-		if group.AssetId == nil {
-			assetTxid = txHash
-		} else {
-			assetTxid = group.AssetId.Txid
-		}
-
 		for _, input := range group.Inputs {
-			if uint32(input.Vin) != uint32(i) {
-				continue
-			}
-
-			var inputTxid chainhash.Hash
-			if input.Type == asset.AssetInputTypeIntent {
-				inputTxid = input.Txid
-			} else {
-				inputTxid = assetTxid
-			}
-
-			if inputTxid.IsEqual(&searchTxid) {
+			if uint32(input.Vin) == uint32(i) {
 				if err := vm.dstack.PushBigNum(BigNumFromUint64(input.Amount)); err != nil {
 					return err
 				}
@@ -667,4 +571,55 @@ func safeSumOutputs(outputs []asset.AssetOutput) *big.Int {
 		sum.Add(sum, new(big.Int).SetUint64(output.Amount))
 	}
 	return sum
+}
+
+// maxAssetGroupIndex is the inclusive upper bound for a canonical asset_gidx,
+// matching the uint16 Asset V1 field.
+const maxAssetGroupIndex = 65535
+
+// resolveAssetID returns the canonical AssetID of the packet group at position k.
+// A group with an explicit AssetId is returned as stored; a fresh issuance
+// derives its identity from the current transaction hash and its packet
+// position. Callers must pass a k already validated to lie in [0, len(packet)),
+// so casting it to the uint16 asset_gidx field is always safe.
+func resolveAssetID(txHash chainhash.Hash, k int, group asset.AssetGroup) asset.AssetId {
+	if group.AssetId != nil {
+		return *group.AssetId
+	}
+	return asset.AssetId{Txid: txHash, Index: uint16(k)}
+}
+
+// popAssetID pops and validates a two-item canonical AssetID from the stack. The
+// items are, from the top, asset_gidx then asset_txid. asset_txid must be
+// exactly 32 bytes and asset_gidx must be a minimally encoded ScriptNum in the
+// range [0, 65535]. Any violation is a script error.
+func popAssetID(vm *Engine) (chainhash.Hash, uint16, error) {
+	var txid chainhash.Hash
+
+	gidx, err := vm.dstack.PopInt()
+	if err != nil {
+		return txid, 0, err
+	}
+
+	txidBytes, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return txid, 0, err
+	}
+
+	if len(txidBytes) != 32 {
+		return txid, 0, scriptError(txscript.ErrInvalidStackOperation, "invalid asset_txid length")
+	}
+
+	if gidx < 0 || gidx > maxAssetGroupIndex {
+		return txid, 0, scriptError(txscript.ErrInvalidStackOperation, "asset_gidx out of range")
+	}
+
+	copy(txid[:], txidBytes)
+	return txid, uint16(gidx), nil
+}
+
+// assetIDEqual reports whether a resolved canonical AssetID equals the supplied
+// (txid, gidx) pair, comparing the complete pair.
+func assetIDEqual(id asset.AssetId, txid chainhash.Hash, gidx uint16) bool {
+	return id.Index == gidx && id.Txid.IsEqual(&txid)
 }

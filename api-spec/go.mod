@@ -1,6 +1,6 @@
 module github.com/arkade-os/emulator/api-spec
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/meshapi/grpc-api-gateway v0.1.0

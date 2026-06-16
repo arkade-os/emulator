@@ -31,13 +31,13 @@ const (
 
 const (
 	// blankCodeSepValue is the value of the code separator position in the
-	// tapscript sighash when no code separator was found in the script.
-	blankCodeSepValue = math.MaxUint32
+	// tapscript sighash when no code separator was executed in the script.
+	blankCodeSepValue uint32 = math.MaxUint32
 )
 
 // taprootExecutionCtx houses the special context-specific information we need
-// to validate a taproot script spend. This includes the annex, the running sig
-// op count tally, and other relevant information.
+// to validate a taproot script spend. This includes the annex, the per-input
+// opcode-group execution budgets, and other relevant information.
 type taprootExecutionCtx struct {
 	annex []byte
 
@@ -46,47 +46,25 @@ type taprootExecutionCtx struct {
 	tapLeaf     txscript.TapLeaf
 	tapLeafHash chainhash.Hash
 
-	sigOpsBudget int32
+	// opCounts tracks how many times each limited opcode has executed for this
+	// input. It is allocated lazily on the first charge.
+	opCounts map[byte]int
 
 	mustSucceed bool
-
-	trackCodeSep bool
-}
-
-// sigOpsDelta is both the starting budget for sig ops for tapscript
-// verification, as well as the decrease in the total budget when we encounter
-// a signature.
-const sigOpsDelta = 50
-
-// tallysigOp attempts to decrease the current sig ops budget by sigOpsDelta.
-// An error is returned if after subtracting the delta, the budget is below
-// zero.
-func (t *taprootExecutionCtx) tallysigOp() error {
-	t.sigOpsBudget -= sigOpsDelta
-
-	if t.sigOpsBudget < 0 {
-		return scriptError(txscript.ErrTaprootMaxSigOps, "")
-	}
-
-	return nil
 }
 
 // newTaprootExecutionCtx returns a fresh instance of the taproot execution
 // context.
-func newTaprootExecutionCtx(inputWitnessSize int32) *taprootExecutionCtx {
+func newTaprootExecutionCtx() *taprootExecutionCtx {
 	return &taprootExecutionCtx{
-		codeSepPos:   blankCodeSepValue,
-		sigOpsBudget: sigOpsDelta + inputWitnessSize,
-		trackCodeSep: true,
+		codeSepPos: blankCodeSepValue,
 	}
 }
 
 // newTaprootExecutionCtxForLeaf returns a fresh taproot execution context for
 // the given tapscript leaf.
-func newTaprootExecutionCtxForLeaf(
-	tapLeaf txscript.TapLeaf, inputWitnessSize int32,
-) *taprootExecutionCtx {
-	ctx := newTaprootExecutionCtx(inputWitnessSize)
+func newTaprootExecutionCtxForLeaf(tapLeaf txscript.TapLeaf) *taprootExecutionCtx {
+	ctx := newTaprootExecutionCtx()
 	ctx.tapLeaf = tapLeaf
 	ctx.tapLeafHash = tapLeaf.TapHash()
 	return ctx
@@ -140,9 +118,6 @@ type Engine struct {
 	// the current program counter.  Note that it differs from the actual byte
 	// index into the script and is really only used for disassembly purposes.
 	//
-	// lastCodeSep specifies the position within the current script of the last
-	// OP_CODESEPARATOR.
-	//
 	// tokenizer provides the token stream of the current script being executed
 	// and doubles as state tracking for the program counter within the script.
 	//
@@ -157,7 +132,6 @@ type Engine struct {
 	scripts        [][]byte
 	scriptIdx      int
 	opcodeIdx      int
-	lastCodeSep    int
 	tokenizer      ScriptTokenizer
 	dstack         stack
 	astack         stack
@@ -166,6 +140,11 @@ type Engine struct {
 	witnessProgram []byte
 	inputAmount    int64
 	taprootCtx     *taprootExecutionCtx
+
+	// limits is the per-input opcode-execution compute brake. NewEngine sets it
+	// to DefaultComputeLimits; it may be replaced before execution via
+	// WithComputeLimits.
+	limits ComputeLimits
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -327,7 +306,34 @@ func (vm *Engine) executeOpcode(op *opcode, data []byte) error {
 		}
 	}
 
+	if err := vm.chargeOpcode(op.value); err != nil {
+		return err
+	}
+
 	return op.opfunc(op, data, vm)
+}
+
+// chargeOpcode counts one execution of op and returns an error once op exceeds
+// its configured per-input limit. Opcodes with no limit, and executions outside
+// a tapscript context, are never charged.
+func (vm *Engine) chargeOpcode(op byte) error {
+	if vm.taprootCtx == nil {
+		return nil
+	}
+	limit, ok := vm.limits[op]
+	if !ok {
+		return nil
+	}
+	if vm.taprootCtx.opCounts == nil {
+		vm.taprootCtx.opCounts = make(map[byte]int)
+	}
+	vm.taprootCtx.opCounts[op]++
+	if vm.taprootCtx.opCounts[op] > limit {
+		return scriptError(txscript.ErrScriptTooBig,
+			fmt.Sprintf("opcode %s exceeded execution limit of %d",
+				opcodeArray[op].name, limit))
+	}
+	return nil
 }
 
 // checkValidPC returns an error if the current script position is not valid for
@@ -365,9 +371,7 @@ func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
 
 	// At this point, we know taproot is active, so we'll populate
 	// the taproot execution context.
-	vm.taprootCtx = newTaprootExecutionCtx(
-		int32(witness.SerializeSize()),
-	)
+	vm.taprootCtx = newTaprootExecutionCtx()
 
 	// If we can detect the annex, then drop that off the stack,
 	// we'll only need it to compute the sighash later.
@@ -660,7 +664,6 @@ func (vm *Engine) Step() (done bool, err error) {
 			vm.scriptIdx++
 		}
 
-		vm.lastCodeSep = 0
 		if vm.scriptIdx >= len(vm.scripts) {
 			return true, nil
 		}
@@ -824,6 +827,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		hashCache:      hashCache,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
+		limits:         DefaultComputeLimits(),
 	}
 
 	// The signature script must only contain data pushes.

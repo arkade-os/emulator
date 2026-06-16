@@ -1,6 +1,6 @@
 module github.com/arkade-os/emulator/pkg/client
 
-go 1.26.3
+go 1.26.4
 
 replace github.com/arkade-os/emulator/api-spec => ../../api-spec
 

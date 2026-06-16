@@ -35,6 +35,36 @@ func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	}
 }
 
+// WithComputeLimits applies partial per-input opcode-execution compute-limit
+// overrides for this execution. The overrides are applied on top of
+// DefaultComputeLimits, so opcodes absent from c keep their defaults. A nil map
+// means no override; the engine keeps its current limits.
+func WithComputeLimits(c ComputeLimits) ExecuteOption {
+	return func(engine *Engine) {
+		if c == nil {
+			return
+		}
+		limits := DefaultComputeLimits()
+		for op, limit := range c {
+			limits[op] = limit
+		}
+		engine.limits = limits
+	}
+}
+
+// WithExactComputeLimits replaces the compute-limit table exactly. Opcodes
+// absent from c are unlimited. This is intended for already-resolved
+// configuration tables; most callers should use WithComputeLimits for partial
+// overrides.
+func WithExactComputeLimits(c ComputeLimits) ExecuteOption {
+	return func(engine *Engine) {
+		if c == nil {
+			return
+		}
+		engine.limits = cloneComputeLimits(c)
+	}
+}
+
 // ArkPrevOutFetcher extends txscript.PrevOutputFetcher with the ability to
 // look up previous ark transactions by outpoint. Both methods are keyed by
 // the spending input's outpoint but serve different purposes:
@@ -148,12 +178,7 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 		return fmt.Errorf("failed to create engine: %w", err)
 	}
 
-	engine.taprootCtx = newTaprootExecutionCtxForLeaf(
-		s.spendingTapLeaf, int32(s.witness.SerializeSize()),
-	)
-	// Arkade scripts execute from the emulator packet, not from the
-	// spending tapleaf whose hash the sighash commits to.
-	engine.taprootCtx.trackCodeSep = false
+	engine.taprootCtx = newTaprootExecutionCtxForLeaf(s.spendingTapLeaf)
 
 	for _, opt := range opts {
 		opt(engine)

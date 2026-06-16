@@ -88,6 +88,23 @@ func TestAssetOpcodes(t *testing.T) {
 		},
 	}
 
+	// Packet whose control asset references a fresh issuance by packet group
+	// index, so its canonical AssetID resolves to (txHash, referenced position).
+	ctrlByGroupFreshPacket := asset.Packet{
+		{
+			AssetId: nil, // fresh issuance at packet position 0
+			Outputs: []asset.AssetOutput{{Vout: 0, Amount: 100}},
+		},
+		{
+			AssetId: nil, // fresh issuance whose control references group 0
+			ControlAsset: &asset.AssetRef{
+				Type:       asset.AssetRefByGroup,
+				GroupIndex: 0,
+			},
+			Outputs: []asset.AssetOutput{{Vout: 1, Amount: 200}},
+		},
+	}
+
 	// Packet with amounts exceeding the former scriptNum 4-byte limit (2^31-1).
 	// Group 0: existing asset, 2 inputs totaling 10B, 1 output of 3B.
 	largeAmountPacket := asset.Packet{
@@ -129,6 +146,26 @@ func TestAssetOpcodes(t *testing.T) {
 		},
 	}
 
+	// Packet with two groups that share the same asset_txid but have distinct
+	// canonical asset_gidx values, at packet positions unrelated to either
+	// canonical index. Group 2 is a fresh issuance at a nonzero packet position.
+	sameTxidPacket := asset.Packet{
+		{
+			AssetId: &asset.AssetId{Txid: assetTxid, Index: 10},
+			Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 111}},
+			Outputs: []asset.AssetOutput{{Vout: 0, Amount: 111}},
+		},
+		{
+			AssetId: &asset.AssetId{Txid: assetTxid, Index: 20},
+			Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 1, Amount: 222}},
+			Outputs: []asset.AssetOutput{{Vout: 1, Amount: 222}},
+		},
+		{
+			AssetId: nil, // fresh issuance at packet position 2
+			Outputs: []asset.AssetOutput{{Vout: 1, Amount: 333}},
+		},
+	}
+
 	// Packet with metadata.
 	md1, _ := asset.NewMetadata("name", "TestToken")
 	md2, _ := asset.NewMetadata("symbol", "TT")
@@ -140,7 +177,6 @@ func TestAssetOpcodes(t *testing.T) {
 			Metadata: []asset.Metadata{*md1, *md2},
 		},
 	}
-
 	// Compute expected metadata hash.
 	expectedMetadataHash, _ := computeMetadataMerkleRoot(metadataPacket[0].Metadata)
 
@@ -170,6 +206,7 @@ func TestAssetOpcodes(t *testing.T) {
 			{Value: 300, PkScript: nil},
 		},
 	}
+	simpleTxHash := simpleTx.TxHash()
 
 	type testCase struct {
 		valid       bool
@@ -220,18 +257,14 @@ func TestAssetOpcodes(t *testing.T) {
 		{
 			name: "OP_INSPECTASSETGROUPASSETID_fresh_issuance",
 			// For fresh issuance (nil AssetId), the opcode pushes the current tx hash and the group index.
-			// We verify the group index == 1 using EQUALVERIFY, then drop the txid with TRUE.
+			// Verify both components of the derived canonical AssetID exactly.
 			script: txscript.NewScriptBuilder().
 				AddInt64(1). // group index (fresh issuance)
 				AddOp(OP_INSPECTASSETGROUPASSETID).
 				AddInt64(1). // expected group index as gidx
 				AddOp(OP_EQUALVERIFY).
-				// txid is the tx hash - just check it's 32 bytes via SIZE
-				AddOp(OP_SIZE).
-				AddInt64(32).
-				AddOp(OP_EQUALVERIFY).
-				AddOp(OP_DROP). // drop the txid
-				AddOp(OP_TRUE),
+				AddData(simpleTxHash[:]).
+				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
 			},
@@ -583,15 +616,16 @@ func TestAssetOpcodes(t *testing.T) {
 		{
 			name: "OP_INSPECTOUTASSETAT_output0_first",
 			// Output 0, asset 0: from group 0 (existing asset).
+			// Emits the canonical asset_gidx (3), not the packet position (0).
 			script: txscript.NewScriptBuilder().
 				AddInt64(0). // output index
 				AddInt64(0). // asset index
 				AddOp(OP_INSPECTOUTASSETAT).
 				AddInt64(800). // amount
 				AddOp(OP_EQUALVERIFY).
-				AddInt64(0). // gidx (group index in packet)
+				AddInt64(3). // canonical asset_gidx (issuance index)
 				AddOp(OP_EQUALVERIFY).
-				AddData(assetTxid[:]). // txid
+				AddData(assetTxid[:]). // asset_txid
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -613,8 +647,8 @@ func TestAssetOpcodes(t *testing.T) {
 			name: "OP_INSPECTOUTASSETLOOKUP_found",
 			script: txscript.NewScriptBuilder().
 				AddInt64(0).           // output index
-				AddData(assetTxid[:]). // txid
-				AddInt64(0).           // gidx (group index in packet)
+				AddData(assetTxid[:]). // asset_txid
+				AddInt64(3).           // canonical asset_gidx
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
@@ -626,10 +660,12 @@ func TestAssetOpcodes(t *testing.T) {
 		},
 		{
 			name: "OP_INSPECTOUTASSETLOOKUP_not_found",
+			// Canonical AssetID (assetTxid, 3) exists but its only output is at
+			// vout 0, so a lookup at output 1 returns absent.
 			script: txscript.NewScriptBuilder().
 				AddInt64(1).           // output 1
-				AddData(assetTxid[:]). // txid
-				AddInt64(0).           // gidx 0
+				AddData(assetTxid[:]). // asset_txid
+				AddInt64(3).           // canonical asset_gidx
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
 				AddOp(OP_NOT). // flag=0 → NOT → true
 				AddOp(OP_VERIFY).
@@ -681,16 +717,16 @@ func TestAssetOpcodes(t *testing.T) {
 		{
 			name: "OP_INSPECTINASSETAT_local",
 			// Input 0, asset 0: local input from group 0.
-			// For local inputs, txid = group's asset txid.
+			// Emits the canonical AssetID (asset_txid, asset_gidx=3).
 			script: txscript.NewScriptBuilder().
 				AddInt64(0). // input index
 				AddInt64(0). // asset index
 				AddOp(OP_INSPECTINASSETAT).
 				AddInt64(500). // amount
 				AddOp(OP_EQUALVERIFY).
-				AddInt64(0). // gidx (group index)
+				AddInt64(3). // canonical asset_gidx
 				AddOp(OP_EQUALVERIFY).
-				AddData(assetTxid[:]). // txid (group's asset txid for local)
+				AddData(assetTxid[:]). // asset_txid
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -699,16 +735,16 @@ func TestAssetOpcodes(t *testing.T) {
 		{
 			name: "OP_INSPECTINASSETAT_intent",
 			// Input 1, asset 0: intent input from group 0.
-			// For intent inputs, txid = intent txid.
+			// Emits the canonical issuance AssetID, never the intent_txid.
 			script: txscript.NewScriptBuilder().
 				AddInt64(1). // input index
 				AddInt64(0). // asset index
 				AddOp(OP_INSPECTINASSETAT).
 				AddInt64(300). // amount
 				AddOp(OP_EQUALVERIFY).
-				AddInt64(0). // gidx (group index)
+				AddInt64(3). // canonical asset_gidx
 				AddOp(OP_EQUALVERIFY).
-				AddData(intentTxid[:]). // txid (intent txid)
+				AddData(assetTxid[:]). // canonical asset_txid (not intent_txid)
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: twoGroupPacket},
@@ -728,11 +764,11 @@ func TestAssetOpcodes(t *testing.T) {
 		// ========== OP_INSPECTINASSETLOOKUP ==========
 		{
 			name: "OP_INSPECTINASSETLOOKUP_local_found",
-			// Lookup local input: input 0, group 0 asset txid => 500.
+			// Lookup local input: input 0, canonical AssetID => 500.
 			script: txscript.NewScriptBuilder().
 				AddInt64(0).           // input index
-				AddData(assetTxid[:]). // txid (group's asset txid for local)
-				AddInt64(0).           // gidx
+				AddData(assetTxid[:]). // asset_txid
+				AddInt64(3).           // canonical asset_gidx
 				AddOp(OP_INSPECTINASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
@@ -744,11 +780,11 @@ func TestAssetOpcodes(t *testing.T) {
 		},
 		{
 			name: "OP_INSPECTINASSETLOOKUP_intent_found",
-			// Lookup intent input: input 1, intent txid => 300.
+			// Lookup intent input by its canonical AssetID => 300.
 			script: txscript.NewScriptBuilder().
-				AddInt64(1).            // input index
-				AddData(intentTxid[:]). // txid (intent txid)
-				AddInt64(0).            // gidx
+				AddInt64(1).           // input index
+				AddData(assetTxid[:]). // canonical asset_txid (not intent_txid)
+				AddInt64(3).           // canonical asset_gidx
 				AddOp(OP_INSPECTINASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
@@ -759,11 +795,28 @@ func TestAssetOpcodes(t *testing.T) {
 			},
 		},
 		{
+			name: "OP_INSPECTINASSETLOOKUP_intent_txid_rejected",
+			// Supplying the intent_txid instead of the canonical asset_txid
+			// must not match: returns absent.
+			script: txscript.NewScriptBuilder().
+				AddInt64(1).            // input index
+				AddData(intentTxid[:]). // intent_txid, not a valid AssetID
+				AddInt64(3).            // correct canonical asset_gidx
+				AddOp(OP_INSPECTINASSETLOOKUP).
+				AddOp(OP_NOT). // flag=0 → NOT → true
+				AddOp(OP_VERIFY).
+				AddInt64(0). // expected dummy 0
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: twoGroupPacket},
+			},
+		},
+		{
 			name: "OP_INSPECTINASSETLOOKUP_not_found",
 			script: txscript.NewScriptBuilder().
 				AddInt64(0).           // input index
-				AddData(assetTxid[:]). // txid
-				AddInt64(5).           // wrong gidx
+				AddData(assetTxid[:]). // asset_txid
+				AddInt64(5).           // wrong canonical asset_gidx
 				AddOp(OP_INSPECTINASSETLOOKUP).
 				AddOp(OP_NOT). // flag=0 → NOT → true
 				AddOp(OP_VERIFY).
@@ -864,9 +917,9 @@ func TestAssetOpcodes(t *testing.T) {
 				AddInt64(2_000_000_000).      // threshold
 				AddOp(OP_GREATERTHANOREQUAL). // 3B >= 2B → true
 				AddOp(OP_VERIFY).
-				AddInt64(0). // gidx
+				AddInt64(3). // canonical asset_gidx
 				AddOp(OP_EQUALVERIFY).
-				AddData(assetTxid[:]). // txid
+				AddData(assetTxid[:]). // asset_txid
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: largeAmountPacket},
@@ -877,8 +930,8 @@ func TestAssetOpcodes(t *testing.T) {
 			// Lookup with large amount returns amount.
 			script: txscript.NewScriptBuilder().
 				AddInt64(0).           // output index
-				AddData(assetTxid[:]). // txid
-				AddInt64(0).           // gidx
+				AddData(assetTxid[:]). // asset_txid
+				AddInt64(3).           // canonical asset_gidx
 				AddOp(OP_INSPECTOUTASSETLOOKUP).
 				AddOp(OP_1). // verify success flag
 				AddOp(OP_EQUALVERIFY).
@@ -886,6 +939,264 @@ func TestAssetOpcodes(t *testing.T) {
 				AddOp(OP_EQUAL),
 			cases: []testCase{
 				{valid: true, assetPacket: largeAmountPacket},
+			},
+		},
+
+		// ========== Canonical AssetID: same txid, distinct canonical gidx ==========
+		{
+			name: "canonical_find_first_of_shared_txid",
+			// (assetTxid, 10) resolves to packet position 0.
+			script: txscript.NewScriptBuilder().
+				AddData(assetTxid[:]).
+				AddInt64(10).
+				AddOp(OP_FINDASSETGROUPBYASSETID).
+				AddOp(OP_1).
+				AddOp(OP_EQUALVERIFY).
+				AddInt64(0). // packet position k
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_find_second_of_shared_txid",
+			// (assetTxid, 20) resolves to packet position 1.
+			script: txscript.NewScriptBuilder().
+				AddData(assetTxid[:]).
+				AddInt64(20).
+				AddOp(OP_FINDASSETGROUPBYASSETID).
+				AddOp(OP_1).
+				AddOp(OP_EQUALVERIFY).
+				AddInt64(1). // packet position k
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_out_at_emits_canonical_gidx",
+			// Output 1's first entry belongs to packet group 1 with canonical gidx 20.
+			script: txscript.NewScriptBuilder().
+				AddInt64(1). // output index
+				AddInt64(0). // asset index
+				AddOp(OP_INSPECTOUTASSETAT).
+				AddInt64(222). // amount
+				AddOp(OP_EQUALVERIFY).
+				AddInt64(20). // canonical asset_gidx (not packet position 1)
+				AddOp(OP_EQUALVERIFY).
+				AddData(assetTxid[:]).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_out_lookup_wrong_gidx_absent",
+			// Output 0 carries (assetTxid, 10), not (assetTxid, 20).
+			script: txscript.NewScriptBuilder().
+				AddInt64(0). // output index
+				AddData(assetTxid[:]).
+				AddInt64(20). // canonical asset_gidx of the other group
+				AddOp(OP_INSPECTOUTASSETLOOKUP).
+				AddOp(OP_NOT).
+				AddOp(OP_VERIFY).
+				AddInt64(0).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_out_lookup_wrong_txid_absent",
+			// Right canonical gidx, wrong issuance txid.
+			script: txscript.NewScriptBuilder().
+				AddInt64(0). // output index
+				AddData(ctrlTxid[:]).
+				AddInt64(10).
+				AddOp(OP_INSPECTOUTASSETLOOKUP).
+				AddOp(OP_NOT).
+				AddOp(OP_VERIFY).
+				AddInt64(0).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_out_lookup_wrong_output_absent",
+			// Valid AssetID (assetTxid, 10) but requested at output 99.
+			script: txscript.NewScriptBuilder().
+				AddInt64(99). // output index
+				AddData(assetTxid[:]).
+				AddInt64(10).
+				AddOp(OP_INSPECTOUTASSETLOOKUP).
+				AddOp(OP_NOT).
+				AddOp(OP_VERIFY).
+				AddInt64(0).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+
+		// ========== Fresh issuance at nonzero packet position ==========
+		{
+			name: "canonical_fresh_issuance_group_resolution_round_trip",
+			// k OP_INSPECTASSETGROUPASSETID => txHash k ; feeding it back into
+			// OP_FINDASSETGROUPBYASSETID recovers the same packet position.
+			script: txscript.NewScriptBuilder().
+				AddInt64(2). // packet position of the fresh issuance
+				AddOp(OP_INSPECTASSETGROUPASSETID).
+				// stack: asset_txid asset_gidx
+				AddOp(OP_FINDASSETGROUPBYASSETID).
+				AddOp(OP_1).
+				AddOp(OP_EQUALVERIFY).
+				AddInt64(2). // recovered packet position k
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_fresh_issuance_output_round_trip",
+			// OUTASSETAT emits the fresh issuance's canonical ID; that ID is
+			// directly consumable by OUTASSETLOOKUP at the same output.
+			script: txscript.NewScriptBuilder().
+				AddInt64(1). // output index
+				AddInt64(1). // second asset entry is the fresh issuance
+				AddOp(OP_INSPECTOUTASSETAT).
+				// stack: asset_txid asset_gidx amount
+				AddInt64(333).
+				AddOp(OP_EQUALVERIFY).
+				// stack: asset_txid asset_gidx ; build "o asset_txid asset_gidx".
+				AddInt64(1).
+				AddOp(OP_ROT).
+				AddOp(OP_ROT).
+				AddOp(OP_INSPECTOUTASSETLOOKUP).
+				AddOp(OP_1).
+				AddOp(OP_EQUALVERIFY).
+				AddInt64(333).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+
+		// ========== Canonical AssetID operand validation ==========
+		{
+			name: "canonical_find_negative_gidx_error",
+			// OP_2DROP OP_TRUE makes the non-error path succeed, so failure can
+			// only come from operand validation rejecting the negative gidx.
+			script: txscript.NewScriptBuilder().
+				AddData(assetTxid[:]).
+				AddInt64(-1).
+				AddOp(OP_FINDASSETGROUPBYASSETID).
+				AddOp(OP_2DROP).
+				AddOp(OP_TRUE),
+			cases: []testCase{
+				{valid: false, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_find_gidx_too_large_error",
+			script: txscript.NewScriptBuilder().
+				AddData(assetTxid[:]).
+				AddInt64(65536). // exceeds uint16 ceiling
+				AddOp(OP_FINDASSETGROUPBYASSETID).
+				AddOp(OP_2DROP).
+				AddOp(OP_TRUE),
+			cases: []testCase{
+				{valid: false, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_find_gidx_max_ok",
+			// 65535 is in range; a well-formed but absent AssetID returns 0 0.
+			script: txscript.NewScriptBuilder().
+				AddData(assetTxid[:]).
+				AddInt64(65535).
+				AddOp(OP_FINDASSETGROUPBYASSETID).
+				AddOp(OP_NOT).
+				AddOp(OP_VERIFY).
+				AddInt64(0).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_find_gidx_oversized_error",
+			// A 5-byte ScriptNum exceeds the 4-byte numeric limit.
+			script: txscript.NewScriptBuilder().
+				AddData(assetTxid[:]).
+				AddData([]byte{0x01, 0x00, 0x00, 0x00, 0x00}).
+				AddOp(OP_FINDASSETGROUPBYASSETID),
+			cases: []testCase{
+				{valid: false, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_find_gidx_non_minimal_error",
+			// 10 with a redundant trailing zero byte is non-minimal.
+			script: txscript.NewScriptBuilder().
+				AddData(assetTxid[:]).
+				AddData([]byte{0x0a, 0x00}).
+				AddOp(OP_FINDASSETGROUPBYASSETID),
+			cases: []testCase{
+				{valid: false, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_find_txid_wrong_length_error",
+			script: txscript.NewScriptBuilder().
+				AddData(make([]byte, 31)). // not 32 bytes
+				AddInt64(10).
+				AddOp(OP_FINDASSETGROUPBYASSETID),
+			cases: []testCase{
+				{valid: false, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_out_lookup_gidx_too_large_error",
+			script: txscript.NewScriptBuilder().
+				AddInt64(5). // output index
+				AddData(assetTxid[:]).
+				AddInt64(65536).
+				AddOp(OP_INSPECTOUTASSETLOOKUP).
+				AddOp(OP_2DROP).
+				AddOp(OP_TRUE),
+			cases: []testCase{
+				{valid: false, assetPacket: sameTxidPacket},
+			},
+		},
+		{
+			name: "canonical_in_lookup_txid_wrong_length_error",
+			script: txscript.NewScriptBuilder().
+				AddInt64(5).               // input index
+				AddData(make([]byte, 33)). // not 32 bytes
+				AddInt64(10).
+				AddOp(OP_INSPECTINASSETLOOKUP),
+			cases: []testCase{
+				{valid: false, assetPacket: sameTxidPacket},
+			},
+		},
+
+		// ========== Control asset canonical resolution ==========
+		{
+			name: "canonical_ctrl_by_group_fresh_issuance",
+			// Group 1's control references group 0 by packet index; group 0 is a
+			// fresh issuance, so the control AssetID resolves to (txHash, 0).
+			script: txscript.NewScriptBuilder().
+				AddInt64(1).
+				AddOp(OP_INSPECTASSETGROUPCTRL).
+				AddOp(OP_1).
+				AddOp(OP_EQUALVERIFY).
+				AddInt64(0). // canonical asset_gidx of the referenced fresh issuance
+				AddOp(OP_EQUALVERIFY).
+				AddData(simpleTxHash[:]).
+				AddOp(OP_EQUAL),
+			cases: []testCase{
+				{valid: true, assetPacket: ctrlByGroupFreshPacket},
 			},
 		},
 	}
