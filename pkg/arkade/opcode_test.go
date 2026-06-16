@@ -271,6 +271,12 @@ var opcodeSpecs = [256]*opcodeSpec{
 		"76a56aced915d2513dcd84c2c378b2e8aa5cd632b5b71ca2f2ac5b0e3a649bdb",
 		32,
 	),
+	OP_KECCAK256: hashSpec(
+		OP_KECCAK256,
+		"0102",
+		"22ae6da6b482f9b1b19b0b897c3fd43884180a1c5ee361e1107a1bc635649dda",
+		32,
+	),
 	OP_CODESEPARATOR:  noContextReservedSpec(OP_CODESEPARATOR, nil),
 	OP_CHECKSIG:       noContextReservedSpec(OP_CHECKSIG, [][]byte{nil, nil}),
 	OP_CHECKSIGVERIFY: noContextReservedSpec(OP_CHECKSIGVERIFY, [][]byte{nil, nil}),
@@ -344,7 +350,6 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_UNKNOWN192:                    invalidSpec(OP_UNKNOWN192),
 	OP_UNKNOWN193:                    invalidSpec(OP_UNKNOWN193),
 	OP_UNKNOWN194:                    invalidSpec(OP_UNKNOWN194),
-	OP_UNKNOWN195:                    invalidSpec(OP_UNKNOWN195),
 	OP_UNKNOWN208:                    invalidSpec(OP_UNKNOWN208),
 	OP_INSPECTPACKET:                 inspectPacketSpec(),
 	OP_INSPECTINPUTPACKET:            inspectInputPacketSpec(),
@@ -5346,4 +5351,31 @@ func TestOpcodeModexpSmoke(t *testing.T) {
 	require.Equal(t, "OP_MODEXP", opcodeArray[OP_MODEXP].name)
 	require.Equal(t, 1, opcodeArray[OP_MODEXP].length)
 	require.NotNil(t, opcodeArray[OP_MODEXP].opfunc)
+}
+
+// keccak256 runs OP_KECCAK256 over the given input and returns the resulting
+// top-of-stack digest.
+func keccak256ViaOpcode(t *testing.T, input []byte) []byte {
+	t.Helper()
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack([][]byte{input})
+	require.NoError(t, invokeOpcodeWithData(OP_KECCAK256, nil, vm))
+	stack := vm.GetStack()
+	require.Len(t, stack, 1)
+	return stack[0]
+}
+
+// TestOpcodeKeccak256EmptyInput pins the empty-input vector, which the shared
+// hashSpec (fixed non-empty input) does not exercise. Together with the
+// hashSpec "0102" vector these are known-answer tests against canonical
+// Ethereum Keccak-256 outputs, so any wrong implementation (including a swap to
+// NIST SHA3-256) fails them.
+func TestOpcodeKeccak256EmptyInput(t *testing.T) {
+	t.Parallel()
+
+	const empty = "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+	got := keccak256ViaOpcode(t, []byte{})
+	require.Equal(t, empty, hex.EncodeToString(got))
 }

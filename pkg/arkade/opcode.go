@@ -15,6 +15,7 @@ import (
 
 	//nolint:staticcheck
 	"golang.org/x/crypto/ripemd160"
+	"golang.org/x/crypto/sha3"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -239,7 +240,7 @@ const (
 	OP_UNKNOWN192          = 0xc0 // 192
 	OP_UNKNOWN193          = 0xc1 // 193
 	OP_UNKNOWN194          = 0xc2 // 194
-	OP_UNKNOWN195          = 0xc3 // 195
+	OP_KECCAK256           = 0xc3 // 195
 	OP_SHA256INITIALIZE    = 0xc4 // 196
 	OP_SHA256UPDATE        = 0xc5 // 197
 	OP_SHA256FINALIZE      = 0xc6 // 198
@@ -540,7 +541,7 @@ var opcodeArray = [256]opcode{
 	OP_UNKNOWN192: {OP_UNKNOWN192, "OP_UNKNOWN192", 1, opcodeInvalid},
 	OP_UNKNOWN193: {OP_UNKNOWN193, "OP_UNKNOWN193", 1, opcodeInvalid},
 	OP_UNKNOWN194: {OP_UNKNOWN194, "OP_UNKNOWN194", 1, opcodeInvalid},
-	OP_UNKNOWN195: {OP_UNKNOWN195, "OP_UNKNOWN195", 1, opcodeInvalid},
+	OP_KECCAK256:  {OP_KECCAK256, "OP_KECCAK256", 1, opcodeKeccak256},
 	// Streaming opcodes
 	OP_SHA256INITIALIZE: {OP_SHA256INITIALIZE, "OP_SHA256INITIALIZE", 1, opcodeSha256Initialize},
 	OP_SHA256UPDATE:     {OP_SHA256UPDATE, "OP_SHA256UPDATE", 1, opcodeSha256Update},
@@ -1719,6 +1720,23 @@ func opcodeSha256(op *opcode, data []byte, vm *Engine) error {
 
 	hash := sha256.Sum256(buf)
 	vm.dstack.PushByteArray(hash[:])
+	return nil
+}
+
+// opcodeKeccak256 treats the top item of the data stack as raw bytes and
+// replaces it with the Ethereum-compatible Keccak-256 digest (legacy Keccak,
+// NOT NIST SHA3-256).
+//
+// Stack transformation: [... x1] -> [... keccak256(x1)]
+func opcodeKeccak256(op *opcode, data []byte, vm *Engine) error {
+	buf, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	h := sha3.NewLegacyKeccak256()
+	h.Write(buf)
+	vm.dstack.PushByteArray(h.Sum(nil))
 	return nil
 }
 
