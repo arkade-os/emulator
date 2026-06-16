@@ -2154,6 +2154,12 @@ func opcodeCat(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
+	if len(x1)+len(x2) > txscript.MaxScriptElementSize {
+		str := fmt.Sprintf("concatenated size %d exceeds max allowed size %d",
+			len(x1)+len(x2), txscript.MaxScriptElementSize)
+		return scriptError(txscript.ErrElementTooBig, str)
+	}
+
 	vm.dstack.PushByteArray(append(x1, x2...))
 	return nil
 }
