@@ -52,5 +52,50 @@ build-all:
 lint:
 	golangci-lint run --fix
 
+# === QEMU enclave integration test ===
+# Thin wrappers around `enclave test {build,init,start,down}` from the
+# introspector-enclave CLI (must be on $PATH). `make enclave-test` runs
+# the full loop: build EIF, scaffold compose + ensure mock-arkd is wired
+# in, boot the stack, run integration-test.sh, tear down.
+.PHONY: enclave-test enclave-test-build enclave-test-init enclave-test-start enclave-test-down
+
+define MOCK_ARKD_BLOCK
+
+    mock-arkd:
+        build:
+            context: ../../
+            dockerfile: enclave/test/mock-arkd/Dockerfile
+        network_mode: host
+        environment:
+            MOCK_ARKD_ADDR: ":8081"
+        healthcheck:
+            test: ["CMD-SHELL", "/usr/local/bin/grpcurl -plaintext -max-time 2 localhost:8081 list"]
+            interval: 5s
+            timeout: 3s
+            retries: 5
+endef
+export MOCK_ARKD_BLOCK
+
+enclave-test: enclave-test-build enclave-test-init enclave-test-start
+	@./enclave/test/integration-test.sh
+	@$(MAKE) enclave-test-down
+
+enclave-test-build:
+	@enclave test build
+
+# `enclave test init` is merge-only-new on the compose file; the grep
+# guard keeps the mock-arkd append idempotent across re-runs.
+enclave-test-init:
+	@enclave test init
+	@if ! grep -q '^    mock-arkd:' enclave/test/docker-compose.yml; then \
+	  echo "$$MOCK_ARKD_BLOCK" >> enclave/test/docker-compose.yml; \
+	fi
+
+enclave-test-start:
+	@enclave test start
+
+enclave-test-down:
+	@enclave test down
+
 format:
 	@go fmt ./...

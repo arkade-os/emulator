@@ -1,0 +1,115 @@
+name: Release EIF
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag version (e.g. v0.0.29)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release-eif:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version: '$VERSION' (expected vX.Y.Z)"
+            exit 1
+          fi
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag $VERSION already exists on origin"
+            exit 1
+          fi
+
+          echo "Version $VERSION validated."
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install enclave CLI
+        run: go install github.com/ArkLabsHQ/introspector-enclave/cli/cmd/enclave@latest
+
+      - name: Pull Nix Docker image
+        run: docker pull nixos/nix:2.24.9
+
+      - name: Build EIF
+        run: enclave build
+
+      - name: Extract PCR values
+        id: pcr
+        run: |
+          PCR0=$(jq -r '.PCR0 // .pcr0' .enclave/artifacts/pcr.json)
+          PCR1=$(jq -r '.PCR1 // .pcr1' .enclave/artifacts/pcr.json)
+          PCR2=$(jq -r '.PCR2 // .pcr2' .enclave/artifacts/pcr.json)
+          echo "pcr0=${PCR0}" >> "$GITHUB_OUTPUT"
+          echo "pcr1=${PCR1}" >> "$GITHUB_OUTPUT"
+          echo "pcr2=${PCR2}" >> "$GITHUB_OUTPUT"
+          echo "PCR0: ${PCR0:0:32}..."
+
+      - name: Build deployment manifest
+        env:
+          PCR0: ${{ steps.pcr.outputs.pcr0 }}
+          PCR1: ${{ steps.pcr.outputs.pcr1 }}
+          PCR2: ${{ steps.pcr.outputs.pcr2 }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          TAG: ${{ inputs.version }}
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq -n \
+            --arg version "$TAG" \
+            --arg pcr0 "$PCR0" \
+            --arg pcr1 "$PCR1" \
+            --arg pcr2 "$PCR2" \
+            --arg timestamp "$TIMESTAMP" \
+            --arg commit "$COMMIT_SHA" \
+            --arg repo "$REPO" \
+            '{version: $version, pcr0: $pcr0, pcr1: $pcr1, pcr2: $pcr2, timestamp: $timestamp, commit: $commit, repo: $repo}' \
+            > deployment.json
+
+      - name: Upload EIF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: enclave-eif-${{ inputs.version }}
+          path: |
+            .enclave/artifacts/image.eif
+            .enclave/artifacts/pcr.json
+            .enclave/artifacts/supervisor
+            deployment.json
+          retention-days: 30
+
+      - name: Create version release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PCR0: ${{ steps.pcr.outputs.pcr0 }}
+          COMMIT_SHA: ${{ github.sha }}
+          TAG: ${{ inputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --target "$COMMIT_SHA" \
+            --title "EIF ${TAG}" \
+            --notes "EIF release ${TAG} from commit ${COMMIT_SHA::8}
+          PCR0: ${PCR0}" \
+            .enclave/artifacts/image.eif \
+            .enclave/artifacts/pcr.json \
+            .enclave/artifacts/supervisor \
+            deployment.json
