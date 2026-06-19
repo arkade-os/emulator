@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/arkade-os/emulator/internal/config"
 	interfaces "github.com/arkade-os/emulator/internal/interface"
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
@@ -34,7 +34,7 @@ type service struct {
 	version    string
 	config     Config
 	cfg        *config.Config
-	appSvc     application.Service
+	appSvc     emulator.Service
 	server     *http.Server
 	grpcServer *grpc.Server
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
-	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
@@ -179,6 +179,6 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 	return key, nil
 }
 
-func (c *Config) AppService(ctx context.Context) (application.Service, error) {
-	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL, c.ComputeLimits)
+func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
+	return emulator.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL, c.ComputeLimits)
 }

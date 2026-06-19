@@ -8,7 +8,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -17,10 +17,10 @@ import (
 
 type handler struct {
 	version string
-	svc     application.Service
+	svc     emulator.Service
 }
 
-func New(version string, service application.Service) *handler {
+func New(version string, service emulator.Service) *handler {
 	return &handler{version: version, svc: service}
 }
 
@@ -67,7 +67,7 @@ func (h *handler) SubmitTx(
 		checkpointPsbt = append(checkpointPsbt, checkpointPtx)
 	}
 
-	offchainTx := application.OffchainTx{
+	offchainTx := emulator.OffchainTx{
 		ArkTx:       arkPtx,
 		Checkpoints: checkpointPsbt,
 	}
@@ -163,7 +163,7 @@ func (h *handler) SubmitFinalization(
 		forfeitPsbt = append(forfeitPsbt, forfeitPtx)
 	}
 
-	batchFinalization := application.BatchFinalization{
+	batchFinalization := emulator.BatchFinalization{
 		Intent:       *intent,
 		Forfeits:     forfeitPsbt,
 		CommitmentTx: commitmentPtx,
@@ -229,7 +229,7 @@ func (h *handler) SubmitOnchainTx(
 		return nil, status.Error(codes.InvalidArgument, "invalid tx")
 	}
 
-	signed, err := h.svc.SubmitOnchainTx(ctx, application.OnchainTx{Tx: ptx})
+	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
 		log.WithError(err).Error("failed to process onchain tx")
 		return nil, status.Error(codes.Internal, "failed to process onchain tx")
@@ -284,7 +284,7 @@ func parseTxTree(fromProto []*emulatorv1.TxTreeNode) (*tree.TxTree, error) {
 	return txTree, nil
 }
 
-func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
+func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 	proof := fromProto.GetProof()
 	message := fromProto.GetMessage()
 
@@ -307,7 +307,7 @@ func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
 	}
 
 	intentProof := intent.Proof{Packet: *proofPsbt}
-	return &application.Intent{
+	return &emulator.Intent{
 		Proof:   intentProof,
 		Message: registerMessage,
 	}, nil
