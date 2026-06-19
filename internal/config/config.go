@@ -10,8 +10,8 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/pkg/emulator"
-	"github.com/btcsuite/btcd/btcec/v2"
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
+	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -189,13 +189,16 @@ func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
 	}
+	if info.SignerPubKey == "" {
+		return nil, fmt.Errorf("arkd info does not include signer pubkey")
+	}
 	pk, err := hex.DecodeString(info.SignerPubKey)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
 	}
 	arkdPubKey, err := btcec.ParsePubKey(pk)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
 	}
 	return emulator.New(ctx, c.CurrentKey, c.DeprecatedKeys, arkdPubKey, arkdClient, c.ComputeLimits)
 }
