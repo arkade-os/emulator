@@ -9,6 +9,7 @@ import (
 
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/pkg/emulator"
+	grpchandler "github.com/arkade-os/emulator/pkg/emulator/grpchandler"
 	"github.com/arkade-os/emulator/internal/config"
 	interfaces "github.com/arkade-os/emulator/internal/interface"
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
@@ -139,7 +140,7 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 		return err
 	}
 	s.appSvc = appSvc
-	appHandler := handlers.New(s.version, appSvc)
+	appHandler := grpchandler.New(s.version, appSvc)
 	emulatorv1.RegisterEmulatorServiceServer(grpcServer, appHandler)
 
 	healthHandler := handlers.NewHealthHandler()
