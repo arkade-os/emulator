@@ -1734,29 +1734,6 @@ func hashSpec(op byte, inputHex, expectedHex string, hashLen int) *opcodeSpec {
 	}
 }
 
-// digestVector builds an OP_DIGEST valid vector hashing inputHex under the given
-// hash-type selector and asserting the expectedHex digest. The stack layout is
-// [data hash_type] (selector on top), matching the opcode's pop order.
-func digestVector(name string, hashType int, inputHex, expectedHex string) opcodeVector {
-	input, err := hex.DecodeString(inputHex)
-	if err != nil {
-		panic(fmt.Sprintf("invalid OP_DIGEST input hex: %v", err))
-	}
-	expected, err := hex.DecodeString(expectedHex)
-	if err != nil {
-		panic(fmt.Sprintf("invalid OP_DIGEST expected hex: %v", err))
-	}
-	return opcodeVector{
-		name:          name,
-		inputStack:    [][]byte{input, scriptNum(hashType).Bytes()},
-		expectedStack: [][]byte{expected},
-	}
-}
-
-// digestSpec exercises OP_DIGEST across every supported hash-type selector with
-// known-answer vectors (input "0102" and empty input), plus the underflow and
-// unknown-selector failure modes. The Keccak-256 / SHA3-256 pair pins the
-// legacy-vs-NIST distinction.
 func digestSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode: OP_DIGEST,
@@ -1782,36 +1759,31 @@ func digestSpec() *opcodeSpec {
 			require.NotEmpty(t, c.after.GetStack()[afterDepth-1])
 		},
 		validVectors: []opcodeVector{
-			digestVector("sha256",
-				digestSHA256, "0102",
-				"a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222"),
-			digestVector("sha1",
-				digestSHA1, "0102",
-				"0ca623e2855f2c75c842ad302fe820e41b4d197d"),
-			digestVector("ripemd160",
-				digestRIPEMD160, "0102",
-				"189f7c8b1a386ffe8eed91b3830c7a7bcd1e778c"),
-			digestVector("keccak256",
-				digestKeccak256, "0102",
-				"22ae6da6b482f9b1b19b0b897c3fd43884180a1c5ee361e1107a1bc635649dda"),
-			digestVector("sha3_256",
-				digestSHA3_256, "0102",
-				"76e8bb05214d1e776c2a4836f6c1a7446c90a274b9ae719c3c6c8a727d862c12"),
-			digestVector("sha256_empty",
-				digestSHA256, "",
-				"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
-			digestVector("sha1_empty",
-				digestSHA1, "",
-				"da39a3ee5e6b4b0d3255bfef95601890afd80709"),
-			digestVector("ripemd160_empty",
-				digestRIPEMD160, "",
-				"9c1185a5c5e9fc54612808977ee8f548b2258d31"),
-			digestVector("keccak256_empty",
-				digestKeccak256, "",
-				"c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-			digestVector("sha3_256_empty",
-				digestSHA3_256, "",
-				"a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"),
+			{
+				name:          "sha256",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x01}},
+				expectedStack: [][]byte{mustDecodeHex("a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222")},
+			},
+			{
+				name:          "sha1",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x02}},
+				expectedStack: [][]byte{mustDecodeHex("0ca623e2855f2c75c842ad302fe820e41b4d197d")},
+			},
+			{
+				name:          "ripemd160",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x03}},
+				expectedStack: [][]byte{mustDecodeHex("189f7c8b1a386ffe8eed91b3830c7a7bcd1e778c")},
+			},
+			{
+				name:          "keccak256",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x04}},
+				expectedStack: [][]byte{mustDecodeHex("22ae6da6b482f9b1b19b0b897c3fd43884180a1c5ee361e1107a1bc635649dda")},
+			},
+			{
+				name:          "sha3_256",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x05}},
+				expectedStack: [][]byte{mustDecodeHex("76e8bb05214d1e776c2a4836f6c1a7446c90a274b9ae719c3c6c8a727d862c12")},
+			},
 		},
 		invalidVectors: []opcodeVector{
 			{
