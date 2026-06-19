@@ -8,9 +8,10 @@ import (
 	"strings"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
-	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcec/v2"
+	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -180,5 +181,21 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 }
 
 func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
-	return emulator.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL, c.ComputeLimits)
+	arkdClient, err := grpcclient.NewClient(c.ArkdURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create arkd client: %w", err)
+	}
+	info, err := arkdClient.GetInfo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
+	}
+	pk, err := hex.DecodeString(info.SignerPubKey)
+	if err != nil {
+		return nil, err
+	}
+	arkdPubKey, err := btcec.ParsePubKey(pk)
+	if err != nil {
+		return nil, err
+	}
+	return emulator.New(ctx, c.CurrentKey, c.DeprecatedKeys, arkdPubKey, arkdClient, c.ComputeLimits)
 }
