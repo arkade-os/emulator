@@ -1747,30 +1747,23 @@ func opcodeDigest(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	var digest []byte
 	switch hashType {
 	case digestSHA256:
 		h := sha256.Sum256(buf)
-		digest = h[:]
+		vm.dstack.PushByteArray(h[:])
 	case digestSHA1:
 		h := sha1.Sum(buf)
-		digest = h[:]
+		vm.dstack.PushByteArray(h[:])
 	case digestRIPEMD160:
-		digest = calcHash(buf, ripemd160.New())
+		vm.dstack.PushByteArray(calcHash(buf, ripemd160.New()))
 	case digestKeccak256:
-		h := sha3.NewLegacyKeccak256()
-		h.Write(buf)
-		digest = h.Sum(nil)
+		vm.dstack.PushByteArray(calcHash(buf, sha3.NewLegacyKeccak256()))
 	case digestSHA3_256:
-		h := sha3.New256()
-		h.Write(buf)
-		digest = h.Sum(nil)
+		vm.dstack.PushByteArray(calcHash(buf, sha3.New256()))
 	default:
-		str := fmt.Sprintf("unsupported OP_DIGEST hash type %d", hashType)
-		return scriptError(txscript.ErrInvalidStackOperation, str)
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("unsupported OP_DIGEST hash type %d", hashType))
 	}
-
-	vm.dstack.PushByteArray(digest)
 	return nil
 }
 
