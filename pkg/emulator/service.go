@@ -1,18 +1,24 @@
-package application
+package emulator
 
 import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/arkade-os/go-sdk/client"
-	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 )
+
+// Finalizer is the subset of the go-sdk TransportClient used for the finalizer
+// role in SubmitTx. It is satisfied structurally by go-sdk's grpc client.
+type Finalizer interface {
+	SubmitTx(ctx context.Context, signedArkTx string, checkpointTxs []string) (arkTxid, finalArkTx string, signedCheckpointTxs []string, err error)
+	FinalizeTx(ctx context.Context, arkTxid string, finalCheckpointTxs []string) error
+}
 
 type Info struct {
 	SignerPublicKey            string
@@ -59,19 +65,18 @@ type service struct {
 	deprecatedSigners    []signer
 	publicKey            string
 	deprecatedPublicKeys []string
-	arkdClient           client.TransportClient
+	finalizer            Finalizer
 	arkdPubKey           *btcec.PublicKey
 	computeLimits        arkade.ComputeLimits
 }
 
-func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdURL string, computeLimits arkade.ComputeLimits) (Service, error) {
+func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdPubKey *btcec.PublicKey, finalizer Finalizer, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
 
-	arkdClient, err := grpcclient.NewClient(arkdURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create arkd client: %w", err)
+	if arkdPubKey == nil {
+		return nil, fmt.Errorf("arkd public key is required")
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
@@ -85,40 +90,21 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	arkdInfo, err := arkdClient.GetInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
-	}
-	if arkdInfo == nil {
-		return nil, fmt.Errorf("arkd info is required")
-	}
-	if arkdInfo.SignerPubKey == "" {
-		return nil, fmt.Errorf("arkd info does not include signer pubkey")
-	}
-
-	decodedKey, err := hex.DecodeString(arkdInfo.SignerPubKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode arkd signer pubkey: %w", err)
-	}
-
-	arkdPubKey, err := btcec.ParsePubKey(decodedKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse arkd signer pubkey: %w", err)
-	}
-
 	return &service{
 		signer:               signer{secretKey},
 		deprecatedSigners:    deprecatedSigners,
 		publicKey:            publicKey,
 		deprecatedPublicKeys: deprecatedPublicKeys,
-		arkdClient:           arkdClient,
+		finalizer:            finalizer,
 		arkdPubKey:           arkdPubKey,
 		computeLimits:        computeLimits,
 	}, nil
 }
 
 func (s *service) Close() {
-	s.arkdClient.Close()
+	if closer, ok := s.finalizer.(io.Closer); ok {
+		closer.Close()
+	}
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {

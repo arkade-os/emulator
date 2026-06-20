@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"bytes"
@@ -117,7 +117,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	log.WithField("is_finalizer", isFinalizer).Debug("finalizer role analysis completed")
 
-	if !isFinalizer {
+	if !isFinalizer || s.finalizer == nil {
 		return &OffchainTx{
 			ArkTx:       arkPtx,
 			Checkpoints: signedCheckpointTxs,
@@ -144,7 +144,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to encode ark tx for finalization: %w", err)
 	}
 
-	txid, finalArkTx, arkdCheckpointTxs, err := s.arkdClient.SubmitTx(ctx, arkTx, encodedCheckpoints)
+	txid, finalArkTx, arkdCheckpointTxs, err := s.finalizer.SubmitTx(ctx, arkTx, encodedCheckpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
 	}
@@ -298,7 +298,7 @@ func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []
 	for {
 		attempt++
 
-		if err := s.arkdClient.FinalizeTx(ctx, txid, checkpoints); err == nil {
+		if err := s.finalizer.FinalizeTx(ctx, txid, checkpoints); err == nil {
 			return nil
 		} else {
 			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)

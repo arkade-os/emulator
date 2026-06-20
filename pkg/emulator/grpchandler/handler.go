@@ -1,4 +1,4 @@
-package handlers
+package grpchandler
 
 import (
 	"context"
@@ -20,7 +20,7 @@ type handler struct {
 	svc     emulator.Service
 }
 
-func New(version string, service emulator.Service) *handler {
+func New(version string, service emulator.Service) emulatorv1.EmulatorServiceServer {
 	return &handler{version: version, svc: service}
 }
 
