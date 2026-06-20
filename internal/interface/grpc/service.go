@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/arkade-os/emulator/pkg/emulator"
-	grpchandler "github.com/arkade-os/emulator/pkg/emulator/grpchandler"
 	"github.com/arkade-os/emulator/internal/config"
 	interfaces "github.com/arkade-os/emulator/internal/interface"
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
+	"github.com/arkade-os/emulator/pkg/emulator"
+	grpchandler "github.com/arkade-os/emulator/pkg/emulator/grpchandler"
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
