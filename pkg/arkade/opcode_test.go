@@ -271,6 +271,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 		"76a56aced915d2513dcd84c2c378b2e8aa5cd632b5b71ca2f2ac5b0e3a649bdb",
 		32,
 	),
+	OP_DIGEST:         digestSpec(),
 	OP_CODESEPARATOR:  noContextReservedSpec(OP_CODESEPARATOR, nil),
 	OP_CHECKSIG:       noContextReservedSpec(OP_CHECKSIG, [][]byte{nil, nil}),
 	OP_CHECKSIGVERIFY: noContextReservedSpec(OP_CHECKSIGVERIFY, [][]byte{nil, nil}),
@@ -344,7 +345,6 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_UNKNOWN192:                    invalidSpec(OP_UNKNOWN192),
 	OP_UNKNOWN193:                    invalidSpec(OP_UNKNOWN193),
 	OP_UNKNOWN194:                    invalidSpec(OP_UNKNOWN194),
-	OP_UNKNOWN195:                    invalidSpec(OP_UNKNOWN195),
 	OP_UNKNOWN208:                    invalidSpec(OP_UNKNOWN208),
 	OP_INSPECTPACKET:                 inspectPacketSpec(),
 	OP_INSPECTINPUTPACKET:            inspectInputPacketSpec(),
@@ -1736,7 +1736,11 @@ func hashSpec(op byte, inputHex, expectedHex string, hashLen int) *opcodeSpec {
 			beforeDepth := len(c.before.GetStack())
 			afterDepth := len(c.after.GetStack())
 			if c.execErr != nil {
-				requireScriptErrorCode(t, c.execErr, txscript.ErrInvalidStackOperation)
+				requireScriptErrorCodeIn(t, c.execErr,
+					txscript.ErrInvalidStackOperation,
+					txscript.ErrMinimalData,
+					txscript.ErrNumberTooBig,
+				)
 				require.LessOrEqual(t, afterDepth, beforeDepth)
 				return
 			}
@@ -1750,6 +1754,91 @@ func hashSpec(op byte, inputHex, expectedHex string, hashLen int) *opcodeSpec {
 		},
 		invalidVectors: []opcodeVector{
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+		},
+	}
+}
+
+func digestSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_DIGEST,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+
+			beforeDepth := len(c.before.GetStack())
+			afterDepth := len(c.after.GetStack())
+			if c.execErr != nil {
+				requireScriptErrorCodeIn(t, c.execErr,
+					txscript.ErrInvalidStackOperation,
+					txscript.ErrMinimalData,
+					txscript.ErrNumberTooBig,
+				)
+				require.LessOrEqual(t, afterDepth, beforeDepth)
+				return
+			}
+
+			// Two items popped (data + selector), one digest pushed.
+			require.Equal(t, beforeDepth-1, afterDepth)
+			require.NotEmpty(t, c.after.GetStack()[afterDepth-1])
+		},
+		validVectors: []opcodeVector{
+			{
+				name:          "sha256",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x01}},
+				expectedStack: [][]byte{mustDecodeHex("a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222")},
+			},
+			{
+				name:          "sha1",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x02}},
+				expectedStack: [][]byte{mustDecodeHex("0ca623e2855f2c75c842ad302fe820e41b4d197d")},
+			},
+			{
+				name:          "ripemd160",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x03}},
+				expectedStack: [][]byte{mustDecodeHex("189f7c8b1a386ffe8eed91b3830c7a7bcd1e778c")},
+			},
+			{
+				name:          "keccak256",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x04}},
+				expectedStack: [][]byte{mustDecodeHex("22ae6da6b482f9b1b19b0b897c3fd43884180a1c5ee361e1107a1bc635649dda")},
+			},
+			{
+				name:          "sha3_256",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x05}},
+				expectedStack: [][]byte{mustDecodeHex("76e8bb05214d1e776c2a4836f6c1a7446c90a274b9ae719c3c6c8a727d862c12")},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{
+				name:          "underflow_no_selector",
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "underflow_no_data",
+				inputStack:    [][]byte{scriptNum(digestSHA256).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "unknown_type_high",
+				inputStack:    [][]byte{{0x01, 0x02}, scriptNum(99).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "unknown_type_zero",
+				inputStack:    [][]byte{{0x01, 0x02}, scriptNum(0).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "non_minimal_selector",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x01, 0x00}},
+				expectedError: txscript.ErrMinimalData,
+			},
+			{
+				name:          "oversized_selector",
+				inputStack:    [][]byte{{0x01, 0x02}, {0x01, 0x00, 0x00, 0x00, 0x00}},
+				expectedError: txscript.ErrNumberTooBig,
+			},
 		},
 	}
 }

@@ -15,6 +15,7 @@ import (
 
 	//nolint:staticcheck
 	"golang.org/x/crypto/ripemd160"
+	"golang.org/x/crypto/sha3"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -239,7 +240,7 @@ const (
 	OP_UNKNOWN192          = 0xc0 // 192
 	OP_UNKNOWN193          = 0xc1 // 193
 	OP_UNKNOWN194          = 0xc2 // 194
-	OP_UNKNOWN195          = 0xc3 // 195
+	OP_DIGEST              = 0xc3 // 195
 	OP_SHA256INITIALIZE    = 0xc4 // 196
 	OP_SHA256UPDATE        = 0xc5 // 197
 	OP_SHA256FINALIZE      = 0xc6 // 198
@@ -540,7 +541,7 @@ var opcodeArray = [256]opcode{
 	OP_UNKNOWN192: {OP_UNKNOWN192, "OP_UNKNOWN192", 1, opcodeInvalid},
 	OP_UNKNOWN193: {OP_UNKNOWN193, "OP_UNKNOWN193", 1, opcodeInvalid},
 	OP_UNKNOWN194: {OP_UNKNOWN194, "OP_UNKNOWN194", 1, opcodeInvalid},
-	OP_UNKNOWN195: {OP_UNKNOWN195, "OP_UNKNOWN195", 1, opcodeInvalid},
+	OP_DIGEST:     {OP_DIGEST, "OP_DIGEST", 1, opcodeDigest},
 	// Streaming opcodes
 	OP_SHA256INITIALIZE: {OP_SHA256INITIALIZE, "OP_SHA256INITIALIZE", 1, opcodeSha256Initialize},
 	OP_SHA256UPDATE:     {OP_SHA256UPDATE, "OP_SHA256UPDATE", 1, opcodeSha256Update},
@@ -1719,6 +1720,50 @@ func opcodeSha256(op *opcode, data []byte, vm *Engine) error {
 
 	hash := sha256.Sum256(buf)
 	vm.dstack.PushByteArray(hash[:])
+	return nil
+}
+
+// Hash type selectors for OP_DIGEST.
+const (
+	digestSHA256    = 1
+	digestSHA1      = 2
+	digestRIPEMD160 = 3
+	digestKeccak256 = 4 // legacy/Ethereum Keccak, NOT NIST SHA3-256
+	digestSHA3_256  = 5 // NIST FIPS-202
+)
+
+// opcodeDigest pops a hash-type selector and a data item from the stack and
+// pushes the digest of the data under the selected algorithm. The selector sits
+// on top of the stack so that in the raw script it is adjacent to the opcode.
+//
+// Stack transformation: [... data hash_type] -> [... digest]
+func opcodeDigest(op *opcode, data []byte, vm *Engine) error {
+	hashType, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+	buf, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	switch hashType {
+	case digestSHA256:
+		h := sha256.Sum256(buf)
+		vm.dstack.PushByteArray(h[:])
+	case digestSHA1:
+		h := sha1.Sum(buf)
+		vm.dstack.PushByteArray(h[:])
+	case digestRIPEMD160:
+		vm.dstack.PushByteArray(calcHash(buf, ripemd160.New()))
+	case digestKeccak256:
+		vm.dstack.PushByteArray(calcHash(buf, sha3.NewLegacyKeccak256()))
+	case digestSHA3_256:
+		vm.dstack.PushByteArray(calcHash(buf, sha3.New256()))
+	default:
+		return scriptError(txscript.ErrInvalidStackOperation,
+			fmt.Sprintf("unsupported OP_DIGEST hash type %d", hashType))
+	}
 	return nil
 }
 
