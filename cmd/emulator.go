@@ -10,9 +10,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const (
-	Version = "v0.0.1"
-)
+// Version is set at build time via -ldflags "-X main.Version=...".
+var Version = "dev"
 
 func main() {
 	cfg, err := config.LoadConfig()
