@@ -4,8 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"fmt"
+	"math/big"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	btcecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/txscript"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -101,4 +103,64 @@ func parseSchemePubKey(pkBytes []byte) (*schemeKey, error) {
 	default:
 		return discourage()
 	}
+}
+
+// verify reports whether sig is a valid signature by k over msg. msg is the
+// value each scheme verifies against directly — the arkade sighash for the
+// CHECKSIG family, or the popped stack item for CSFS. The opcode never hashes:
+// Schnorr folds msg into its BIP340 tagged challenge; ECDSA treats msg as the
+// pre-computed digest. sig is a 64-byte compact r||s for both algorithms;
+// ECDSA additionally requires canonical, low-s scalars.
+func (k *schemeKey) verify(msg, sig []byte) bool {
+	switch k.algo {
+	case algoSchnorr:
+		parsed, err := schnorr.ParseSignature(sig)
+		if err != nil {
+			return false
+		}
+		return parsed.Verify(msg, k.secpPub)
+
+	case algoECDSA:
+		if len(sig) != 64 {
+			return false
+		}
+		switch k.curve {
+		case CurveSecp256k1:
+			return verifyECDSASecp256k1(k.secpPub, msg, sig)
+		case CurveSecp256r1:
+			return verifyECDSASecp256r1(k.nistPub, msg, sig)
+		}
+	}
+	return false
+}
+
+// verifyECDSASecp256k1 verifies a low-s, canonical 64-byte r||s ECDSA
+// signature over secp256k1 with msg as the digest.
+func verifyECDSASecp256k1(pub *btcec.PublicKey, msg, sig []byte) bool {
+	var r, s secp.ModNScalar
+	if r.SetByteSlice(sig[:32]) || r.IsZero() { // overflow-or-zero => invalid
+		return false
+	}
+	if s.SetByteSlice(sig[32:]) || s.IsZero() {
+		return false
+	}
+	if s.IsOverHalfOrder() { // reject high-s (malleable)
+		return false
+	}
+	return btcecdsa.NewSignature(&r, &s).Verify(msg, pub)
+}
+
+// verifyECDSASecp256r1 verifies a low-s, canonical 64-byte r||s ECDSA
+// signature over secp256r1 (NIST P-256) with msg as the digest.
+func verifyECDSASecp256r1(pub *ecdsa.PublicKey, msg, sig []byte) bool {
+	n := elliptic.P256().Params().N
+	r := new(big.Int).SetBytes(sig[:32])
+	s := new(big.Int).SetBytes(sig[32:])
+	if r.Sign() == 0 || s.Sign() == 0 || r.Cmp(n) >= 0 || s.Cmp(n) >= 0 {
+		return false
+	}
+	if s.Cmp(new(big.Int).Rsh(n, 1)) > 0 { // reject high-s (malleable)
+		return false
+	}
+	return ecdsa.Verify(pub, msg, r, s)
 }

@@ -1,6 +1,7 @@
 package arkade
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	btcecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/stretchr/testify/require"
@@ -87,5 +89,94 @@ func TestParseSchemePubKey(t *testing.T) {
 		bad := append([]byte{0x11, 0x02}, xBytes...)
 		_, err := parseSchemePubKey(bad)
 		requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+	})
+}
+
+// ecdsaK1Compact signs hash with a secp256k1 key and returns 64-byte r||s.
+// btcec normalizes to low-s, so the result is canonical by construction.
+func ecdsaK1Compact(t *testing.T, priv *btcec.PrivateKey, hash []byte) []byte {
+	t.Helper()
+	sig := btcecdsa.Sign(priv, hash)
+	r := sig.R()
+	s := sig.S()
+	rb := r.Bytes()
+	sb := s.Bytes()
+	return append(rb[:], sb[:]...)
+}
+
+// ecdsaR1Compact signs hash with a secp256r1 key, normalizes to low-s, and
+// returns 64-byte r||s (each big-endian, left-padded to 32 bytes).
+func ecdsaR1Compact(t *testing.T, priv *ecdsa.PrivateKey, hash []byte) []byte {
+	t.Helper()
+	r, s, err := ecdsa.Sign(rand.Reader, priv, hash)
+	require.NoError(t, err)
+	n := elliptic.P256().Params().N
+	if s.Cmp(new(big.Int).Rsh(n, 1)) > 0 {
+		s = new(big.Int).Sub(n, s)
+	}
+	out := make([]byte, 64)
+	r.FillBytes(out[:32])
+	s.FillBytes(out[32:])
+	return out
+}
+
+func TestSchemeKeyVerify(t *testing.T) {
+	t.Parallel()
+
+	msg := bytes.Repeat([]byte{0x9f}, 32) // a 32-byte digest
+
+	t.Run("ecdsa_secp256k1_roundtrip", func(t *testing.T) {
+		priv, _ := btcec.NewPrivateKey()
+		k, err := parseSchemePubKey(append([]byte{0x10}, priv.PubKey().SerializeCompressed()...))
+		require.NoError(t, err)
+		sig := ecdsaK1Compact(t, priv, msg)
+		require.True(t, k.verify(msg, sig))
+
+		sig[63] ^= 0x01 // tamper s
+		require.False(t, k.verify(msg, sig))
+	})
+
+	t.Run("ecdsa_secp256r1_roundtrip", func(t *testing.T) {
+		priv, comp := r1CompressedPubKey(t)
+		k, err := parseSchemePubKey(append([]byte{0x11}, comp...))
+		require.NoError(t, err)
+		sig := ecdsaR1Compact(t, priv, msg)
+		require.True(t, k.verify(msg, sig))
+
+		sig[0] ^= 0x01 // tamper r
+		require.False(t, k.verify(msg, sig))
+	})
+
+	t.Run("high_s_rejected_r1", func(t *testing.T) {
+		priv, comp := r1CompressedPubKey(t)
+		k, err := parseSchemePubKey(append([]byte{0x11}, comp...))
+		require.NoError(t, err)
+		sig := ecdsaR1Compact(t, priv, msg)
+		// Flip s to its high-s counterpart n-s: still a valid ECDSA sig, but
+		// non-canonical and must be rejected.
+		n := elliptic.P256().Params().N
+		s := new(big.Int).SetBytes(sig[32:])
+		high := new(big.Int).Sub(n, s)
+		high.FillBytes(sig[32:])
+		require.False(t, k.verify(msg, sig))
+	})
+
+	t.Run("cross_curve_bytes_rejected", func(t *testing.T) {
+		// X = 2^256-1 exceeds the P-256 field prime — no valid point exists.
+		// Verifies that bytes not on P-256 are rejected under the r1 prefix.
+		offCurve := make([]byte, 33)
+		offCurve[0] = 0x02
+		for i := 1; i < 33; i++ {
+			offCurve[i] = 0xff
+		}
+		_, err := parseSchemePubKey(append([]byte{0x11}, offCurve...))
+		requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+	})
+
+	t.Run("wrong_sig_length_rejected", func(t *testing.T) {
+		priv, _ := btcec.NewPrivateKey()
+		k, err := parseSchemePubKey(append([]byte{0x10}, priv.PubKey().SerializeCompressed()...))
+		require.NoError(t, err)
+		require.False(t, k.verify(msg, make([]byte, 70)))
 	})
 }
