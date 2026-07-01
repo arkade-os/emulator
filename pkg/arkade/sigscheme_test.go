@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"math/big"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -18,7 +19,11 @@ func r1CompressedPubKey(t *testing.T) (*ecdsa.PrivateKey, []byte) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	return priv, elliptic.MarshalCompressed(elliptic.P256(), priv.PublicKey.X, priv.PublicKey.Y)
+	enc, err := priv.PublicKey.Bytes() // 0x04 || X(32) || Y(32)
+	require.NoError(t, err)
+	x := new(big.Int).SetBytes(enc[1:33])
+	y := new(big.Int).SetBytes(enc[33:65])
+	return priv, elliptic.MarshalCompressed(elliptic.P256(), x, y)
 }
 
 func TestParseSchemePubKey(t *testing.T) {

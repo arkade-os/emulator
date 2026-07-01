@@ -84,11 +84,19 @@ func parseSchemePubKey(pkBytes []byte) (*schemeKey, error) {
 			return nil, scriptError(txscript.ErrInvalidStackOperation,
 				"invalid secp256r1 ecdsa pubkey")
 		}
-		return &schemeKey{
-			algo:    algoECDSA,
-			curve:   CurveSecp256r1,
-			nistPub: &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y},
-		}, nil
+		// Re-expand the validated point to SEC1 uncompressed and parse it with
+		// the non-deprecated Go 1.26 constructor (ecdsa.PublicKey.X/Y are
+		// deprecated for direct construction).
+		uncompressed := make([]byte, 65)
+		uncompressed[0] = 0x04
+		x.FillBytes(uncompressed[1:33])
+		y.FillBytes(uncompressed[33:65])
+		pk, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), uncompressed)
+		if err != nil {
+			return nil, scriptError(txscript.ErrInvalidStackOperation,
+				"invalid secp256r1 ecdsa pubkey")
+		}
+		return &schemeKey{algo: algoECDSA, curve: CurveSecp256r1, nistPub: pk}, nil
 
 	default:
 		return discourage()
