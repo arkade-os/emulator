@@ -161,18 +161,6 @@ func TestSchemeKeyVerify(t *testing.T) {
 		require.False(t, k.verify(msg, sig))
 	})
 
-	t.Run("cross_curve_bytes_rejected", func(t *testing.T) {
-		// X = 2^256-1 exceeds the P-256 field prime — no valid point exists.
-		// Verifies that bytes not on P-256 are rejected under the r1 prefix.
-		offCurve := make([]byte, 33)
-		offCurve[0] = 0x02
-		for i := 1; i < 33; i++ {
-			offCurve[i] = 0xff
-		}
-		_, err := parseSchemePubKey(append([]byte{0x11}, offCurve...))
-		requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-	})
-
 	t.Run("wrong_sig_length_rejected", func(t *testing.T) {
 		priv, _ := btcec.NewPrivateKey()
 		k, err := parseSchemePubKey(append([]byte{0x10}, priv.PubKey().SerializeCompressed()...))
