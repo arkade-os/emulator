@@ -2,6 +2,7 @@ package arkade
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -123,4 +124,34 @@ func TestCSFSSchnorrLegacyStillWorks(t *testing.T) {
 	sig, err := schnorr.Sign(priv, msg)
 	require.NoError(t, err)
 	require.NoError(t, csfsLeaf(t, xonly, msg, sig.Serialize()))
+}
+
+// TestCSFSNativeP256InScriptSha256 exercises the WebAuthn-shaped flow:
+// the script hashes the witness message with OP_SHA256 in-script, then
+// OP_CHECKSIGFROMSTACK verifies a native P-256 ECDSA signature over that
+// digest. No EC-arithmetic opcodes are needed.
+func TestCSFSNativeP256InScriptSha256(t *testing.T) {
+	priv, comp := r1CompressedPubKey(t)
+	message := []byte("oracle price=42000")
+	digest := sha256.Sum256(message)
+	sig := ecdsaR1Compact(t, priv, digest[:])
+
+	// Script: hash the witness message in-script, then verify a native P-256
+	// ECDSA sig over that digest. Stack before CSFS: [sig, sha256(message), pubkey].
+	leaf, err := txscript.NewScriptBuilder().
+		AddOp(OP_SHA256).
+		AddData(append([]byte{0x11}, comp...)).
+		AddOp(OP_CHECKSIGFROMSTACK).
+		Script()
+	require.NoError(t, err)
+
+	run := func(w wire.TxWitness) error {
+		return runTapscriptLeaf(t, leaf, w, 1_000_000).Execute()
+	}
+	// Witness supplies [signature, message]; OP_SHA256 replaces message with its digest.
+	require.NoError(t, run(wire.TxWitness{sig, message}))
+
+	bad := append([]byte{}, sig...)
+	bad[0] ^= 0x01
+	require.Error(t, run(wire.TxWitness{bad, message}))
 }
