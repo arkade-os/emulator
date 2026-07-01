@@ -29,7 +29,10 @@ func DefaultComputeLimits() ComputeLimits {
 	// input on an Apple M4 Pro. That is looser than the ~24 ms grouped design,
 	// but keeps the policy easy to read, configure, and reason about for now.
 	return ComputeLimits{
-		// Schnorr-class signature verification, ~84 µs each.
+		// Signature verification opcodes. Each execution may perform Schnorr
+		// (secp256k1, ~84 µs) or P-256 ECDSA (~51 µs, measured on Apple M4 Pro
+		// — Go's native P-256 assembly is faster than Schnorr). Schnorr is the
+		// worst case; 50 × 84 µs ≈ 4.2 ms per opcode stays within budget.
 		OP_CHECKSIG:          50,
 		OP_CHECKSIGVERIFY:    50,
 		OP_CHECKSIGADD:       50,

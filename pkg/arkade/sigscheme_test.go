@@ -168,3 +168,33 @@ func TestSchemeKeyVerify(t *testing.T) {
 		require.False(t, k.verify(msg, make([]byte, 70)))
 	})
 }
+
+func BenchmarkVerifyECDSASecp256r1(b *testing.B) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		b.Fatal(err)
+	}
+	enc, _ := priv.PublicKey.Bytes()
+	x := new(big.Int).SetBytes(enc[1:33])
+	y := new(big.Int).SetBytes(enc[33:65])
+	comp := elliptic.MarshalCompressed(elliptic.P256(), x, y)
+	k, err := parseSchemePubKey(append([]byte{0x11}, comp...))
+	if err != nil {
+		b.Fatal(err)
+	}
+	msg := make([]byte, 32)
+	r, s, _ := ecdsa.Sign(rand.Reader, priv, msg)
+	n := elliptic.P256().Params().N
+	if s.Cmp(new(big.Int).Rsh(n, 1)) > 0 {
+		s = new(big.Int).Sub(n, s)
+	}
+	sig := make([]byte, 64)
+	r.FillBytes(sig[:32])
+	s.FillBytes(sig[32:])
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !k.verify(msg, sig) {
+			b.Fatal("verify failed")
+		}
+	}
+}
