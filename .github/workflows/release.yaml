@@ -22,6 +22,8 @@ jobs:
 
       - name: Build binaries
         run: make build-all
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
 
       - name: Upload emulator binary (Linux, AMD64)
         uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5 # v1
