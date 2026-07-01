@@ -1,9 +1,11 @@
 package arkade
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/stretchr/testify/require"
@@ -74,4 +76,51 @@ func TestOpCheckSigECDSAExplicitSighashByte(t *testing.T) {
 	engine.tx.TxIn[0].Witness[0] = append(
 		ecdsaK1Compact(t, priv, digest), byte(txscript.SigHashAll))
 	require.NoError(t, engine.Execute())
+}
+
+// csfsLeaf pushes the 3 CSFS inputs from the witness and runs
+// `OP_CHECKSIGFROMSTACK`. Witness order (top on right): [sig, msg, pubkey].
+func csfsLeaf(t *testing.T, pubKey, msg, sig []byte) error {
+	t.Helper()
+	leaf, err := txscript.NewScriptBuilder().AddOp(OP_CHECKSIGFROMSTACK).Script()
+	require.NoError(t, err)
+	// Engine expects witness pushed so that pop order is pubkey, msg, sig.
+	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{sig, msg, pubKey}, 1_000_000)
+	return engine.Execute()
+}
+
+func TestCSFSECDSASecp256r1(t *testing.T) {
+	t.Parallel()
+	priv, comp := r1CompressedPubKey(t)
+	pk := append([]byte{0x11}, comp...)
+
+	// The script author owns hashing: here msg is already the 32-byte digest.
+	digest := bytes.Repeat([]byte{0x5a}, 32)
+	sig := ecdsaR1Compact(t, priv, digest)
+
+	require.NoError(t, csfsLeaf(t, pk, digest, sig))
+
+	bad := append([]byte{}, sig...)
+	bad[10] ^= 0x01
+	require.Error(t, csfsLeaf(t, pk, digest, bad))
+}
+
+func TestCSFSECDSASecp256k1(t *testing.T) {
+	t.Parallel()
+	priv, _ := btcec.NewPrivateKey()
+	pk := append([]byte{0x10}, priv.PubKey().SerializeCompressed()...)
+	digest := bytes.Repeat([]byte{0x33}, 32)
+	sig := ecdsaK1Compact(t, priv, digest)
+	require.NoError(t, csfsLeaf(t, pk, digest, sig))
+}
+
+// Backwards compat: legacy 32-byte Schnorr CSFS still verifies.
+func TestCSFSSchnorrLegacyStillWorks(t *testing.T) {
+	t.Parallel()
+	priv, _ := btcec.NewPrivateKey()
+	xonly := schnorr.SerializePubKey(priv.PubKey())
+	msg := bytes.Repeat([]byte{0x22}, 32)
+	sig, err := schnorr.Sign(priv, msg)
+	require.NoError(t, err)
+	require.NoError(t, csfsLeaf(t, xonly, msg, sig.Serialize()))
 }
