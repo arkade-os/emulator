@@ -16,8 +16,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -183,15 +181,18 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 	mux.Handle("/", handler)
 
 	httpServerHandler := http.Handler(mux)
-	if s.config.insecure() {
-		httpServerHandler = h2c.NewHandler(httpServerHandler, &http2.Server{})
-	}
 
 	s.grpcServer = grpcServer
 	s.server = &http.Server{
 		Addr:      s.config.address(),
 		Handler:   httpServerHandler,
 		TLSConfig: tlsConfig,
+	}
+	if s.config.insecure() {
+		protocols := new(http.Protocols)
+		protocols.SetHTTP1(true)
+		protocols.SetUnencryptedHTTP2(true)
+		s.server.Protocols = protocols
 	}
 
 	return nil
