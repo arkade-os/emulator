@@ -35,8 +35,5 @@ WORKDIR /app
 COPY --from=builder /app/bin/* /app/
 
 ENV PATH="/app:${PATH}"
-ENV EMULATOR_DATADIR=/app/data
-
-VOLUME /app/data
 
 ENTRYPOINT [ "emulator" ]

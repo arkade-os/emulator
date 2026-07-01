@@ -21,12 +21,8 @@ func main() {
 	}
 
 	log.WithFields(log.Fields{
-		"version":           Version,
-		"port":              cfg.Port,
-		"no_tls":            cfg.NoTLS,
-		"tls_extra_ips":     cfg.TLSExtraIPs,
-		"tls_extra_domains": cfg.TLSExtraDomains,
-		"datadir":           cfg.Datadir,
+		"version": Version,
+		"port":    cfg.Port,
 	}).Info("config loaded")
 
 	svc, err := grpcservice.NewService(Version, cfg)
