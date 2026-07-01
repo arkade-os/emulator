@@ -131,6 +131,8 @@ func TestCSFSSchnorrLegacyStillWorks(t *testing.T) {
 // OP_CHECKSIGFROMSTACK verifies a native P-256 ECDSA signature over that
 // digest. No EC-arithmetic opcodes are needed.
 func TestCSFSNativeP256InScriptSha256(t *testing.T) {
+	t.Parallel()
+
 	priv, comp := r1CompressedPubKey(t)
 	message := []byte("oracle price=42000")
 	digest := sha256.Sum256(message)

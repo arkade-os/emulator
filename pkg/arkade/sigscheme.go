@@ -110,7 +110,10 @@ func parseSchemePubKey(pkBytes []byte) (*schemeKey, error) {
 // CHECKSIG family, or the popped stack item for CSFS. The opcode never hashes:
 // Schnorr folds msg into its BIP340 tagged challenge; ECDSA treats msg as the
 // pre-computed digest. sig is a 64-byte compact r||s for both algorithms;
-// ECDSA additionally requires canonical, low-s scalars.
+// ECDSA additionally requires canonical, low-s scalars. For ECDSA, msg is
+// expected to be a 32-byte digest (the intended input, e.g. via OP_SHA256);
+// non-32-byte messages are reduced per each curve library's own rule and are
+// not portable across curves.
 func (k *schemeKey) verify(msg, sig []byte) bool {
 	switch k.algo {
 	case algoSchnorr:
