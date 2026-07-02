@@ -15,17 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func r1CompressedPubKey(t *testing.T) (*ecdsa.PrivateKey, []byte) {
-	t.Helper()
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	enc, err := priv.PublicKey.Bytes()
-	require.NoError(t, err)
-	x := new(big.Int).SetBytes(enc[1:33])
-	y := new(big.Int).SetBytes(enc[33:65])
-	return priv, elliptic.MarshalCompressed(elliptic.P256(), x, y)
-}
-
 func TestParseSchemePubKey(t *testing.T) {
 	t.Parallel()
 
@@ -86,30 +75,6 @@ func TestParseSchemePubKey(t *testing.T) {
 	})
 }
 
-func ecdsaK1Compact(t *testing.T, priv *btcec.PrivateKey, hash []byte) []byte {
-	t.Helper()
-	sig := btcecdsa.Sign(priv, hash)
-	r := sig.R()
-	s := sig.S()
-	rb := r.Bytes()
-	sb := s.Bytes()
-	return append(rb[:], sb[:]...)
-}
-
-func ecdsaR1Compact(t *testing.T, priv *ecdsa.PrivateKey, hash []byte) []byte {
-	t.Helper()
-	r, s, err := ecdsa.Sign(rand.Reader, priv, hash)
-	require.NoError(t, err)
-	n := elliptic.P256().Params().N
-	if s.Cmp(new(big.Int).Rsh(n, 1)) > 0 {
-		s = new(big.Int).Sub(n, s)
-	}
-	out := make([]byte, 64)
-	r.FillBytes(out[:32])
-	s.FillBytes(out[32:])
-	return out
-}
-
 func TestSchemeKeyVerify(t *testing.T) {
 	t.Parallel()
 
@@ -164,4 +129,39 @@ func TestSchemeKeyVerify(t *testing.T) {
 		sig := ecdsaR1Compact(t, priv, msg)
 		require.False(t, k.verify(append(bytes.Clone(msg), 0x00), sig))
 	})
+}
+
+func r1CompressedPubKey(t *testing.T) (*ecdsa.PrivateKey, []byte) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	enc, err := priv.PublicKey.Bytes()
+	require.NoError(t, err)
+	x := new(big.Int).SetBytes(enc[1:33])
+	y := new(big.Int).SetBytes(enc[33:65])
+	return priv, elliptic.MarshalCompressed(elliptic.P256(), x, y)
+}
+
+func ecdsaK1Compact(t *testing.T, priv *btcec.PrivateKey, hash []byte) []byte {
+	t.Helper()
+	sig := btcecdsa.Sign(priv, hash)
+	r := sig.R()
+	s := sig.S()
+	rb := r.Bytes()
+	sb := s.Bytes()
+	return append(rb[:], sb[:]...)
+}
+
+func ecdsaR1Compact(t *testing.T, priv *ecdsa.PrivateKey, hash []byte) []byte {
+	t.Helper()
+	r, s, err := ecdsa.Sign(rand.Reader, priv, hash)
+	require.NoError(t, err)
+	n := elliptic.P256().Params().N
+	if s.Cmp(new(big.Int).Rsh(n, 1)) > 0 {
+		s = new(big.Int).Sub(n, s)
+	}
+	out := make([]byte, 64)
+	r.FillBytes(out[:32])
+	s.FillBytes(out[32:])
+	return out
 }

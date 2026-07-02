@@ -12,23 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func checkSigLeafECDSA(t *testing.T, extendedPubKey []byte,
-	signCompact func(digest []byte) []byte) error {
-	t.Helper()
-
-	leaf, err := txscript.NewScriptBuilder().
-		AddData(extendedPubKey).
-		AddOp(OP_CHECKSIG).
-		Script()
-	require.NoError(t, err)
-
-	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{nil}, 2_000_000)
-	digest := arkadeDigest(t, &engine.tx, 0, engine.prevOutFetcher,
-		leaf, txscript.SigHashDefault)
-	engine.tx.TxIn[0].Witness[0] = signCompact(digest)
-	return engine.Execute()
-}
-
 func TestOpCheckSigECDSASecp256r1(t *testing.T) {
 	t.Parallel()
 	priv, comp := r1CompressedPubKey(t)
@@ -63,15 +46,6 @@ func TestOpCheckSigECDSAExplicitSighashByte(t *testing.T) {
 	engine.tx.TxIn[0].Witness[0] = append(
 		ecdsaK1Compact(t, priv, digest), byte(txscript.SigHashAll))
 	require.NoError(t, engine.Execute())
-}
-
-func csfsLeaf(t *testing.T, pubKey, msg, sig []byte) error {
-	t.Helper()
-	leaf, err := txscript.NewScriptBuilder().AddOp(OP_CHECKSIGFROMSTACK).Script()
-	require.NoError(t, err)
-	// Initial stack order is bottom-to-top; CSFS pops pubkey, msg, sig.
-	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{sig, msg, pubKey}, 1_000_000)
-	return engine.Execute()
 }
 
 func TestCSFSECDSASecp256k1(t *testing.T) {
@@ -126,4 +100,30 @@ func TestCSFSNativeP256InScriptSha256(t *testing.T) {
 	bad := append([]byte{}, sig...)
 	bad[0] ^= 0x01
 	require.Error(t, run(wire.TxWitness{bad, message}))
+}
+
+func checkSigLeafECDSA(t *testing.T, extendedPubKey []byte,
+	signCompact func(digest []byte) []byte) error {
+	t.Helper()
+
+	leaf, err := txscript.NewScriptBuilder().
+		AddData(extendedPubKey).
+		AddOp(OP_CHECKSIG).
+		Script()
+	require.NoError(t, err)
+
+	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{nil}, 2_000_000)
+	digest := arkadeDigest(t, &engine.tx, 0, engine.prevOutFetcher,
+		leaf, txscript.SigHashDefault)
+	engine.tx.TxIn[0].Witness[0] = signCompact(digest)
+	return engine.Execute()
+}
+
+func csfsLeaf(t *testing.T, pubKey, msg, sig []byte) error {
+	t.Helper()
+	leaf, err := txscript.NewScriptBuilder().AddOp(OP_CHECKSIGFROMSTACK).Script()
+	require.NoError(t, err)
+	// Initial stack order is bottom-to-top; CSFS pops pubkey, msg, sig.
+	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{sig, msg, pubKey}, 1_000_000)
+	return engine.Execute()
 }

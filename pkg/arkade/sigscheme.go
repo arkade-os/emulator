@@ -49,13 +49,9 @@ func parseSchemePubKey(pkBytes []byte) (*schemeKey, error) {
 	prefix := pkBytes[0]
 	key := pkBytes[1:]
 
-	discourage := func() (*schemeKey, error) {
+	if len(key) != 33 {
 		return nil, scriptError(txscript.ErrDiscourageUpgradeablePubKeyType,
 			"unsupported pubkey scheme")
-	}
-
-	if len(key) != 33 {
-		return discourage()
 	}
 
 	switch prefix {
@@ -87,7 +83,8 @@ func parseSchemePubKey(pkBytes []byte) (*schemeKey, error) {
 		return &schemeKey{scheme: schemeECDSASecp256r1, nistPub: pk}, nil
 
 	default:
-		return discourage()
+		return nil, scriptError(txscript.ErrDiscourageUpgradeablePubKeyType,
+			"unsupported pubkey scheme")
 	}
 }
 
