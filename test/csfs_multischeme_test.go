@@ -17,14 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCSFSNativeP256Multischeme verifies the WebAuthn-shaped flow via the
-// emulator submit path: the script hashes a message in-script with OP_SHA256,
-// then OP_CHECKSIGFROMSTACK verifies a native P-256 ECDSA signature over that
-// digest. No EC-arithmetic opcodes are required.
-//
-// NOTE: this test requires the dockerized regtest stack (arkd / wallet /
-// indexer / emulator) started via docker-compose.regtest.yml. Run it with
-// `make integrationtest`, not `go test ./test/...` directly.
+// Requires the dockerized regtest stack; run through make integrationtest.
 func TestCSFSNativeP256Multischeme(t *testing.T) {
 	ctx := t.Context()
 
@@ -52,7 +45,6 @@ func TestCSFSNativeP256Multischeme(t *testing.T) {
 
 	message := []byte("oracle price=42000")
 
-	// Standard SHA-256 (big-endian) — native ECDSA, no byte-reversal needed.
 	digest := sha256.Sum256(message)
 
 	comp := csfsMultischemeCompressedKey(t, priv)
@@ -64,16 +56,16 @@ func TestCSFSNativeP256Multischeme(t *testing.T) {
 	vtxoScript := createArkadeOnlyVtxoScript(aliceAddr.Signer, emulatorPubKey, arkadeScriptHash)
 
 	const contractAmount = int64(10_000)
-	vtxoInput := fund(t, ctx, alice, indexerSvc, aliceAddr.Signer, vtxoScript, contractAmount)
+	validInput := fund(t, ctx, alice, indexerSvc, aliceAddr.Signer, vtxoScript, contractAmount)
+	invalidInput := fund(t, ctx, alice, indexerSvc, aliceAddr.Signer, vtxoScript, contractAmount)
 
-	// Witness: [signature, message]. OP_SHA256 hashes message inside the script.
 	validWitness := wire.TxWitness{sig, message}
 
 	receiverPkScript := randomP2TR(t)
 
-	buildSpend := func(w wire.TxWitness) (*psbt.Packet, []*psbt.Packet) {
+	buildSpend := func(input offchain.VtxoInput, w wire.TxWitness) (*psbt.Packet, []*psbt.Packet) {
 		spendTx, checkpoints, err := offchain.BuildTxs(
-			[]offchain.VtxoInput{vtxoInput},
+			[]offchain.VtxoInput{input},
 			[]*wire.TxOut{{Value: contractAmount, PkScript: receiverPkScript}},
 			checkpointScriptBytes,
 		)
@@ -85,7 +77,7 @@ func TestCSFSNativeP256Multischeme(t *testing.T) {
 	}
 
 	t.Run("valid_signature_accepted", func(t *testing.T) {
-		spendTx, checkpoints := buildSpend(validWitness)
+		spendTx, checkpoints := buildSpend(validInput, validWitness)
 
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, spendTx, 0)
 
@@ -101,7 +93,7 @@ func TestCSFSNativeP256Multischeme(t *testing.T) {
 		bad := append([]byte{}, sig...)
 		bad[0] ^= 0x01
 
-		spendTx, checkpoints := buildSpend(wire.TxWitness{bad, message})
+		spendTx, checkpoints := buildSpend(invalidInput, wire.TxWitness{bad, message})
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
@@ -111,15 +103,9 @@ func TestCSFSNativeP256Multischeme(t *testing.T) {
 	})
 }
 
-// csfsMultischemeVerifyScript builds the arkade script for native P-256 CSFS:
-//
-//	OP_SHA256                 // message -> sha256(message)
-//	<0x11||compressedP256>   // push extended pubkey
-//	OP_CHECKSIGFROMSTACK      // pops pubkey, sha256(message), sig
-//
-// Witness order (top on right): [sig, message].
 func csfsMultischemeVerifyScript(t *testing.T, comp []byte) []byte {
 	t.Helper()
+	// OP_SHA256 turns the witness message into the digest checked by CSFS.
 	out, err := txscript.NewScriptBuilder().
 		AddOp(arkade.OP_SHA256).
 		AddData(append([]byte{0x11}, comp...)).
@@ -129,11 +115,9 @@ func csfsMultischemeVerifyScript(t *testing.T, comp []byte) []byte {
 	return out
 }
 
-// csfsMultischemeCompressedKey returns the SEC1 compressed public key for a
-// P-256 private key, using the non-deprecated Bytes() API.
 func csfsMultischemeCompressedKey(t *testing.T, priv *ecdsa.PrivateKey) []byte {
 	t.Helper()
-	enc, err := priv.PublicKey.Bytes() // 0x04 || X(32) || Y(32)
+	enc, err := priv.PublicKey.Bytes()
 	require.NoError(t, err)
 	require.Len(t, enc, 65)
 	x := new(big.Int).SetBytes(enc[1:33])
@@ -141,8 +125,6 @@ func csfsMultischemeCompressedKey(t *testing.T, priv *ecdsa.PrivateKey) []byte {
 	return elliptic.MarshalCompressed(elliptic.P256(), x, y)
 }
 
-// csfsMultischemeCompactSig signs hash with a P-256 key, normalizes to low-s,
-// and returns 64-byte r||s (each big-endian, left-padded to 32 bytes).
 func csfsMultischemeCompactSig(t *testing.T, priv *ecdsa.PrivateKey, hash []byte) []byte {
 	t.Helper()
 	r, s, err := ecdsa.Sign(rand.Reader, priv, hash)

@@ -273,7 +273,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | OP_INSPECTNUMOUTPUTS | 213 | 0xd5 | Nothing | numOutputs | Pushes the number of outputs in the transaction (scriptNum) onto the stack. |
 | OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight (4 bytes, little-endian) onto the stack. Weight is calculated as `SerializeSizeStripped() * 4`. |
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
-| OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies a Schnorr signature against in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
+| OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
 
 ### Packet Introspection
 
@@ -324,7 +324,7 @@ and can be up to the maximum script element size. `OP_NUM2BIN` and
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
 | OP_DIGEST | 195 | 0xc3 | data hash_type | hash | Pushes the digest of `data` under the algorithm selected by `hash_type` (top of stack): `1`=SHA-256, `2`=SHA-1, `3`=RIPEMD-160, `4`=Keccak-256 (legacy/Ethereum, distinct from NIST SHA3), `5`=SHA3-256 (NIST). Any other `hash_type` fails the script. |
-| OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig pubkey message | True/false | Verifies a Schnorr signature. Pops signature (64 bytes), public key (32 bytes), and message from the stack. Returns 1 if valid, 0 otherwise. If signature is empty, pushes empty vector. |
+| OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig message pubkey | True/false | Verifies a 64-byte compact signature against the message and public key popped from the stack. Public keys are either legacy 32-byte x-only Schnorr/secp256k1 keys, `0x10 || compressed secp256k1` for ECDSA/secp256k1, or `0x11 || compressed P-256` for ECDSA/P-256. ECDSA messages must be 32-byte digests. If signature is empty, pushes empty vector. |
 | OP_MERKLEBRANCHVERIFY | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. |
 
 ### Elliptic Curve Operations

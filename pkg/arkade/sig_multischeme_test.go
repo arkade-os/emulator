@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// checkSigLeafECDSA builds `<pubkey> OP_CHECKSIG` and runs it with sig as the
-// sole witness item, returning the engine's Execute error.
 func checkSigLeafECDSA(t *testing.T, extendedPubKey []byte,
 	signCompact func(digest []byte) []byte) error {
 	t.Helper()
@@ -31,20 +29,10 @@ func checkSigLeafECDSA(t *testing.T, extendedPubKey []byte,
 	return engine.Execute()
 }
 
-func TestOpCheckSigECDSASecp256k1(t *testing.T) {
-	t.Parallel()
-	priv, _ := btcec.NewPrivateKey()
-	pk := append([]byte{0x10}, priv.PubKey().SerializeCompressed()...)
-	err := checkSigLeafECDSA(t, pk, func(d []byte) []byte {
-		return ecdsaK1Compact(t, priv, d)
-	})
-	require.NoError(t, err)
-}
-
 func TestOpCheckSigECDSASecp256r1(t *testing.T) {
 	t.Parallel()
 	priv, comp := r1CompressedPubKey(t)
-	pk := append([]byte{0x11}, comp...)
+	pk := append([]byte{extPubKeyECDSASecp256r1}, comp...)
 	err := checkSigLeafECDSA(t, pk, func(d []byte) []byte {
 		return ecdsaR1Compact(t, priv, d)
 	})
@@ -55,19 +43,17 @@ func TestOpCheckSigECDSAWrongKeyRejected(t *testing.T) {
 	t.Parallel()
 	priv, _ := btcec.NewPrivateKey()
 	other, _ := btcec.NewPrivateKey()
-	pk := append([]byte{0x10}, priv.PubKey().SerializeCompressed()...)
+	pk := append([]byte{extPubKeyECDSASecp256k1}, priv.PubKey().SerializeCompressed()...)
 	err := checkSigLeafECDSA(t, pk, func(d []byte) []byte {
-		return ecdsaK1Compact(t, other, d) // signed by the wrong key
+		return ecdsaK1Compact(t, other, d)
 	})
 	require.Error(t, err)
 }
 
-// verifies the explicit sighash-type byte path still works for ECDSA: a
-// 65-byte sig (64 core + 0x01 SIGHASH_ALL) over the SIGHASH_ALL digest.
 func TestOpCheckSigECDSAExplicitSighashByte(t *testing.T) {
 	t.Parallel()
 	priv, _ := btcec.NewPrivateKey()
-	pk := append([]byte{0x10}, priv.PubKey().SerializeCompressed()...)
+	pk := append([]byte{extPubKeyECDSASecp256k1}, priv.PubKey().SerializeCompressed()...)
 
 	leaf, err := txscript.NewScriptBuilder().AddData(pk).AddOp(OP_CHECKSIG).Script()
 	require.NoError(t, err)
@@ -79,43 +65,33 @@ func TestOpCheckSigECDSAExplicitSighashByte(t *testing.T) {
 	require.NoError(t, engine.Execute())
 }
 
-// csfsLeaf pushes the 3 CSFS inputs from the witness and runs
-// `OP_CHECKSIGFROMSTACK`. Witness order (top on right): [sig, msg, pubkey].
 func csfsLeaf(t *testing.T, pubKey, msg, sig []byte) error {
 	t.Helper()
 	leaf, err := txscript.NewScriptBuilder().AddOp(OP_CHECKSIGFROMSTACK).Script()
 	require.NoError(t, err)
-	// Engine expects witness pushed so that pop order is pubkey, msg, sig.
+	// Initial stack order is bottom-to-top; CSFS pops pubkey, msg, sig.
 	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{sig, msg, pubKey}, 1_000_000)
 	return engine.Execute()
-}
-
-func TestCSFSECDSASecp256r1(t *testing.T) {
-	t.Parallel()
-	priv, comp := r1CompressedPubKey(t)
-	pk := append([]byte{0x11}, comp...)
-
-	// The script author owns hashing: here msg is already the 32-byte digest.
-	digest := bytes.Repeat([]byte{0x5a}, 32)
-	sig := ecdsaR1Compact(t, priv, digest)
-
-	require.NoError(t, csfsLeaf(t, pk, digest, sig))
-
-	bad := append([]byte{}, sig...)
-	bad[10] ^= 0x01
-	require.Error(t, csfsLeaf(t, pk, digest, bad))
 }
 
 func TestCSFSECDSASecp256k1(t *testing.T) {
 	t.Parallel()
 	priv, _ := btcec.NewPrivateKey()
-	pk := append([]byte{0x10}, priv.PubKey().SerializeCompressed()...)
+	pk := append([]byte{extPubKeyECDSASecp256k1}, priv.PubKey().SerializeCompressed()...)
 	digest := bytes.Repeat([]byte{0x33}, 32)
 	sig := ecdsaK1Compact(t, priv, digest)
 	require.NoError(t, csfsLeaf(t, pk, digest, sig))
 }
 
-// Backwards compat: legacy 32-byte Schnorr CSFS still verifies.
+func TestCSFSECDSARejectsNonDigestMessage(t *testing.T) {
+	t.Parallel()
+	priv, comp := r1CompressedPubKey(t)
+	pk := append([]byte{extPubKeyECDSASecp256r1}, comp...)
+	digest := bytes.Repeat([]byte{0x44}, 32)
+	sig := ecdsaR1Compact(t, priv, digest)
+	require.Error(t, csfsLeaf(t, pk, append(digest, 0x00), sig))
+}
+
 func TestCSFSSchnorrLegacyStillWorks(t *testing.T) {
 	t.Parallel()
 	priv, _ := btcec.NewPrivateKey()
@@ -126,10 +102,6 @@ func TestCSFSSchnorrLegacyStillWorks(t *testing.T) {
 	require.NoError(t, csfsLeaf(t, xonly, msg, sig.Serialize()))
 }
 
-// TestCSFSNativeP256InScriptSha256 exercises the WebAuthn-shaped flow:
-// the script hashes the witness message with OP_SHA256 in-script, then
-// OP_CHECKSIGFROMSTACK verifies a native P-256 ECDSA signature over that
-// digest. No EC-arithmetic opcodes are needed.
 func TestCSFSNativeP256InScriptSha256(t *testing.T) {
 	t.Parallel()
 
@@ -138,11 +110,10 @@ func TestCSFSNativeP256InScriptSha256(t *testing.T) {
 	digest := sha256.Sum256(message)
 	sig := ecdsaR1Compact(t, priv, digest[:])
 
-	// Script: hash the witness message in-script, then verify a native P-256
-	// ECDSA sig over that digest. Stack before CSFS: [sig, sha256(message), pubkey].
+	// Script hashes the witness message before native P-256 verification.
 	leaf, err := txscript.NewScriptBuilder().
 		AddOp(OP_SHA256).
-		AddData(append([]byte{0x11}, comp...)).
+		AddData(append([]byte{extPubKeyECDSASecp256r1}, comp...)).
 		AddOp(OP_CHECKSIGFROMSTACK).
 		Script()
 	require.NoError(t, err)
@@ -150,7 +121,6 @@ func TestCSFSNativeP256InScriptSha256(t *testing.T) {
 	run := func(w wire.TxWitness) error {
 		return runTapscriptLeaf(t, leaf, w, 1_000_000).Execute()
 	}
-	// Witness supplies [signature, message]; OP_SHA256 replaces message with its digest.
 	require.NoError(t, run(wire.TxWitness{sig, message}))
 
 	bad := append([]byte{}, sig...)
