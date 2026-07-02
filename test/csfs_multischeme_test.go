@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Requires the dockerized regtest stack; run through make integrationtest.
 func TestCSFSNativeP256Multischeme(t *testing.T) {
 	ctx := t.Context()
 
