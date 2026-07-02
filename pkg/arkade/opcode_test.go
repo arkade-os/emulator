@@ -827,7 +827,7 @@ func checksigFromStackSpec() *opcodeSpec {
 			{
 				name:          "invalid_pk_size",
 				inputStack:    [][]byte{{0x01}, {0x02}, {0x03}},
-				expectedError: txscript.ErrInvalidStackOperation,
+				expectedError: txscript.ErrDiscourageUpgradeablePubKeyType,
 			},
 		},
 	}

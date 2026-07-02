@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -354,87 +353,57 @@ func arkadeOutputsHash(tx *wire.MsgTx) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// tapscriptSigVerifier verifies a Schnorr signature against the arkade
-// tapscript sighash (see computeArkadeSighash). Arkade is tapscript-only, so
-// there is no keyspend code path to abstract over.
+// tapscriptSigVerifier verifies a signature for an OP_CHECKSIG /
+// OP_CHECKSIGVERIFY / OP_CHECKSIGADD input against the arkade tapscript
+// sighash (see computeArkadeSighash) under whatever scheme the public key
+// encodes. Arkade is tapscript-only, so there is no keyspend path.
 type tapscriptSigVerifier struct {
-	pubKey  *btcec.PublicKey
+	scheme  *schemeKey
 	pkBytes []byte
 
-	fullSigBytes []byte
-	sig          *schnorr.Signature
+	fullSigBytes []byte // cache key + nullfail comparison
+	coreSig      []byte // 64-byte r||s
 
 	hashType txscript.SigHashType
-
-	vm *Engine
+	vm       *Engine
 }
 
-// parseTaprootSigAndPubKey parses the 32-byte x-only pubkey and the schnorr
-// signature (with optional trailing sighash byte) used by tapscript spends.
-func parseTaprootSigAndPubKey(pkBytes, rawSig []byte,
-) (*btcec.PublicKey, *schnorr.Signature, txscript.SigHashType, error) {
-
-	pubKey, err := schnorr.ParsePubKey(pkBytes)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-
-	var (
-		sig         *schnorr.Signature
-		sigHashType txscript.SigHashType
-	)
+// splitTaprootSig separates the 64-byte r||s core from an optional explicit
+// sighash-type byte. A bare 64-byte signature implies SIGHASH_DEFAULT; 65
+// bytes with a non-zero trailing byte carry an explicit type. Both Schnorr and
+// ECDSA use a 64-byte core, so this split is scheme-agnostic.
+func splitTaprootSig(rawSig []byte) ([]byte, txscript.SigHashType, error) {
 	switch {
-	// 64 bytes → implicit SIGHASH_DEFAULT (alias for SIGHASH_ALL).
-	case len(rawSig) == schnorr.SignatureSize:
-		sig, err = schnorr.ParseSignature(rawSig)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		sigHashType = txscript.SigHashDefault
-
-	// 65 bytes with a non-zero trailing byte → explicit sighash type.
-	case len(rawSig) == schnorr.SignatureSize+1 && rawSig[64] != 0:
-		sigHashType = txscript.SigHashType(rawSig[schnorr.SignatureSize])
-		sig, err = schnorr.ParseSignature(rawSig[:schnorr.SignatureSize])
-		if err != nil {
-			return nil, nil, 0, err
-		}
-
+	case len(rawSig) == schnorr.SignatureSize: // 64 bytes
+		return rawSig, txscript.SigHashDefault, nil
+	case len(rawSig) == schnorr.SignatureSize+1 && rawSig[schnorr.SignatureSize] != 0:
+		return rawSig[:schnorr.SignatureSize],
+			txscript.SigHashType(rawSig[schnorr.SignatureSize]), nil
 	default:
-		str := fmt.Sprintf("invalid sig len: %v", len(rawSig))
-		return nil, nil, 0, scriptError(txscript.ErrInvalidTaprootSigLen, str)
+		return nil, 0, scriptError(txscript.ErrInvalidTaprootSigLen,
+			fmt.Sprintf("invalid sig len: %v", len(rawSig)))
 	}
-
-	return pubKey, sig, sigHashType, nil
 }
 
 // newTapscriptSigVerifier constructs a verifier for an OP_CHECKSIG /
-// OP_CHECKSIGADD input. Rejects empty or non-32-byte pubkeys per BIP342.
+// OP_CHECKSIGADD input, resolving the public key's scheme and splitting the
+// optional sighash-type byte off the signature.
 func newTapscriptSigVerifier(pkBytes, fullSigBytes []byte,
 	vm *Engine) (*tapscriptSigVerifier, error) {
 
-	switch len(pkBytes) {
-	case 0:
-		return nil, scriptError(txscript.ErrTaprootPubkeyIsEmpty, "")
-	case 32:
-		// Fall through.
-	default:
-		str := fmt.Sprintf("pubkey of length %v was used", len(pkBytes))
-		return nil, scriptError(
-			txscript.ErrDiscourageUpgradeablePubKeyType, str,
-		)
-	}
-
-	pubKey, sig, hashType, err := parseTaprootSigAndPubKey(pkBytes, fullSigBytes)
+	scheme, err := parseSchemePubKey(pkBytes)
 	if err != nil {
 		return nil, err
 	}
-
+	coreSig, hashType, err := splitTaprootSig(fullSigBytes)
+	if err != nil {
+		return nil, err
+	}
 	return &tapscriptSigVerifier{
-		pubKey:       pubKey,
+		scheme:       scheme,
 		pkBytes:      pkBytes,
-		sig:          sig,
 		fullSigBytes: fullSigBytes,
+		coreSig:      coreSig,
 		hashType:     hashType,
 		vm:           vm,
 	}, nil
@@ -449,8 +418,7 @@ func (v *tapscriptSigVerifier) verifySig(sigHash []byte) bool {
 			return true
 		}
 	}
-
-	if !v.sig.Verify(sigHash, v.pubKey) {
+	if !v.scheme.verify(sigHash, v.coreSig) {
 		return false
 	}
 	if v.vm.sigCache != nil {
