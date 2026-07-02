@@ -2571,9 +2571,6 @@ func opcodeChecksigFromStack(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	// The opcode does not hash: message is used exactly as the script placed
-	// it (Schnorr folds it into its BIP340 challenge; ECDSA treats it as the
-	// digest). The script owns any hashing it needs.
 	if !scheme.verify(message, signature) {
 		return scriptError(txscript.ErrNullFail, "signature verification failed")
 	}
