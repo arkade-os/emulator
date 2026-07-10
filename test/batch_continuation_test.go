@@ -40,8 +40,6 @@ import (
 // increment can read the previous counter via OP_INSPECTINPUTPACKET and chain
 // from the batch leaf VTXO.
 func TestCounterContractBatchContinuation(t *testing.T) {
-	t.Skip("requires arkd PR https://github.com/arkade-os/arkd/pull/1022")
-
 	ctx := t.Context()
 
 	alice, aliceWallet, alicePubKey, grpcClient := setupArkSDKwithPublicKey(t)
