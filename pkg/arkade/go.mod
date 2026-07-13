@@ -1,6 +1,6 @@
 module github.com/arkade-os/emulator/pkg/arkade
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6
