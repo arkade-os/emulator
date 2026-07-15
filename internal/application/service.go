@@ -12,6 +12,7 @@ import (
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	log "github.com/sirupsen/logrus"
 )
 
 type Info struct {
@@ -92,7 +93,18 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	arkdInfo, err := arkdClient.GetInfo(ctx)
+	// arkd may still be booting when the emulator starts, retry if it fails.
+	var arkdInfo *client.Info
+	err = retryWithBackoff(ctx, arkdConnectRetryConfig,
+		func() error {
+			var e error
+			arkdInfo, e = arkdClient.GetInfo(ctx)
+			return e
+		},
+		func(attempt int, e error) {
+			log.WithField("attempt", attempt).Warnf("arkd not ready: %s", e)
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
 	}
