@@ -30,9 +30,16 @@ type OffchainTx struct {
 	Checkpoints []*psbt.Packet
 }
 
+// IntentMessage is the common surface of every arkd intent message type;
+// Encode/Decode are the only methods all six share.
+type IntentMessage interface {
+	Encode() (string, error)
+	Decode(string) error
+}
+
 type Intent struct {
 	Proof   intent.Proof
-	Message intent.RegisterMessage
+	Message IntentMessage
 }
 
 type BatchFinalization struct {

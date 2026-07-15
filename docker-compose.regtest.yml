@@ -11,11 +11,7 @@ services:
        # public key has odd y
       - EMULATOR_SECRET_KEY=5646b2e23bbb82491fb4ef262079ff17594d5e873fc6bcea5f1453edbe1029b1
       - EMULATOR_DEPRECATED_KEYS=0202020202020202020202020202020202020202020202020202020202020202,0303030303030303030303030303030303030303030303030303030303030303
-      - EMULATOR_NO_TLS=true
       - EMULATOR_ARKD_URL=arkd:7070
-    volumes:
-      - type: tmpfs
-        target: /app/data
     depends_on:
       - arkd
   pgnbxplorer:
@@ -63,7 +59,7 @@ services:
 
   arkd-wallet:
     restart: unless-stopped
-    image: ghcr.io/arkade-os/arkd-wallet:v0.9.3
+    image: ghcr.io/arkade-os/arkd-wallet:v0.9.13
     container_name: arkd-wallet
     depends_on:
       - nbxplorer
@@ -79,9 +75,7 @@ services:
       - type: tmpfs
         target: /app/data
   arkd:
-    build:
-      context: https://github.com/arkade-os/arkd.git#v0.9.3
-      dockerfile: Dockerfile
+    image: ghcr.io/arkade-os/arkd:v0.9.13
     container_name: arkd
     restart: unless-stopped
     depends_on:

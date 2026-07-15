@@ -2,6 +2,7 @@ package grpchandler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -284,6 +285,9 @@ func parseTxTree(fromProto []*emulatorv1.TxTreeNode) (*tree.TxTree, error) {
 	return txTree, nil
 }
 
+// parseIntent decodes the proof and intent message. The emulator takes every
+// intent type through one endpoint, so it sniffs `BaseMessage.Type` then decodes
+// the matching concrete struct.
 func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 	proof := fromProto.GetProof()
 	message := fromProto.GetMessage()
@@ -291,7 +295,6 @@ func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 	if len(proof) <= 0 {
 		return nil, fmt.Errorf("missing proof")
 	}
-
 	if len(message) <= 0 {
 		return nil, fmt.Errorf("missing message")
 	}
@@ -301,14 +304,37 @@ func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 		return nil, fmt.Errorf("invalid proof: %w", err)
 	}
 
-	var registerMessage intent.RegisterMessage
-	if err := registerMessage.Decode(message); err != nil {
+	// peek at the envelope to read the type
+	var base intent.BaseMessage
+	if err := json.Unmarshal([]byte(message), &base); err != nil {
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
 
-	intentProof := intent.Proof{Packet: *proofPsbt}
+	// pick the concrete struct for that type
+	var decoded emulator.IntentMessage
+	switch base.Type {
+	case intent.IntentMessageTypeRegister:
+		decoded = &intent.RegisterMessage{}
+	case intent.IntentMessageTypeEstimateFee:
+		decoded = &intent.EstimateIntentFeeMessage{}
+	case intent.IntentMessageTypeDelete:
+		decoded = &intent.DeleteMessage{}
+	case intent.IntentMessageTypeGetPendingTx:
+		decoded = &intent.GetPendingTxMessage{}
+	case intent.IntentMessageTypeGetIntent:
+		decoded = &intent.GetIntentMessage{}
+	case intent.IntentMessageTypeGetData:
+		decoded = &intent.GetDataMessage{}
+	default:
+		return nil, fmt.Errorf("unsupported intent message type: %s", base.Type)
+	}
+
+	if err := decoded.Decode(message); err != nil {
+		return nil, fmt.Errorf("invalid %s message: %w", base.Type, err)
+	}
+
 	return &emulator.Intent{
-		Proof:   intentProof,
-		Message: registerMessage,
+		Proof:   intent.Proof{Packet: *proofPsbt},
+		Message: decoded,
 	}, nil
 }

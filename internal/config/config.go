@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
@@ -17,48 +16,32 @@ import (
 )
 
 const (
-	SecretKey       = "SECRET_KEY"
-	DeprecatedKeys  = "DEPRECATED_KEYS"
-	Datadir         = "DATADIR"
-	Port            = "PORT"
-	NoTLS           = "NO_TLS"
-	TLSExtraIPs     = "TLS_EXTRA_IPS"
-	TLSExtraDomains = "TLS_EXTRA_DOMAINS"
-	LogLevel        = "LOG_LEVEL"
-	ArkdURL         = "ARKD_URL"
-	ComputeLimits   = "COMPUTE_LIMITS"
+	SecretKey      = "SECRET_KEY"
+	DeprecatedKeys = "DEPRECATED_KEYS"
+	Port           = "PORT"
+	LogLevel       = "LOG_LEVEL"
+	ArkdURL        = "ARKD_URL"
+	ComputeLimits  = "COMPUTE_LIMITS"
 )
 
 var (
-	defaultDatadir         = arklib.AppDataDir("emulator", false)
-	defaultPort            = uint32(7073)
-	defaultNoTLS           = false
-	defaultTLSExtraIPs     = []string{}
-	defaultTLSExtraDomains = []string{}
-	defaultLogLevel        = log.DebugLevel
+	defaultPort     = uint32(7073)
+	defaultLogLevel = log.DebugLevel
 )
 
 type Config struct {
-	CurrentKey      *btcec.PrivateKey
-	DeprecatedKeys  []*btcec.PrivateKey
-	Datadir         string
-	Port            uint32
-	NoTLS           bool
-	TLSExtraIPs     []string
-	TLSExtraDomains []string
-	ArkdURL         string
-	ComputeLimits   arkade.ComputeLimits
+	CurrentKey     *btcec.PrivateKey
+	DeprecatedKeys []*btcec.PrivateKey
+	Port           uint32
+	ArkdURL        string
+	ComputeLimits  arkade.ComputeLimits
 }
 
 func LoadConfig() (*Config, error) {
 	viper.SetEnvPrefix("EMULATOR")
 	viper.AutomaticEnv()
 
-	viper.SetDefault(Datadir, defaultDatadir)
 	viper.SetDefault(Port, defaultPort)
-	viper.SetDefault(NoTLS, defaultNoTLS)
-	viper.SetDefault(TLSExtraIPs, defaultTLSExtraIPs)
-	viper.SetDefault(TLSExtraDomains, defaultTLSExtraDomains)
 	viper.SetDefault(LogLevel, defaultLogLevel)
 
 	currentKey, err := parsePrivateKey(viper.GetString(SecretKey), "secret key")
@@ -95,15 +78,11 @@ func LoadConfig() (*Config, error) {
 	}
 
 	cfg := &Config{
-		CurrentKey:      currentKey,
-		DeprecatedKeys:  deprecatedKeys,
-		Datadir:         viper.GetString(Datadir),
-		Port:            viper.GetUint32(Port),
-		NoTLS:           viper.GetBool(NoTLS),
-		TLSExtraIPs:     viper.GetStringSlice(TLSExtraIPs),
-		TLSExtraDomains: viper.GetStringSlice(TLSExtraDomains),
-		ArkdURL:         viper.GetString(ArkdURL),
-		ComputeLimits:   computeLimits,
+		CurrentKey:     currentKey,
+		DeprecatedKeys: deprecatedKeys,
+		Port:           viper.GetUint32(Port),
+		ArkdURL:        viper.GetString(ArkdURL),
+		ComputeLimits:  computeLimits,
 	}
 	if cfg.ArkdURL == "" {
 		return nil, fmt.Errorf("missing arkd url")

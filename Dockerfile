@@ -1,5 +1,5 @@
 # First image used to build the sources
-FROM golang:1.26.4 AS builder
+FROM golang:1.26.5 AS builder
 
 ARG VERSION
 ARG TARGETOS
@@ -37,8 +37,5 @@ WORKDIR /app
 COPY --from=builder /app/bin/* /app/
 
 ENV PATH="/app:${PATH}"
-ENV EMULATOR_DATADIR=/app/data
-
-VOLUME /app/data
 
 ENTRYPOINT [ "emulator" ]

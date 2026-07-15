@@ -2,7 +2,6 @@ package grpcservice
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,18 +16,9 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	grpchealth "google.golang.org/grpc/health/grpc_health_v1"
-)
-
-const (
-	tlsKeyFile  = "key.pem"
-	tlsCertFile = "cert.pem"
-	tlsFolder   = "tls"
 )
 
 type service struct {
@@ -44,24 +34,11 @@ func NewService(
 	version string, cfg *config.Config,
 ) (interfaces.Service, error) {
 	config := Config{
-		Datadir:         cfg.Datadir,
-		Port:            cfg.Port,
-		NoTLS:           cfg.NoTLS,
-		TLSExtraIPs:     cfg.TLSExtraIPs,
-		TLSExtraDomains: cfg.TLSExtraDomains,
+		Port: cfg.Port,
 	}
 
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid service config: %s", err)
-	}
-
-	if !config.insecure() {
-		if err := generateOperatorTLSKeyCert(
-			config.tlsDatadir(), config.TLSExtraIPs, config.TLSExtraDomains,
-		); err != nil {
-			return nil, err
-		}
-		log.Debugf("generated TLS key pair at path: %s", config.tlsDatadir())
 	}
 
 	return &service{
@@ -95,28 +72,17 @@ func (s *service) Stop() {
 }
 
 func (s *service) start() error {
-	tlsConfig, err := s.config.tlsConfig()
-	if err != nil {
+	if err := s.newServer(); err != nil {
 		return err
 	}
 
-	if err := s.newServer(tlsConfig); err != nil {
-		return err
-	}
-
-	// Start main server
-	if s.config.insecure() {
-		// nolint:all
-		go s.server.ListenAndServe()
-	} else {
-		// nolint:all
-		go s.server.ListenAndServeTLS("", "")
-	}
+	// nolint:all
+	go s.server.ListenAndServe()
 
 	return nil
 }
 
-func (s *service) newServer(tlsConfig *tls.Config) error {
+func (s *service) newServer() error {
 	ctx := context.Background()
 
 	otelHandler := otelgrpc.NewServerHandler(
@@ -126,11 +92,7 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 	grpcConfig := []grpc.ServerOption{
 		grpc.StatsHandler(otelHandler),
 	}
-	creds := insecure.NewCredentials()
-	if !s.config.insecure() {
-		creds = credentials.NewTLS(tlsConfig)
-	}
-	grpcConfig = append(grpcConfig, grpc.Creds(creds))
+	grpcConfig = append(grpcConfig, grpc.Creds(insecure.NewCredentials()))
 
 	// Server grpc.
 	grpcServer := grpc.NewServer(grpcConfig...)
@@ -147,13 +109,7 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 	grpchealth.RegisterHealthServer(grpcServer, healthHandler)
 
 	// Creds for grpc gateway reverse proxy.
-	gatewayCreds := insecure.NewCredentials()
-	if !s.config.insecure() {
-		gatewayCreds = credentials.NewTLS(&tls.Config{
-			InsecureSkipVerify: true, // #nosec
-		})
-	}
-	gatewayOpts := grpc.WithTransportCredentials(gatewayCreds)
+	gatewayOpts := grpc.WithTransportCredentials(insecure.NewCredentials())
 	conn, err := grpc.NewClient(
 		s.config.gatewayAddress(), gatewayOpts,
 	)
@@ -184,15 +140,16 @@ func (s *service) newServer(tlsConfig *tls.Config) error {
 	mux.Handle("/", handler)
 
 	httpServerHandler := http.Handler(mux)
-	if s.config.insecure() {
-		httpServerHandler = h2c.NewHandler(httpServerHandler, &http2.Server{})
-	}
+
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
 
 	s.grpcServer = grpcServer
 	s.server = &http.Server{
 		Addr:      s.config.address(),
 		Handler:   httpServerHandler,
-		TLSConfig: tlsConfig,
+		Protocols: protocols,
 	}
 
 	return nil

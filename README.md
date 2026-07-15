@@ -58,7 +58,7 @@ If this emulator is the last required non-`arkd` signer for all owned inputs mat
 
 ### SubmitIntent
 
-Signs an intent proof after validating the register message and executing Arkade scripts on the proof transaction. Must be called before intent registration.
+Signs an intent proof after validating the intent message and executing Arkade scripts on the proof transaction. Accepts any arkd intent message type (`register`, `delete`, `get-pending-tx`, `estimate-intent-fee`, `get-intent`, `get-data`), so contract VTXOs can authenticate every intent-based operation, not just registration.
 
 **Endpoint**: `POST /v1/intent`
 
@@ -67,7 +67,7 @@ Signs an intent proof after validating the register message and executing Arkade
 {
   "intent": {
     "proof": "base64_encoded_psbt",
-    "message": "base64_encoded_register_message"
+    "message": "base64_encoded_intent_message"
   }
 }
 ```
@@ -90,7 +90,7 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
 {
   "signedIntent": {
     "proof": "base64_encoded_signed_psbt",
-    "message": "base64_encoded_register_message"
+    "message": "base64_encoded_intent_message"
   },
   "forfeits": ["base64_encoded_forfeit_psbt1", "..."],
   "connectorTree": [
@@ -183,11 +183,7 @@ The service can be configured using environment variables:
 |----------|-------------|---------|
 | `EMULATOR_SECRET_KEY` | Private key for signing (hex encoded) | Required |
 | `EMULATOR_DEPRECATED_KEYS` | Comma-separated deprecated private keys (hex encoded) still accepted for signing. Empty means none. CSV is strict: leading commas, trailing commas, empty entries, whitespace, duplicates, and the current key are rejected. | Empty |
-| `EMULATOR_DATADIR` | Data directory path | OS-specific app data dir |
 | `EMULATOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
-| `EMULATOR_NO_TLS` | Disable TLS encryption | false |
-| `EMULATOR_TLS_EXTRA_IPS` | Additional IPs for TLS cert | [] |
-| `EMULATOR_TLS_EXTRA_DOMAINS` | Additional domains for TLS cert | [] |
 | `EMULATOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
 | `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
 | `EMULATOR_COMPUTE_LIMITS` | Comma-separated `OPCODE=limit` overrides for per-input opcode execution caps, for example `OP_ECPAIRING=8,OP_MODEXP=128`. Overrides are applied on top of defaults; use an empty value such as `OP_ECADD=` to remove a default cap. | Default compute limits |
@@ -323,6 +319,7 @@ and can be up to the maximum script element size. `OP_NUM2BIN` and
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
+| OP_DIGEST | 195 | 0xc3 | data hash_type | hash | Pushes the digest of `data` under the algorithm selected by `hash_type` (top of stack): `1`=SHA-256, `2`=SHA-1, `3`=RIPEMD-160, `4`=Keccak-256 (legacy/Ethereum, distinct from NIST SHA3), `5`=SHA3-256 (NIST). Any other `hash_type` fails the script. |
 | OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig pubkey message | True/false | Verifies a Schnorr signature. Pops signature (64 bytes), public key (32 bytes), and message from the stack. Returns 1 if valid, 0 otherwise. If signature is empty, pushes empty vector. |
 | OP_MERKLEBRANCHVERIFY | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. |
 
