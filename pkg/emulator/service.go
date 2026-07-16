@@ -76,6 +76,16 @@ type service struct {
 	computeLimits        arkade.ComputeLimits
 }
 
+// New builds a signing Service. secretKey is the current arkade-signing key and
+// arkdPubKey is the arkd signer key both are required. deprecatedKeys may be nil.
+//
+// finalizer may be nil: with a nil finalizer the Service runs signing-only, so
+// SubmitTx signs and returns without any arkd round-trip. Pass a non-nil
+// Finalizer (e.g. go-sdk's grpc client) to also submit and finalize on arkd.
+// Note this is a literal nil check, so a typed nil (e.g. a nil *grpcClient
+// wrapped in the interface) is treated as present and will panic in SubmitTx.
+//
+// The context is currently unused; it is accepted for forward compatibility.
 func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdPubKey *btcec.PublicKey, finalizer Finalizer, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
