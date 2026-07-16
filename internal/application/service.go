@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -12,6 +13,7 @@ import (
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	log "github.com/sirupsen/logrus"
 )
 
 type Info struct {
@@ -92,7 +94,20 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	arkdInfo, err := arkdClient.GetInfo(ctx)
+	var arkdInfo *client.Info
+
+	// arkd may still be booting when the emulator starts, retry if it fails.
+	err = retryWithBackoff(
+		ctx, arkdConnectRetryConfig,
+		func() error {
+			var e error
+			arkdInfo, e = arkdClient.GetInfo(ctx)
+			return e
+		},
+		func(attempt int, e error) {
+			log.WithField("attempt", attempt).Warnf("arkd not ready: %s", e)
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
 	}
@@ -133,4 +148,12 @@ func (s *service) GetInfo(ctx context.Context) (*Info, error) {
 		SignerPublicKey:            s.publicKey,
 		DeprecatedSignerPublicKeys: append([]string(nil), s.deprecatedPublicKeys...),
 	}, nil
+}
+
+var arkdConnectRetryConfig = retryConfig{
+	MinAttempts:  0,
+	InitialDelay: 1 * time.Second,
+	MaxDelay:     45 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2,
 }
