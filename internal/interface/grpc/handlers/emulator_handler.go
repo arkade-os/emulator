@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/internal/application"
@@ -282,33 +281,4 @@ func parseTxTree(fromProto []*emulatorv1.TxTreeNode) (*tree.TxTree, error) {
 	}
 
 	return txTree, nil
-}
-
-func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
-	proof := fromProto.GetProof()
-	message := fromProto.GetMessage()
-
-	if len(proof) <= 0 {
-		return nil, fmt.Errorf("missing proof")
-	}
-
-	if len(message) <= 0 {
-		return nil, fmt.Errorf("missing message")
-	}
-
-	proofPsbt, err := psbt.NewFromRawBytes(strings.NewReader(proof), true)
-	if err != nil {
-		return nil, fmt.Errorf("invalid proof: %w", err)
-	}
-
-	var registerMessage intent.RegisterMessage
-	if err := registerMessage.Decode(message); err != nil {
-		return nil, fmt.Errorf("invalid message: %w", err)
-	}
-
-	intentProof := intent.Proof{Packet: *proofPsbt}
-	return &application.Intent{
-		Proof:   intentProof,
-		Message: registerMessage,
-	}, nil
 }

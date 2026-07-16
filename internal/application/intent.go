@@ -14,7 +14,7 @@ import (
 // SubmitIntent aims to execute arkade scripts on unsigned intent proof
 // it must be used before registration of the intent
 func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet, error) {
-	if err := validateRegisterMessage(intent.Message); err != nil {
+	if err := validateMessage(intent.Message); err != nil {
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
 
@@ -76,20 +76,33 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	return ptx, nil
 }
 
-func validateRegisterMessage(message intent.RegisterMessage) error {
-	now := time.Now()
-	if message.ExpireAt > 0 {
-		expireAt := time.Unix(message.ExpireAt, 0)
-		if expireAt.Before(now) {
-			return fmt.Errorf("intent message expired")
-		}
+// validateMessage checks the proof's validity window. Register and estimate-fee
+// carry ValidAt+ExpireAt; the rest only ExpireAt, read here via a type switch.
+func validateMessage(message IntentMessage) error {
+	var validAt, expireAt int64
+	switch m := message.(type) {
+	case *intent.RegisterMessage:
+		validAt, expireAt = m.ValidAt, m.ExpireAt
+	case *intent.EstimateIntentFeeMessage:
+		validAt, expireAt = m.ValidAt, m.ExpireAt
+	case *intent.DeleteMessage:
+		expireAt = m.ExpireAt
+	case *intent.GetPendingTxMessage:
+		expireAt = m.ExpireAt
+	case *intent.GetIntentMessage:
+		expireAt = m.ExpireAt
+	case *intent.GetDataMessage:
+		expireAt = m.ExpireAt
+	default:
+		return fmt.Errorf("unsupported intent message type")
 	}
 
-	if message.ValidAt > 0 {
-		validAt := time.Unix(message.ValidAt, 0)
-		if validAt.After(now) {
-			return fmt.Errorf("intent message not valid yet")
-		}
+	now := time.Now()
+	if expireAt > 0 && time.Unix(expireAt, 0).Before(now) {
+		return fmt.Errorf("intent message expired")
+	}
+	if validAt > 0 && time.Unix(validAt, 0).After(now) {
+		return fmt.Errorf("intent message not valid yet")
 	}
 
 	return nil

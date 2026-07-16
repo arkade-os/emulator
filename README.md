@@ -58,7 +58,7 @@ If this emulator is the last required non-`arkd` signer for all owned inputs mat
 
 ### SubmitIntent
 
-Signs an intent proof after validating the register message and executing Arkade scripts on the proof transaction. Must be called before intent registration.
+Signs an intent proof after validating the intent message and executing Arkade scripts on the proof transaction. Accepts any arkd intent message type (`register`, `delete`, `get-pending-tx`, `estimate-intent-fee`, `get-intent`, `get-data`), so contract VTXOs can authenticate every intent-based operation, not just registration.
 
 **Endpoint**: `POST /v1/intent`
 
@@ -67,7 +67,7 @@ Signs an intent proof after validating the register message and executing Arkade
 {
   "intent": {
     "proof": "base64_encoded_psbt",
-    "message": "base64_encoded_register_message"
+    "message": "base64_encoded_intent_message"
   }
 }
 ```
@@ -90,7 +90,7 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
 {
   "signedIntent": {
     "proof": "base64_encoded_signed_psbt",
-    "message": "base64_encoded_register_message"
+    "message": "base64_encoded_intent_message"
   },
   "forfeits": ["base64_encoded_forfeit_psbt1", "..."],
   "connectorTree": [
@@ -183,11 +183,7 @@ The service can be configured using environment variables:
 |----------|-------------|---------|
 | `EMULATOR_SECRET_KEY` | Private key for signing (hex encoded) | Required |
 | `EMULATOR_DEPRECATED_KEYS` | Comma-separated deprecated private keys (hex encoded) still accepted for signing. Empty means none. CSV is strict: leading commas, trailing commas, empty entries, whitespace, duplicates, and the current key are rejected. | Empty |
-| `EMULATOR_DATADIR` | Data directory path | OS-specific app data dir |
 | `EMULATOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
-| `EMULATOR_NO_TLS` | Disable TLS encryption | false |
-| `EMULATOR_TLS_EXTRA_IPS` | Additional IPs for TLS cert | [] |
-| `EMULATOR_TLS_EXTRA_DOMAINS` | Additional domains for TLS cert | [] |
 | `EMULATOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
 | `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
 | `EMULATOR_COMPUTE_LIMITS` | Comma-separated `OPCODE=limit` overrides for per-input opcode execution caps, for example `OP_ECPAIRING=8,OP_MODEXP=128`. Overrides are applied on top of defaults; use an empty value such as `OP_ECADD=` to remove a default cap. | Default compute limits |

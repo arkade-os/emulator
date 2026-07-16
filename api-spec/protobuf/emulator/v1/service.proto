@@ -23,8 +23,8 @@ service EmulatorService {
     };
   }
 
-  // SubmitIntent signs an intent proof after validating the register message
-  // and executing Arkade Script on the intent proof transaction.
+  // SubmitIntent signs an intent proof (any arkd intent message type) after
+  // validating the message and executing Arkade Script on the proof transaction.
   rpc SubmitIntent(SubmitIntentRequest) returns (SubmitIntentResponse) {
     option (meshapi.gateway.http) = {
       post: "/v1/intent"
