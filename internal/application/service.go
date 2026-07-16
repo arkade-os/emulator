@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -93,9 +94,11 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	// arkd may still be booting when the emulator starts, retry if it fails.
 	var arkdInfo *client.Info
-	err = retryWithBackoff(ctx, arkdConnectRetryConfig,
+
+	// arkd may still be booting when the emulator starts, retry if it fails.
+	err = retryWithBackoff(
+		ctx, arkdConnectRetryConfig,
 		func() error {
 			var e error
 			arkdInfo, e = arkdClient.GetInfo(ctx)
@@ -145,4 +148,12 @@ func (s *service) GetInfo(ctx context.Context) (*Info, error) {
 		SignerPublicKey:            s.publicKey,
 		DeprecatedSignerPublicKeys: append([]string(nil), s.deprecatedPublicKeys...),
 	}, nil
+}
+
+var arkdConnectRetryConfig = retryConfig{
+	MinAttempts:  0,
+	InitialDelay: 1 * time.Second,
+	MaxDelay:     45 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2,
 }

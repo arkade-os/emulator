@@ -300,14 +300,6 @@ var finalizeRetryConfig = retryConfig{
 	Jitter:       0.2, // + or - 20% randomness
 }
 
-var arkdConnectRetryConfig = retryConfig{
-	MinAttempts:  0,
-	InitialDelay: 1 * time.Second,
-	MaxDelay:     45 * time.Second,
-	Multiplier:   2.0,
-	Jitter:       0.2,
-}
-
 func retryWithBackoff(
 	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
 ) error {
