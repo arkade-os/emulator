@@ -1,0 +1,49 @@
+# Enclave configuration
+# Edit this file then run: enclave init
+
+name: introspector                     # App name (used in stack name, EIF name)
+version: 0.0.1                   # Build version (semver, baked into binary via ldflags)
+region: us-east-1                # AWS region
+account: ""                      # AWS account ID (required)
+prefix: dev                      # Deployment prefix (stack = {prefix}Nitro{Name})
+instance_type: m6i.xlarge        # EC2 instance type
+migration_cooldown: "1m"         # Cooldown before migration proceeds
+is_kms_key_locked: false         # false (default): grant AWS root kms:PutKeyPolicy on the locked key — recovery from lockout works by adding a new PCR0 condition.
+                                 # true:             strict mode — the locked policy is frozen; even root cannot rewrite it. Only the attested enclave can decrypt.
+
+# Runtime coordinates for the enclave supervisor binary.
+# The supervisor handles attestation, secrets, PCR extension, and signing
+# middleware automatically. Your app is a plain HTTP server with zero runtime imports.
+runtime:
+  rev: "v0.0.76"
+  hash: "sha256-J/gbggHP7VD2uZT+itYH/x09uATJY2OHgte10N22VLM="
+  vendor_hash: "sha256-kkgp+uxc9pohZiCnz84nyXroUzsPhhtb0VgGa3dQgUo="
+
+app:
+  language: "go"                 # App language: go, nodejs, dotnet, rust
+  source: nix                    # "nix" = fetch from GitHub via Nix
+
+  # GitHub coordinates for the app to run inside the enclave.
+  # Your app is a plain HTTP server that listens on ENCLAVE_APP_PORT (default 7074).
+  # Secrets are passed as environment variables. No runtime imports needed.
+  nix_owner: "ArkLabsHQ"                  # GitHub owner (required)
+  nix_repo: "introspector"                   # GitHub repo name (required)
+  nix_rev: "67616e261b6e90a839a250599f8afa6ac52f9264"                    # Git commit SHA (required)
+  nix_hash: "sha256-HH04xNAJnmkboWd/iwV5swCQ34Gko7EdlQnltB9G7r4="                   # Nix source hash: nix-prefetch-url --unpack (required)
+  nix_vendor_hash: "sha256-y9AH8Ebus4IEL1YHf0kbCHCczRJJxhQedi7MMbUNYkA="            # Go vendor hash (required)
+  nix_sub_packages:
+    - cmd
+  binary_name: introspector
+  nix_subdir: ""                 # Subdirectory for monorepo (e.g. "server")
+  release_tag: "eif-latest"      # GitHub Release tag used by 'enclave tofu --remote'
+
+  # INTROSPECTOR_ARKD_URL is injected by tofu at deploy time;
+  # AWS credentials come from the EC2 role via IMDS.
+  env:
+    INTROSPECTOR_PORT: "7074"
+    INTROSPECTOR_NO_TLS: "true"
+
+secrets:
+  - name: signing_key
+    env_var: INTROSPECTOR_SECRET_KEY
+

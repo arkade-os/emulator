@@ -1,0 +1,47 @@
+# Test EIF config — `enclave test {build,init,start}` auto-pick this.
+# Identical to enclave.yaml except for app.env (localstack + mock-arkd).
+
+name: introspector
+version: 0.0.1
+region: us-east-1
+account: ""
+prefix: dev
+instance_type: m6i.xlarge
+migration_cooldown: "1m"
+is_kms_key_locked: false
+
+runtime:
+  rev: "v0.0.76"
+  hash: "sha256-J/gbggHP7VD2uZT+itYH/x09uATJY2OHgte10N22VLM="
+  vendor_hash: "sha256-kkgp+uxc9pohZiCnz84nyXroUzsPhhtb0VgGa3dQgUo="
+
+app:
+  language: "go"
+  source: nix
+
+  nix_owner: "ArkLabsHQ"
+  nix_repo: "introspector"
+  nix_rev: "67616e261b6e90a839a250599f8afa6ac52f9264"
+  nix_hash: "sha256-HH04xNAJnmkboWd/iwV5swCQ34Gko7EdlQnltB9G7r4="
+  nix_vendor_hash: "sha256-y9AH8Ebus4IEL1YHf0kbCHCczRJJxhQedi7MMbUNYkA="
+  nix_sub_packages:
+    - cmd
+  binary_name: introspector
+  nix_subdir: ""
+  release_tag: "eif-latest"
+
+  env:
+    INTROSPECTOR_PORT: "7074"
+    INTROSPECTOR_NO_TLS: "true"
+    INTROSPECTOR_ARKD_URL: "host.containers.internal:8081"
+    AWS_ENDPOINT_URL_KMS: "http://host.containers.internal:4000"
+    AWS_ENDPOINT_URL_SSM: "http://host.containers.internal:4566"
+    AWS_ENDPOINT_URL_STS: "http://host.containers.internal:4566"
+    AWS_ENDPOINT_URL_S3: "http://host.containers.internal:4566"
+    AWS_ENDPOINT_URL_LOGS: "http://host.containers.internal:4566"
+    AWS_ACCESS_KEY_ID: "test"
+    AWS_SECRET_ACCESS_KEY: "test"
+
+secrets:
+  - name: signing_key
+    env_var: INTROSPECTOR_SECRET_KEY
