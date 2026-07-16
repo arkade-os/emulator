@@ -174,6 +174,15 @@ func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create arkd client: %w", err)
 	}
+	// arkdClient holds an open gRPC connection; close it unless it is handed
+	// off to a successfully constructed service (which then owns its lifecycle).
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			arkdClient.Close()
+		}
+	}()
+
 	var info *client.Info
 	// arkd may still be booting when the emulator starts, retry if it fails.
 	err = emulator.RetryWithBackoff(
@@ -204,5 +213,10 @@ func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
 	}
-	return emulator.New(ctx, c.CurrentKey, c.DeprecatedKeys, arkdPubKey, arkdClient, c.ComputeLimits)
+	svc, err := emulator.New(ctx, c.CurrentKey, c.DeprecatedKeys, arkdPubKey, arkdClient, c.ComputeLimits)
+	if err != nil {
+		return nil, err
+	}
+	handedOff = true
+	return svc, nil
 }
