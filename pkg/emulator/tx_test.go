@@ -386,29 +386,6 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 	})
 }
 
-// mockFinalizer implements the Finalizer interface for testing.
-type mockFinalizer struct {
-	finalizeErrs     []error
-	finalizeCalls    int
-	finalizeTxids    []string
-	finalizePayloads [][]string
-}
-
-func (m *mockFinalizer) SubmitTx(context.Context, string, []string) (string, string, []string, error) {
-	panic("unexpected call to SubmitTx")
-}
-func (m *mockFinalizer) FinalizeTx(_ context.Context, txid string, checkpoints []string) error {
-	m.finalizeCalls++
-	m.finalizeTxids = append(m.finalizeTxids, txid)
-	m.finalizePayloads = append(m.finalizePayloads, append([]string(nil), checkpoints...))
-	if len(m.finalizeErrs) == 0 {
-		return nil
-	}
-	err := m.finalizeErrs[0]
-	m.finalizeErrs = m.finalizeErrs[1:]
-	return err
-}
-
 func TestRetryFinalize(t *testing.T) {
 	originalCfg := finalizeRetryConfig
 	finalizeRetryConfig.MinAttempts = 3
@@ -581,4 +558,27 @@ func newTestServiceNilFinalizer(t *testing.T) (*service, OffchainTx) {
 		ArkTx:       arkPtx,
 		Checkpoints: []*psbt.Packet{checkpointPtx},
 	}
+}
+
+// mockFinalizer implements the Finalizer interface for testing.
+type mockFinalizer struct {
+	finalizeErrs     []error
+	finalizeCalls    int
+	finalizeTxids    []string
+	finalizePayloads [][]string
+}
+
+func (m *mockFinalizer) SubmitTx(context.Context, string, []string) (string, string, []string, error) {
+	panic("unexpected call to SubmitTx")
+}
+func (m *mockFinalizer) FinalizeTx(_ context.Context, txid string, checkpoints []string) error {
+	m.finalizeCalls++
+	m.finalizeTxids = append(m.finalizeTxids, txid)
+	m.finalizePayloads = append(m.finalizePayloads, append([]string(nil), checkpoints...))
+	if len(m.finalizeErrs) == 0 {
+		return nil
+	}
+	err := m.finalizeErrs[0]
+	m.finalizeErrs = m.finalizeErrs[1:]
+	return err
 }

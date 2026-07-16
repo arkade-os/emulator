@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -109,7 +108,9 @@ func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec
 }
 
 func (s *service) Close() {
-	if closer, ok := s.finalizer.(io.Closer); ok {
+	// go-sdk's client exposes Close() with no return value, so it does not
+	// satisfy io.Closer; assert the actual signature instead.
+	if closer, ok := s.finalizer.(interface{ Close() }); ok {
 		closer.Close()
 	}
 }

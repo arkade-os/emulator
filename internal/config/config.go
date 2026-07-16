@@ -168,6 +168,9 @@ func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
 	}
+	if info == nil {
+		return nil, fmt.Errorf("arkd info is required")
+	}
 	if info.SignerPubKey == "" {
 		return nil, fmt.Errorf("arkd info does not include signer pubkey")
 	}
