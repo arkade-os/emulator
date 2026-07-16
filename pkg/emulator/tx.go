@@ -192,6 +192,15 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	}, nil
 }
 
+func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
+	return RetryWithBackoff(ctx, finalizeRetryConfig,
+		func() error { return s.finalizer.FinalizeTx(ctx, txid, checkpoints) },
+		func(attempt int, err error) {
+			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
+		},
+	)
+}
+
 type finalizerAccumulator struct {
 	arkdPubKeyXonly []byte
 	isLastByVin     map[uint16]bool
@@ -275,13 +284,18 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 	return nil
 }
 
-var finalizeRetryConfig = struct {
+// RetryConfig tunes RetryWithBackoff: how many attempts ignore ctx
+// cancellation, the initial/maximum delay, the growth multiplier, and the
+// jitter fraction.
+type RetryConfig struct {
 	MinAttempts  int
 	InitialDelay time.Duration
 	MaxDelay     time.Duration
 	Multiplier   float64
 	Jitter       float64
-}{
+}
+
+var finalizeRetryConfig = RetryConfig{
 	MinAttempts:  10,
 	InitialDelay: 1 * time.Second,
 	MaxDelay:     10 * time.Second,
@@ -289,33 +303,34 @@ var finalizeRetryConfig = struct {
 	Jitter:       0.2, // + or - 20% randomness
 }
 
-func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
-	// copy global to local for this retry run
-	retryConfig := finalizeRetryConfig
-	backoffDelay := retryConfig.InitialDelay
-	attempt := 0
-
-	for {
-		attempt++
-
-		if err := s.finalizer.FinalizeTx(ctx, txid, checkpoints); err == nil {
+// RetryWithBackoff runs op until it succeeds, backing off between attempts with
+// jitter. The first cfg.MinAttempts run regardless of ctx; after that a
+// cancelled ctx aborts the loop. onErr, if set, is called after each failure.
+func RetryWithBackoff(
+	ctx context.Context, cfg RetryConfig, op func() error, onErr func(attempt int, err error),
+) error {
+	backoffDelay := cfg.InitialDelay
+	for attempt := 1; ; attempt++ {
+		err := op()
+		if err == nil {
 			return nil
-		} else {
-			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
+		}
+		if onErr != nil {
+			onErr(attempt, err)
 		}
 
-		delay := applyJitter(backoffDelay, retryConfig.Jitter)
-		backoffDelay = min(retryConfig.MaxDelay, backoffDelay*time.Duration(retryConfig.Multiplier))
+		delay := applyJitter(backoffDelay, cfg.Jitter)
+		backoffDelay = min(cfg.MaxDelay, backoffDelay*time.Duration(cfg.Multiplier))
 
 		// try a minimum number of times before respecting ctx.Done
-		if attempt < retryConfig.MinAttempts {
+		if attempt < cfg.MinAttempts {
 			time.Sleep(delay)
 			continue
 		}
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("finalize retry cancelled after attempt %d: %w", attempt, ctx.Err())
+			return fmt.Errorf("retry cancelled after attempt %d: %w", attempt, ctx.Err())
 		case <-time.After(delay):
 		}
 	}

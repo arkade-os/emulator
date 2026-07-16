@@ -18,7 +18,6 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -2562,35 +2561,20 @@ func opcodeChecksigFromStack(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 	if len(signature) == 0 {
-		// push empty vector
+		// Empty signature: push an empty vector and continue.
 		vm.dstack.PushByteArray([]byte{})
 		return nil
 	}
 
-	if len(pubKey) == 0 {
-		return scriptError(txscript.ErrTaprootPubkeyIsEmpty, "public key is empty")
-	}
-
-	if len(pubKey) != 32 {
-		return scriptError(txscript.ErrInvalidStackOperation, "invalid public key size, expected 32 bytes")
-	}
-
-	pubKeyObj, err := schnorr.ParsePubKey(pubKey)
+	scheme, err := parseSchemePubKey(pubKey)
 	if err != nil {
 		return err
 	}
 
-	signatureObj, err := schnorr.ParseSignature(signature)
-	if err != nil {
-		return err
+	if !scheme.verify(message, signature) {
+		return scriptError(txscript.ErrNullFail, "signature verification failed")
 	}
 
-	valid := signatureObj.Verify(message, pubKeyObj)
-	if !valid {
-		return scriptError(txscript.ErrNullFail, "schnorr signature verification failed")
-	}
-
-	// success
 	vm.dstack.PushInt(1)
 	return nil
 }

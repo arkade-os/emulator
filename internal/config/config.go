@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/pkg/emulator"
+	"github.com/arkade-os/go-sdk/client"
 	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
@@ -159,12 +161,32 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 	return key, nil
 }
 
+var arkdConnectRetryConfig = emulator.RetryConfig{
+	MinAttempts:  0,
+	InitialDelay: 1 * time.Second,
+	MaxDelay:     45 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2,
+}
+
 func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
 	arkdClient, err := grpcclient.NewClient(c.ArkdURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create arkd client: %w", err)
 	}
-	info, err := arkdClient.GetInfo(ctx)
+	var info *client.Info
+	// arkd may still be booting when the emulator starts, retry if it fails.
+	err = emulator.RetryWithBackoff(
+		ctx, arkdConnectRetryConfig,
+		func() error {
+			var e error
+			info, e = arkdClient.GetInfo(ctx)
+			return e
+		},
+		func(attempt int, e error) {
+			log.WithField("attempt", attempt).Warnf("arkd not ready: %s", e)
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
 	}
