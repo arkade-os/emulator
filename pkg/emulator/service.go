@@ -1,20 +1,28 @@
-package application
+// Package emulator executes ArkadeScript on offchain and onchain Ark
+// transactions and signs the resulting inputs. A Service signs autonomously;
+// the arkd round-trip that submits and finalizes a signed tx is supplied by an
+// injectable Finalizer, which may be nil for signing-only use. Build one with
+// New.
+package emulator
 
 import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/arkade-os/go-sdk/client"
-	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
-	log "github.com/sirupsen/logrus"
 )
+
+// Finalizer is the subset of the go-sdk TransportClient used for the finalizer
+// role in SubmitTx. It is satisfied structurally by go-sdk's grpc client.
+type Finalizer interface {
+	SubmitTx(ctx context.Context, signedArkTx string, checkpointTxs []string) (arkTxid, finalArkTx string, signedCheckpointTxs []string, err error)
+	FinalizeTx(ctx context.Context, arkTxid string, finalCheckpointTxs []string) error
+}
 
 type Info struct {
 	SignerPublicKey            string
@@ -68,19 +76,28 @@ type service struct {
 	deprecatedSigners    []signer
 	publicKey            string
 	deprecatedPublicKeys []string
-	arkdClient           client.TransportClient
+	finalizer            Finalizer
 	arkdPubKey           *btcec.PublicKey
 	computeLimits        arkade.ComputeLimits
 }
 
-func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdURL string, computeLimits arkade.ComputeLimits) (Service, error) {
+// New builds a signing Service. secretKey is the current arkade-signing key and
+// arkdPubKey is the arkd signer key both are required. deprecatedKeys may be nil.
+//
+// finalizer may be nil: with a nil finalizer the Service runs signing-only, so
+// SubmitTx signs and returns without any arkd round-trip. Pass a non-nil
+// Finalizer (e.g. go-sdk's grpc client) to also submit and finalize on arkd.
+// Note this is a literal nil check, so a typed nil (e.g. a nil *grpcClient
+// wrapped in the interface) is treated as present and will panic in SubmitTx.
+//
+// The context is currently unused; it is accepted for forward compatibility.
+func New(_ context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, arkdPubKey *btcec.PublicKey, finalizer Finalizer, computeLimits arkade.ComputeLimits) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
 
-	arkdClient, err := grpcclient.NewClient(arkdURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create arkd client: %w", err)
+	if arkdPubKey == nil {
+		return nil, fmt.Errorf("arkd public key is required")
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
@@ -94,53 +111,23 @@ func New(ctx context.Context, secretKey *btcec.PrivateKey, deprecatedKeys []*btc
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	var arkdInfo *client.Info
-
-	// arkd may still be booting when the emulator starts, retry if it fails.
-	err = retryWithBackoff(
-		ctx, arkdConnectRetryConfig,
-		func() error {
-			var e error
-			arkdInfo, e = arkdClient.GetInfo(ctx)
-			return e
-		},
-		func(attempt int, e error) {
-			log.WithField("attempt", attempt).Warnf("arkd not ready: %s", e)
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
-	}
-	if arkdInfo == nil {
-		return nil, fmt.Errorf("arkd info is required")
-	}
-	if arkdInfo.SignerPubKey == "" {
-		return nil, fmt.Errorf("arkd info does not include signer pubkey")
-	}
-
-	decodedKey, err := hex.DecodeString(arkdInfo.SignerPubKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode arkd signer pubkey: %w", err)
-	}
-
-	arkdPubKey, err := btcec.ParsePubKey(decodedKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse arkd signer pubkey: %w", err)
-	}
-
 	return &service{
 		signer:               signer{secretKey},
 		deprecatedSigners:    deprecatedSigners,
 		publicKey:            publicKey,
 		deprecatedPublicKeys: deprecatedPublicKeys,
-		arkdClient:           arkdClient,
+		finalizer:            finalizer,
 		arkdPubKey:           arkdPubKey,
 		computeLimits:        computeLimits,
 	}, nil
 }
 
 func (s *service) Close() {
-	s.arkdClient.Close()
+	// go-sdk's client exposes Close() with no return value, so it does not
+	// satisfy io.Closer; assert the actual signature instead.
+	if closer, ok := s.finalizer.(interface{ Close() }); ok {
+		closer.Close()
+	}
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {
@@ -148,12 +135,4 @@ func (s *service) GetInfo(ctx context.Context) (*Info, error) {
 		SignerPublicKey:            s.publicKey,
 		DeprecatedSignerPublicKeys: append([]string(nil), s.deprecatedPublicKeys...),
 	}, nil
-}
-
-var arkdConnectRetryConfig = retryConfig{
-	MinAttempts:  0,
-	InitialDelay: 1 * time.Second,
-	MaxDelay:     45 * time.Second,
-	Multiplier:   2.0,
-	Jitter:       0.2,
 }

@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/emulator/pkg/emulator"
+	"github.com/arkade-os/go-sdk/client"
+	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -158,6 +161,62 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 	return key, nil
 }
 
-func (c *Config) AppService(ctx context.Context) (application.Service, error) {
-	return application.New(ctx, c.CurrentKey, c.DeprecatedKeys, c.ArkdURL, c.ComputeLimits)
+var arkdConnectRetryConfig = retryConfig{
+	MinAttempts:  0,
+	InitialDelay: 1 * time.Second,
+	MaxDelay:     45 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2,
+}
+
+func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
+	arkdClient, err := grpcclient.NewClient(c.ArkdURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create arkd client: %w", err)
+	}
+	// arkdClient holds an open gRPC connection; close it unless it is handed
+	// off to a successfully constructed service (which then owns its lifecycle).
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			arkdClient.Close()
+		}
+	}()
+
+	var info *client.Info
+	// arkd may still be booting when the emulator starts, retry if it fails.
+	err = retryWithBackoff(
+		ctx, arkdConnectRetryConfig,
+		func() error {
+			var e error
+			info, e = arkdClient.GetInfo(ctx)
+			return e
+		},
+		func(attempt int, e error) {
+			log.WithField("attempt", attempt).Warnf("arkd not ready: %s", e)
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("arkd info is required")
+	}
+	if info.SignerPubKey == "" {
+		return nil, fmt.Errorf("arkd info does not include signer pubkey")
+	}
+	pk, err := hex.DecodeString(info.SignerPubKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
+	}
+	arkdPubKey, err := btcec.ParsePubKey(pk)
+	if err != nil {
+		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
+	}
+	svc, err := emulator.New(ctx, c.CurrentKey, c.DeprecatedKeys, arkdPubKey, arkdClient, c.ComputeLimits)
+	if err != nil {
+		return nil, err
+	}
+	handedOff = true
+	return svc, nil
 }

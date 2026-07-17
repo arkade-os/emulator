@@ -7,10 +7,11 @@ import (
 	"strings"
 
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/internal/config"
 	interfaces "github.com/arkade-os/emulator/internal/interface"
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
+	"github.com/arkade-os/emulator/pkg/emulator"
+	grpchandler "github.com/arkade-os/emulator/pkg/emulator/grpchandler"
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -24,7 +25,7 @@ type service struct {
 	version    string
 	config     Config
 	cfg        *config.Config
-	appSvc     application.Service
+	appSvc     emulator.Service
 	server     *http.Server
 	grpcServer *grpc.Server
 }
@@ -101,7 +102,7 @@ func (s *service) newServer() error {
 		return err
 	}
 	s.appSvc = appSvc
-	appHandler := handlers.New(s.version, appSvc)
+	appHandler := grpchandler.New(s.version, appSvc)
 	emulatorv1.RegisterEmulatorServiceServer(grpcServer, appHandler)
 
 	healthHandler := handlers.NewHealthHandler()

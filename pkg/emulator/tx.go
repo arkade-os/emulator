@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"bytes"
@@ -117,7 +117,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	log.WithField("is_finalizer", isFinalizer).Debug("finalizer role analysis completed")
 
-	if !isFinalizer {
+	if !isFinalizer || s.finalizer == nil {
 		return &OffchainTx{
 			ArkTx:       arkPtx,
 			Checkpoints: signedCheckpointTxs,
@@ -144,7 +144,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to encode ark tx for finalization: %w", err)
 	}
 
-	txid, finalArkTx, arkdCheckpointTxs, err := s.arkdClient.SubmitTx(ctx, arkTx, encodedCheckpoints)
+	txid, finalArkTx, arkdCheckpointTxs, err := s.finalizer.SubmitTx(ctx, arkTx, encodedCheckpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
 	}
@@ -194,7 +194,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
 	return retryWithBackoff(ctx, finalizeRetryConfig,
-		func() error { return s.arkdClient.FinalizeTx(ctx, txid, checkpoints) },
+		func() error { return s.finalizer.FinalizeTx(ctx, txid, checkpoints) },
 		func(attempt int, err error) {
 			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
 		},
@@ -284,6 +284,12 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 	return nil
 }
 
+// internal/config/retry.go keeps a private copy of retryConfig/retryWithBackoff
+// so this library need not export them.
+
+// retryConfig tunes retryWithBackoff: how many attempts ignore ctx
+// cancellation, the initial/maximum delay, the growth multiplier, and the
+// jitter fraction.
 type retryConfig struct {
 	MinAttempts  int
 	InitialDelay time.Duration
@@ -300,6 +306,9 @@ var finalizeRetryConfig = retryConfig{
 	Jitter:       0.2, // + or - 20% randomness
 }
 
+// retryWithBackoff runs op until it succeeds, backing off between attempts with
+// jitter. The first cfg.MinAttempts run regardless of ctx; after that a
+// cancelled ctx aborts the loop. onErr, if set, is called after each failure.
 func retryWithBackoff(
 	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
 ) error {

@@ -1,13 +1,15 @@
-package handlers
+package grpchandler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -16,10 +18,10 @@ import (
 
 type handler struct {
 	version string
-	svc     application.Service
+	svc     emulator.Service
 }
 
-func New(version string, service application.Service) *handler {
+func New(version string, service emulator.Service) emulatorv1.EmulatorServiceServer {
 	return &handler{version: version, svc: service}
 }
 
@@ -66,7 +68,7 @@ func (h *handler) SubmitTx(
 		checkpointPsbt = append(checkpointPsbt, checkpointPtx)
 	}
 
-	offchainTx := application.OffchainTx{
+	offchainTx := emulator.OffchainTx{
 		ArkTx:       arkPtx,
 		Checkpoints: checkpointPsbt,
 	}
@@ -162,7 +164,7 @@ func (h *handler) SubmitFinalization(
 		forfeitPsbt = append(forfeitPsbt, forfeitPtx)
 	}
 
-	batchFinalization := application.BatchFinalization{
+	batchFinalization := emulator.BatchFinalization{
 		Intent:       *intent,
 		Forfeits:     forfeitPsbt,
 		CommitmentTx: commitmentPtx,
@@ -228,7 +230,7 @@ func (h *handler) SubmitOnchainTx(
 		return nil, status.Error(codes.InvalidArgument, "invalid tx")
 	}
 
-	signed, err := h.svc.SubmitOnchainTx(ctx, application.OnchainTx{Tx: ptx})
+	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
 		log.WithError(err).Error("failed to process onchain tx")
 		return nil, status.Error(codes.Internal, "failed to process onchain tx")
@@ -281,4 +283,58 @@ func parseTxTree(fromProto []*emulatorv1.TxTreeNode) (*tree.TxTree, error) {
 	}
 
 	return txTree, nil
+}
+
+// parseIntent decodes the proof and intent message. The emulator takes every
+// intent type through one endpoint, so it sniffs `BaseMessage.Type` then decodes
+// the matching concrete struct.
+func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
+	proof := fromProto.GetProof()
+	message := fromProto.GetMessage()
+
+	if len(proof) <= 0 {
+		return nil, fmt.Errorf("missing proof")
+	}
+	if len(message) <= 0 {
+		return nil, fmt.Errorf("missing message")
+	}
+
+	proofPsbt, err := psbt.NewFromRawBytes(strings.NewReader(proof), true)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proof: %w", err)
+	}
+
+	// peek at the envelope to read the type
+	var base intent.BaseMessage
+	if err := json.Unmarshal([]byte(message), &base); err != nil {
+		return nil, fmt.Errorf("invalid message: %w", err)
+	}
+
+	// pick the concrete struct for that type
+	var decoded emulator.IntentMessage
+	switch base.Type {
+	case intent.IntentMessageTypeRegister:
+		decoded = &intent.RegisterMessage{}
+	case intent.IntentMessageTypeEstimateFee:
+		decoded = &intent.EstimateIntentFeeMessage{}
+	case intent.IntentMessageTypeDelete:
+		decoded = &intent.DeleteMessage{}
+	case intent.IntentMessageTypeGetPendingTx:
+		decoded = &intent.GetPendingTxMessage{}
+	case intent.IntentMessageTypeGetIntent:
+		decoded = &intent.GetIntentMessage{}
+	case intent.IntentMessageTypeGetData:
+		decoded = &intent.GetDataMessage{}
+	default:
+		return nil, fmt.Errorf("unsupported intent message type: %s", base.Type)
+	}
+
+	if err := decoded.Decode(message); err != nil {
+		return nil, fmt.Errorf("invalid %s message: %w", base.Type, err)
+	}
+
+	return &emulator.Intent{
+		Proof:   intent.Proof{Packet: *proofPsbt},
+		Message: decoded,
+	}, nil
 }

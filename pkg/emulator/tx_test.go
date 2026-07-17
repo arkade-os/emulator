@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"bytes"
@@ -9,9 +9,8 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
-	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	sdkclient "github.com/arkade-os/go-sdk/client"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -387,68 +386,6 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 	})
 }
 
-type mockArkdClient struct {
-	finalizeErrs     []error
-	finalizeCalls    int
-	finalizeTxids    []string
-	finalizePayloads [][]string
-}
-
-func (m *mockArkdClient) GetInfo(context.Context) (*sdkclient.Info, error) {
-	panic("unexpected call to GetInfo")
-}
-func (m *mockArkdClient) RegisterIntent(context.Context, string, string) (string, error) {
-	return "", fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) DeleteIntent(context.Context, string, string) error {
-	return fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) EstimateIntentFee(context.Context, string, string) (int64, error) {
-	return 0, fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) ConfirmRegistration(context.Context, string) error {
-	return fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) SubmitTreeNonces(context.Context, string, string, tree.TreeNonces) error {
-	return fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) SubmitTreeSignatures(context.Context, string, string, tree.TreePartialSigs) error {
-	return fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) SubmitSignedForfeitTxs(context.Context, []string, string) error {
-	return fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) GetEventStream(context.Context, []string) (<-chan sdkclient.BatchEventChannel, func(), error) {
-	return nil, func() {}, fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) SubmitTx(context.Context, string, []string) (string, string, []string, error) {
-	panic("unexpected call to SubmitTx")
-}
-func (m *mockArkdClient) FinalizeTx(_ context.Context, txid string, checkpoints []string) error {
-	m.finalizeCalls++
-	m.finalizeTxids = append(m.finalizeTxids, txid)
-	m.finalizePayloads = append(m.finalizePayloads, append([]string(nil), checkpoints...))
-	if len(m.finalizeErrs) == 0 {
-		return nil
-	}
-	err := m.finalizeErrs[0]
-	m.finalizeErrs = m.finalizeErrs[1:]
-	return err
-}
-func (m *mockArkdClient) GetPendingTx(context.Context, string, string) ([]sdkclient.AcceptedOffchainTx, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) GetTransactionsStream(context.Context) (<-chan sdkclient.TransactionEvent, func(), error) {
-	return nil, func() {}, fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) ModifyStreamTopics(context.Context, []string, []string) ([]string, []string, []string, error) {
-	return nil, nil, nil, fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) OverwriteStreamTopics(context.Context, []string) ([]string, []string, []string, error) {
-	return nil, nil, nil, fmt.Errorf("not implemented")
-}
-func (m *mockArkdClient) Close() {}
-
 func TestRetryFinalize(t *testing.T) {
 	originalCfg := finalizeRetryConfig
 	finalizeRetryConfig.MinAttempts = 3
@@ -460,14 +397,14 @@ func TestRetryFinalize(t *testing.T) {
 	})
 
 	t.Run("success after retries", func(t *testing.T) {
-		client := &mockArkdClient{
+		f := &mockFinalizer{
 			finalizeErrs: []error{
 				fmt.Errorf("retry 1"),
 				fmt.Errorf("retry 2"),
 				nil,
 			},
 		}
-		svc := &service{arkdClient: client}
+		svc := &service{finalizer: f}
 		checkpoints := []string{"checkpoint-a", "checkpoint-b"}
 		err := svc.retryFinalize(
 			t.Context(),
@@ -475,16 +412,16 @@ func TestRetryFinalize(t *testing.T) {
 			checkpoints,
 		)
 		require.NoError(t, err)
-		require.Equal(t, 3, client.finalizeCalls)
-		require.Equal(t, []string{"txid-123", "txid-123", "txid-123"}, client.finalizeTxids)
+		require.Equal(t, 3, f.finalizeCalls)
+		require.Equal(t, []string{"txid-123", "txid-123", "txid-123"}, f.finalizeTxids)
 		require.Equal(t, [][]string{
 			{"checkpoint-a", "checkpoint-b"},
 			{"checkpoint-a", "checkpoint-b"},
 			{"checkpoint-a", "checkpoint-b"},
-		}, client.finalizePayloads)
+		}, f.finalizePayloads)
 	})
 	t.Run("exhausts minimum retries", func(t *testing.T) {
-		client := &mockArkdClient{
+		f := &mockFinalizer{
 			finalizeErrs: []error{
 				fmt.Errorf("retry 1"),
 				fmt.Errorf("retry 2"),
@@ -492,7 +429,7 @@ func TestRetryFinalize(t *testing.T) {
 				fmt.Errorf("retry 4"),
 			},
 		}
-		svc := &service{arkdClient: client}
+		svc := &service{finalizer: f}
 		ctx, cancel := context.WithCancel(t.Context())
 		// simulates client hangup
 		cancel()
@@ -502,12 +439,254 @@ func TestRetryFinalize(t *testing.T) {
 			[]string{"checkpoint-a"},
 		)
 		require.ErrorContains(t, err, "context canceled")
-		require.Equal(t, 3, client.finalizeCalls)
-		require.Equal(t, []string{"txid-123", "txid-123", "txid-123"}, client.finalizeTxids)
+		require.Equal(t, 3, f.finalizeCalls)
+		require.Equal(t, []string{"txid-123", "txid-123", "txid-123"}, f.finalizeTxids)
 		require.Equal(t, [][]string{
 			{"checkpoint-a"},
 			{"checkpoint-a"},
 			{"checkpoint-a"},
-		}, client.finalizePayloads)
+		}, f.finalizePayloads)
 	})
+}
+
+// TestSubmitTx covers both modes of SubmitTx when the emulator is in the
+// finalizer role (last non-arkd signer): signing-only (nil finalizer) and the
+// full finalizer round-trip. The arkd responses are made distinct from the
+// input so the assertions verify behavior, not an echo.
+func TestSubmitTx(t *testing.T) {
+	t.Run("signing-only", func(t *testing.T) {
+		// nil finalizer: SubmitTx signs and returns without any arkd round-trip.
+		svc, arkTxInput := newTestServiceNilFinalizer(t)
+
+		out, err := svc.SubmitTx(context.Background(), arkTxInput)
+		require.NoError(t, err)
+
+		// returns the input ark tx (signed), not a finalized tx from arkd.
+		require.Equal(t, arkTxInput.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+		// the emulator signed both the ark tx input and the checkpoint input.
+		require.NotEmpty(t, out.ArkTx.Inputs[0].TaprootScriptSpendSig)
+		// signing-only merges no arkd signature: exactly the emulator's own.
+		require.Len(t, out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig, 1)
+		// the signed checkpoint verifies against every non-arkd signer, i.e. it
+		// is a valid signing-only result arkd can later finalize.
+		require.NoError(t, verifyNonArkdCheckpointSignatures(out.Checkpoints, svc.arkdPubKey))
+	})
+
+	t.Run("finalizer", func(t *testing.T) {
+		// non-nil finalizer: SubmitTx verifies the non-arkd checkpoint signatures,
+		// submits to arkd, merges arkd's checkpoint signature, finalizes, and
+		// returns arkd's final ark tx.
+		svc, arkTxInput := newTestServiceNilFinalizer(t)
+
+		// arkd "returns" a different ark tx (distinct txid) so we can prove
+		// SubmitTx returns arkd's finalized tx rather than the input.
+		finalArkMsg := wire.NewMsgTx(2)
+		finalArkMsg.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xfe}, Index: 3}})
+		finalArkMsg.AddTxOut(&wire.TxOut{Value: 1234, PkScript: []byte{txscript.OP_TRUE}})
+		finalArkPtx, err := psbt.NewFromUnsignedTx(finalArkMsg)
+		require.NoError(t, err)
+		finalArkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: []byte{txscript.OP_TRUE}}
+		finalArkB64, err := finalArkPtx.B64Encode()
+		require.NoError(t, err)
+
+		// arkd "returns" each checkpoint (matching txid) carrying an extra,
+		// distinct signature, so we can prove the merge appends arkd's sig.
+		arkdSig := &psbt.TaprootScriptSpendSig{
+			XOnlyPubKey: bytes.Repeat([]byte{0xab}, 32),
+			LeafHash:    bytes.Repeat([]byte{0xcd}, 32),
+			Signature:   bytes.Repeat([]byte{0xee}, 64),
+		}
+		arkdCheckpoints := make([]string, len(arkTxInput.Checkpoints))
+		for i, cp := range arkTxInput.Checkpoints {
+			arkdCp, err := psbt.NewFromUnsignedTx(cp.UnsignedTx)
+			require.NoError(t, err)
+			arkdCp.Inputs[0].WitnessUtxo = cp.Inputs[0].WitnessUtxo
+			arkdCp.Inputs[0].TaprootLeafScript = cp.Inputs[0].TaprootLeafScript
+			arkdCp.Inputs[0].TaprootScriptSpendSig = []*psbt.TaprootScriptSpendSig{arkdSig}
+			enc, err := arkdCp.B64Encode()
+			require.NoError(t, err)
+			arkdCheckpoints[i] = enc
+		}
+
+		fin := &submittingFinalizer{finalArkTx: finalArkB64, arkdCheckpoints: arkdCheckpoints}
+		svc.finalizer = fin
+
+		out, err := svc.SubmitTx(context.Background(), arkTxInput)
+		require.NoError(t, err)
+
+		// arkd was driven exactly once for submit and once for finalize.
+		require.Equal(t, 1, fin.submitCalls)
+		require.Equal(t, 1, fin.finalizeCalls)
+
+		// SubmitTx returns arkd's finalized ark tx, not the input.
+		require.Equal(t, finalArkMsg.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+		require.NotEqual(t, arkTxInput.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+
+		// the merged checkpoint carries both the emulator's and arkd's signatures.
+		mergedSigs := out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig
+		require.GreaterOrEqual(t, len(mergedSigs), 2)
+		require.True(t, hasSignature(mergedSigs, arkdSig.Signature), "arkd signature must be merged in")
+
+		// SubmitTx forwarded the encoded checkpoints, and the merged set went to finalize.
+		require.Len(t, fin.submitCheckpoints, len(arkTxInput.Checkpoints))
+		require.NotEmpty(t, fin.submitCheckpoints[0])
+		require.Len(t, fin.finalizeCheckpoints, len(arkTxInput.Checkpoints))
+	})
+}
+
+// newTestServiceNilFinalizer constructs a service with finalizer=nil and a
+// fully-formed OffchainTx where the emulator is the last non-arkd signer
+// (finalizer role). The arkade script is OP_TRUE so it always executes.
+func newTestServiceNilFinalizer(t *testing.T) (*service, OffchainTx) {
+	t.Helper()
+
+	emulatorKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	arkdKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	arkadeScriptBytes := []byte{txscript.OP_TRUE}
+	scriptHash := arkade.ArkadeScriptHash(arkadeScriptBytes)
+
+	// The closure has the emulator's tweaked key as the last signer before arkd.
+	// finalizerAccumulator.checkScript: since arkd is last, it checks second-to-last,
+	// which is our tweaked emulator key → isFinalizer = true.
+	tweakedEmulatorPub := arkade.ComputeArkadeScriptPublicKey(emulatorKey.PubKey(), scriptHash)
+	closure := arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{tweakedEmulatorPub, arkdKey.PubKey()}}
+
+	vtxoScript := arkscript.TapscriptsVtxoScript{Closures: []arkscript.Closure{&closure}}
+	vtxoTapKey, vtxoTapTree, err := vtxoScript.TapTree()
+	require.NoError(t, err)
+
+	forfeitClosure := vtxoScript.ForfeitClosures()[0]
+	forfeitScript, err := forfeitClosure.Script()
+	require.NoError(t, err)
+
+	forfeitLeaf := txscript.NewBaseTapLeaf(forfeitScript)
+	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(forfeitLeaf.TapHash())
+	require.NoError(t, err)
+
+	vtxoPkScript, err := arkscript.P2TRScript(vtxoTapKey)
+	require.NoError(t, err)
+
+	// -- prevout ark tx: a transaction that has the vtxo output we'll spend --
+	prevArkTx := wire.NewMsgTx(2)
+	prevArkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xaa}, Index: 0}})
+	prevArkTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
+	prevArkTxHash := prevArkTx.TxHash()
+
+	// -- checkpoint tx: spends output 0 of prevArkTx --
+	checkpointTx := wire.NewMsgTx(2)
+	checkpointTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevArkTxHash, Index: 0}})
+	checkpointTx.AddTxOut(&wire.TxOut{Value: 4_900, PkScript: vtxoPkScript})
+
+	checkpointPtx, err := psbt.NewFromUnsignedTx(checkpointTx)
+	require.NoError(t, err)
+	checkpointPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: vtxoPkScript}
+	checkpointPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
+		ControlBlock: merkleProof.ControlBlock,
+		Script:       merkleProof.Script,
+		LeafVersion:  txscript.BaseLeafVersion,
+	}}
+
+	// -- ark tx: spends checkpoint tx's txid as its input's prevout --
+	checkpointTxID := checkpointPtx.UnsignedTx.TxHash()
+
+	arkTx := wire.NewMsgTx(2)
+	arkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: checkpointTxID, Index: 0}})
+	arkTx.AddTxOut(&wire.TxOut{Value: 4_800, PkScript: vtxoPkScript})
+
+	// OP_RETURN with emulator packet
+	emulatorPacket, err := arkade.NewPacket(arkade.EmulatorEntry{Vin: 0, Script: arkadeScriptBytes})
+	require.NoError(t, err)
+	ext := extension.Extension{emulatorPacket}
+	opReturnOut, err := ext.TxOut()
+	require.NoError(t, err)
+	arkTx.AddTxOut(opReturnOut)
+
+	arkPtx, err := psbt.NewFromUnsignedTx(arkTx)
+	require.NoError(t, err)
+	// set WitnessUtxo (the output of the checkpoint that this ark tx input spends)
+	arkPtx.Inputs[0].WitnessUtxo = checkpointPtx.UnsignedTx.TxOut[0]
+	// set TaprootLeafScript so resolveArkadeScriptSigner can read the closure
+	arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
+		ControlBlock: merkleProof.ControlBlock,
+		Script:       merkleProof.Script,
+		LeafVersion:  txscript.BaseLeafVersion,
+	}}
+	arkPtx.Outputs = append(arkPtx.Outputs, psbt.POutput{})
+
+	// set PrevArkTxField so prevOutFetcherForArkTx can find the prevout ark tx
+	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevArkTx))
+
+	svc := &service{
+		signer:        signer{emulatorKey},
+		arkdPubKey:    arkdKey.PubKey(),
+		finalizer:     nil, // signing-only mode
+		computeLimits: arkade.DefaultComputeLimits(),
+	}
+
+	return svc, OffchainTx{
+		ArkTx:       arkPtx,
+		Checkpoints: []*psbt.Packet{checkpointPtx},
+	}
+}
+
+// mockFinalizer implements the Finalizer interface for testing.
+type mockFinalizer struct {
+	finalizeErrs     []error
+	finalizeCalls    int
+	finalizeTxids    []string
+	finalizePayloads [][]string
+}
+
+func (m *mockFinalizer) SubmitTx(context.Context, string, []string) (string, string, []string, error) {
+	panic("unexpected call to SubmitTx")
+}
+func (m *mockFinalizer) FinalizeTx(_ context.Context, txid string, checkpoints []string) error {
+	m.finalizeCalls++
+	m.finalizeTxids = append(m.finalizeTxids, txid)
+	m.finalizePayloads = append(m.finalizePayloads, append([]string(nil), checkpoints...))
+	if len(m.finalizeErrs) == 0 {
+		return nil
+	}
+	err := m.finalizeErrs[0]
+	m.finalizeErrs = m.finalizeErrs[1:]
+	return err
+}
+
+// submittingFinalizer is a Finalizer that records its SubmitTx/FinalizeTx
+// arguments and returns caller-configured responses, so a test can drive and
+// inspect SubmitTx's full finalizer path.
+type submittingFinalizer struct {
+	// responses returned by SubmitTx.
+	finalArkTx      string
+	arkdCheckpoints []string
+
+	// recorded call arguments.
+	submitCalls         int
+	submitCheckpoints   []string
+	finalizeCalls       int
+	finalizeCheckpoints []string
+}
+
+func (m *submittingFinalizer) SubmitTx(_ context.Context, _ string, checkpoints []string) (string, string, []string, error) {
+	m.submitCalls++
+	m.submitCheckpoints = checkpoints
+	return "arkd-txid", m.finalArkTx, m.arkdCheckpoints, nil
+}
+
+func (m *submittingFinalizer) FinalizeTx(_ context.Context, _ string, checkpoints []string) error {
+	m.finalizeCalls++
+	m.finalizeCheckpoints = checkpoints
+	return nil
+}
+
+func hasSignature(sigs []*psbt.TaprootScriptSpendSig, want []byte) bool {
+	for _, s := range sigs {
+		if bytes.Equal(s.Signature, want) {
+			return true
+		}
+	}
+	return false
 }
