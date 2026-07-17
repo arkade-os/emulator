@@ -161,7 +161,7 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 	return key, nil
 }
 
-var arkdConnectRetryConfig = emulator.RetryConfig{
+var arkdConnectRetryConfig = retryConfig{
 	MinAttempts:  0,
 	InitialDelay: 1 * time.Second,
 	MaxDelay:     45 * time.Second,
@@ -185,7 +185,7 @@ func (c *Config) AppService(ctx context.Context) (emulator.Service, error) {
 
 	var info *client.Info
 	// arkd may still be booting when the emulator starts, retry if it fails.
-	err = emulator.RetryWithBackoff(
+	err = retryWithBackoff(
 		ctx, arkdConnectRetryConfig,
 		func() error {
 			var e error

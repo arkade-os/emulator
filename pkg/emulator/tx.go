@@ -193,7 +193,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 }
 
 func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
-	return RetryWithBackoff(ctx, finalizeRetryConfig,
+	return retryWithBackoff(ctx, finalizeRetryConfig,
 		func() error { return s.finalizer.FinalizeTx(ctx, txid, checkpoints) },
 		func(attempt int, err error) {
 			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
@@ -284,10 +284,13 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 	return nil
 }
 
-// RetryConfig tunes RetryWithBackoff: how many attempts ignore ctx
+// internal/config/retry.go keeps a private copy of retryConfig/retryWithBackoff
+// so this library need not export them.
+
+// retryConfig tunes retryWithBackoff: how many attempts ignore ctx
 // cancellation, the initial/maximum delay, the growth multiplier, and the
 // jitter fraction.
-type RetryConfig struct {
+type retryConfig struct {
 	MinAttempts  int
 	InitialDelay time.Duration
 	MaxDelay     time.Duration
@@ -295,7 +298,7 @@ type RetryConfig struct {
 	Jitter       float64
 }
 
-var finalizeRetryConfig = RetryConfig{
+var finalizeRetryConfig = retryConfig{
 	MinAttempts:  10,
 	InitialDelay: 1 * time.Second,
 	MaxDelay:     10 * time.Second,
@@ -303,11 +306,11 @@ var finalizeRetryConfig = RetryConfig{
 	Jitter:       0.2, // + or - 20% randomness
 }
 
-// RetryWithBackoff runs op until it succeeds, backing off between attempts with
+// retryWithBackoff runs op until it succeeds, backing off between attempts with
 // jitter. The first cfg.MinAttempts run regardless of ctx; after that a
 // cancelled ctx aborts the loop. onErr, if set, is called after each failure.
-func RetryWithBackoff(
-	ctx context.Context, cfg RetryConfig, op func() error, onErr func(attempt int, err error),
+func retryWithBackoff(
+	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
 ) error {
 	backoffDelay := cfg.InitialDelay
 	for attempt := 1; ; attempt++ {

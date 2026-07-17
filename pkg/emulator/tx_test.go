@@ -449,17 +449,89 @@ func TestRetryFinalize(t *testing.T) {
 	})
 }
 
-// TestSubmitTxSigningOnly verifies that when finalizer is nil, SubmitTx returns
-// the signed ark tx + checkpoints without error and without calling finalization,
-// even when the emulator is in the finalizer role (last non-arkd signer).
-func TestSubmitTxSigningOnly(t *testing.T) {
-	svc, arkTxInput := newTestServiceNilFinalizer(t)
-	out, err := svc.SubmitTx(context.Background(), arkTxInput)
-	require.NoError(t, err)
-	require.NotNil(t, out.ArkTx)
-	require.NotEmpty(t, out.Checkpoints)
-	// checkpoint input 0 carries the emulator's TaprootScriptSpendSig
-	require.NotEmpty(t, out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig)
+// TestSubmitTx covers both modes of SubmitTx when the emulator is in the
+// finalizer role (last non-arkd signer): signing-only (nil finalizer) and the
+// full finalizer round-trip. The arkd responses are made distinct from the
+// input so the assertions verify behavior, not an echo.
+func TestSubmitTx(t *testing.T) {
+	t.Run("signing-only", func(t *testing.T) {
+		// nil finalizer: SubmitTx signs and returns without any arkd round-trip.
+		svc, arkTxInput := newTestServiceNilFinalizer(t)
+
+		out, err := svc.SubmitTx(context.Background(), arkTxInput)
+		require.NoError(t, err)
+
+		// returns the input ark tx (signed), not a finalized tx from arkd.
+		require.Equal(t, arkTxInput.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+		// the emulator signed both the ark tx input and the checkpoint input.
+		require.NotEmpty(t, out.ArkTx.Inputs[0].TaprootScriptSpendSig)
+		// signing-only merges no arkd signature: exactly the emulator's own.
+		require.Len(t, out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig, 1)
+		// the signed checkpoint verifies against every non-arkd signer, i.e. it
+		// is a valid signing-only result arkd can later finalize.
+		require.NoError(t, verifyNonArkdCheckpointSignatures(out.Checkpoints, svc.arkdPubKey))
+	})
+
+	t.Run("finalizer", func(t *testing.T) {
+		// non-nil finalizer: SubmitTx verifies the non-arkd checkpoint signatures,
+		// submits to arkd, merges arkd's checkpoint signature, finalizes, and
+		// returns arkd's final ark tx.
+		svc, arkTxInput := newTestServiceNilFinalizer(t)
+
+		// arkd "returns" a different ark tx (distinct txid) so we can prove
+		// SubmitTx returns arkd's finalized tx rather than the input.
+		finalArkMsg := wire.NewMsgTx(2)
+		finalArkMsg.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xfe}, Index: 3}})
+		finalArkMsg.AddTxOut(&wire.TxOut{Value: 1234, PkScript: []byte{txscript.OP_TRUE}})
+		finalArkPtx, err := psbt.NewFromUnsignedTx(finalArkMsg)
+		require.NoError(t, err)
+		finalArkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: []byte{txscript.OP_TRUE}}
+		finalArkB64, err := finalArkPtx.B64Encode()
+		require.NoError(t, err)
+
+		// arkd "returns" each checkpoint (matching txid) carrying an extra,
+		// distinct signature, so we can prove the merge appends arkd's sig.
+		arkdSig := &psbt.TaprootScriptSpendSig{
+			XOnlyPubKey: bytes.Repeat([]byte{0xab}, 32),
+			LeafHash:    bytes.Repeat([]byte{0xcd}, 32),
+			Signature:   bytes.Repeat([]byte{0xee}, 64),
+		}
+		arkdCheckpoints := make([]string, len(arkTxInput.Checkpoints))
+		for i, cp := range arkTxInput.Checkpoints {
+			arkdCp, err := psbt.NewFromUnsignedTx(cp.UnsignedTx)
+			require.NoError(t, err)
+			arkdCp.Inputs[0].WitnessUtxo = cp.Inputs[0].WitnessUtxo
+			arkdCp.Inputs[0].TaprootLeafScript = cp.Inputs[0].TaprootLeafScript
+			arkdCp.Inputs[0].TaprootScriptSpendSig = []*psbt.TaprootScriptSpendSig{arkdSig}
+			enc, err := arkdCp.B64Encode()
+			require.NoError(t, err)
+			arkdCheckpoints[i] = enc
+		}
+
+		fin := &submittingFinalizer{finalArkTx: finalArkB64, arkdCheckpoints: arkdCheckpoints}
+		svc.finalizer = fin
+
+		out, err := svc.SubmitTx(context.Background(), arkTxInput)
+		require.NoError(t, err)
+
+		// arkd was driven exactly once for submit and once for finalize.
+		require.Equal(t, 1, fin.submitCalls)
+		require.Equal(t, 1, fin.finalizeCalls)
+
+		// SubmitTx returns arkd's finalized ark tx, not the input.
+		require.Equal(t, finalArkMsg.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+		require.NotEqual(t, arkTxInput.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+
+		// the merged checkpoint carries both the emulator's and arkd's signatures.
+		mergedSigs := out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig
+		require.GreaterOrEqual(t, len(mergedSigs), 2)
+		require.True(t, hasSignature(mergedSigs, arkdSig.Signature), "arkd signature must be merged in")
+
+		// SubmitTx forwarded the encoded checkpoints, and the merged set went to finalize.
+		require.Len(t, fin.submitCheckpoints, len(arkTxInput.Checkpoints))
+		require.NotEmpty(t, fin.submitCheckpoints[0])
+		require.Len(t, fin.finalizeCheckpoints, len(arkTxInput.Checkpoints))
+	})
 }
 
 // newTestServiceNilFinalizer constructs a service with finalizer=nil and a
@@ -581,4 +653,40 @@ func (m *mockFinalizer) FinalizeTx(_ context.Context, txid string, checkpoints [
 	err := m.finalizeErrs[0]
 	m.finalizeErrs = m.finalizeErrs[1:]
 	return err
+}
+
+// submittingFinalizer is a Finalizer that records its SubmitTx/FinalizeTx
+// arguments and returns caller-configured responses, so a test can drive and
+// inspect SubmitTx's full finalizer path.
+type submittingFinalizer struct {
+	// responses returned by SubmitTx.
+	finalArkTx      string
+	arkdCheckpoints []string
+
+	// recorded call arguments.
+	submitCalls         int
+	submitCheckpoints   []string
+	finalizeCalls       int
+	finalizeCheckpoints []string
+}
+
+func (m *submittingFinalizer) SubmitTx(_ context.Context, _ string, checkpoints []string) (string, string, []string, error) {
+	m.submitCalls++
+	m.submitCheckpoints = checkpoints
+	return "arkd-txid", m.finalArkTx, m.arkdCheckpoints, nil
+}
+
+func (m *submittingFinalizer) FinalizeTx(_ context.Context, _ string, checkpoints []string) error {
+	m.finalizeCalls++
+	m.finalizeCheckpoints = checkpoints
+	return nil
+}
+
+func hasSignature(sigs []*psbt.TaprootScriptSpendSig, want []byte) bool {
+	for _, s := range sigs {
+		if bytes.Equal(s.Signature, want) {
+			return true
+		}
+	}
+	return false
 }

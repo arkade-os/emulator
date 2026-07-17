@@ -1,3 +1,8 @@
+// Package emulator executes ArkadeScript on offchain and onchain Ark
+// transactions and signs the resulting inputs. A Service signs autonomously;
+// the arkd round-trip that submits and finalizes a signed tx is supplied by an
+// injectable Finalizer, which may be nil for signing-only use. Build one with
+// New.
 package emulator
 
 import (
