@@ -1,0 +1,186 @@
+name: EIF
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+    tags: ['*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the built EIFs as release assets. Requires a tag ref.
+        type: boolean
+        default: false
+
+# A pull request build is superseded by its next push. A tag build is not: it is
+# the thing that produces a published measurement.
+concurrency:
+  group: eif-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Every environment flake.nix exposes as eif-<name>. Adding one is a change
+  # here, in flake.nix, and in one upload step below.
+  ENVIRONMENTS: dev se7enz
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # A v-prefixed tag must agree with the version flake.nix bakes into the
+      # binary, because that version is measured into PCR0. Any other tag is a
+      # throwaway build tag with no version to agree with, so it is not checked.
+      - name: Check tag matches flake version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          flake="$(nix eval --raw '.#emulator.version')"
+          if [ "$tag" != "$flake" ]; then
+            echo "::error::tag v${tag} does not match flake.nix version ${flake}"
+            exit 1
+          fi
+          echo "tag v${tag} matches flake.nix"
+
+      - name: Decide whether this run publishes
+        id: gate
+        env:
+          PUBLISH: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+        run: echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
+
+      - name: Build EIFs
+        run: |
+          for env in $ENVIRONMENTS; do
+            nix build ".#eif-${env}" --out-link "result-${env}"
+          done
+
+      # One directory per environment, never a shared one. An image and the
+      # measurement it carries stay together, and no later step can reach for the
+      # wrong environment's file by accident.
+      - name: Collect measurements
+        run: |
+          mkdir -p out/measurements
+          {
+            echo "## Enclave image measurements"
+            echo
+            echo "| env | PCR0 | sha256 |"
+            echo "|---|---|---|"
+          } > out/measurements/RELEASE_NOTES.md
+
+          for env in $ENVIRONMENTS; do
+            mkdir -p "out/${env}"
+            pcr0="$(jq -r .PCR0 "result-${env}/pcr.json")"
+
+            install -m644 "result-${env}/image.eif" "out/${env}/emulator-${env}-${pcr0}.eif"
+            install -m644 "result-${env}/pcr.json"  "out/${env}/emulator-${env}-${pcr0}.pcr.json"
+            install -m644 "result-${env}/pcr.json"  "out/measurements/emulator-${env}-${pcr0}.pcr.json"
+
+            # Glob only the payload, so the sums file cannot cover itself.
+            (cd "out/${env}" && sha256sum emulator-* > SHA256SUMS)
+
+            sha="$(sha256sum "out/${env}/emulator-${env}-${pcr0}.eif" | cut -d' ' -f1)"
+            echo "| ${env} | \`${pcr0}\` | \`${sha}\` |" >> out/measurements/RELEASE_NOTES.md
+          done
+
+          {
+            echo
+            echo "S3 object name for each image: \`emulator/<pcr0>.eif\`"
+          } >> out/measurements/RELEASE_NOTES.md
+
+          cat out/measurements/RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
+
+      # pcr.json is 370 bytes and is what a reviewer wants to see. It goes up on
+      # every run, including pull requests.
+      - name: Upload measurements
+        uses: actions/upload-artifact@v4
+        with:
+          name: measurements
+          path: out/measurements/
+          retention-days: 14
+
+      # The images are 61 MB each and are only needed by a publish job, so they
+      # are not uploaded on runs that will not publish.
+      #
+      # One artifact per environment, so a consumer downloads exactly the image it
+      # is publishing and cannot reach the other one. Phase 2 writes each of these
+      # to a different bucket in a different account, which is why this separation
+      # is worth a duplicated step.
+      - name: Upload dev EIF
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eif-dev
+          path: out/dev/
+          retention-days: 7
+
+      - name: Upload se7enz EIF
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eif-se7enz
+          path: out/se7enz/
+          retention-days: 7
+
+  publish-release:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # No name, so every artifact lands in a directory named after itself:
+      # eif-dev/, eif-se7enz/, measurements/.
+      - uses: actions/download-artifact@v4
+        with:
+          path: .
+
+      # The publish job trusts an artefact rather than rebuilding, which is worth
+      # minutes on a runner with a cold /nix/store. The checksums are what make
+      # that safe: the bytes are checked before anything is published.
+      - name: Verify checksums
+        run: |
+          for dir in eif-*/; do
+            echo "verifying ${dir}"
+            (cd "$dir" && sha256sum -c SHA256SUMS)
+          done
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${GITHUB_REF}" = "${GITHUB_REF#refs/tags/}" ]; then
+            echo "::error::publishing needs a tag ref; re-run this workflow with a tag selected"
+            exit 1
+          fi
+          tag="${GITHUB_REF#refs/tags/}"
+
+          # Always a prerelease while this pipeline is a prototype. A prerelease
+          # fires `prereleased` and `published`, never `released`, and
+          # release.yaml listens for `released` only. So no tag pushed here can
+          # start a binary or Docker build. Drop this flag when the pipeline
+          # becomes release-driven.
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --title "$tag" --prerelease \
+              --notes-file measurements/RELEASE_NOTES.md
+
+          gh release upload "$tag" eif-*/emulator-* --clobber
+
+          {
+            echo "## Published"
+            echo
+            gh release view "$tag" --json url --jq .url
+          } >> "$GITHUB_STEP_SUMMARY"
