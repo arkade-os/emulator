@@ -11,14 +11,14 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	"github.com/arkade-os/arkd/pkg/client-lib/client"
+	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	"github.com/arkade-os/arkd/pkg/client-lib/identity"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	"github.com/arkade-os/go-sdk/explorer"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/types"
-	"github.com/arkade-os/go-sdk/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -136,7 +136,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := client.TapscriptsVtxo{
+	vtxo := types.VtxoWithTapTree{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
 				Txid: deployTx.UnsignedTx.TxHash().String(),
@@ -152,7 +152,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		delegateBatchEventsHandler: &delegateBatchEventsHandler{
 			intentId:       intentId,
 			intent:         signedIntent,
-			vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+			vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
 			signerSession:  signerSession,
 			emulatorClient: emulatorClient,
 			wallet:         aliceWallet,
@@ -161,7 +161,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		},
 	}
 
-	topics := arksdk.GetEventStreamTopics(
+	topics := clientlib.GetEventStreamTopics(
 		[]types.Outpoint{vtxo.Outpoint},
 		[]tree.SignerSession{signerSession},
 	)
@@ -171,7 +171,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		stop()
 	})
 
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, batchHandler)
+	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, batchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 	require.NotNil(t, batchHandler.vtxoTree)
@@ -226,7 +226,7 @@ func (h *capturingBatchEventsHandler) OnBatchFinalization(
 	ctx context.Context,
 	event client.BatchFinalizationEvent,
 	vtxoTree, connectorTree *tree.TxTree,
-) error {
+) ([]string, error) {
 	h.vtxoTree = vtxoTree
 	return h.delegateBatchEventsHandler.OnBatchFinalization(ctx, event, vtxoTree, connectorTree)
 }
@@ -325,7 +325,7 @@ func buildCounterIncrementIntent(
 func signAndSubmitCounterIntent(
 	t *testing.T,
 	ctx context.Context,
-	walletSvc wallet.WalletService,
+	walletSvc identity.Identity,
 	explorerSvc explorer.Explorer,
 	emulatorClient emulatorclient.TransportClient,
 	intentPtx *psbt.Packet,
@@ -336,7 +336,7 @@ func signAndSubmitCounterIntent(
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	signedIntentProof, err := walletSvc.SignTransaction(ctx, explorerSvc, encodedIntentProof)
+	signedIntentProof, err := walletSvc.SignTransaction(ctx, encodedIntentProof, nil)
 	require.NoError(t, err)
 
 	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -23,11 +24,6 @@ import (
 )
 
 const (
-	// payToTaprootDataSize is the size of the witness program push for
-	// taproot spends. This will be the serialized x-coordinate of the
-	// top-level taproot output public key.
-	payToTaprootDataSize = 32
-
 	// maxCombinedStackByteSize is the maximum total number of bytes the data
 	// and alt stacks may hold together. txscript.MaxStackSize caps the element
 	// count only, and every element may be up to
@@ -57,8 +53,6 @@ type taprootExecutionCtx struct {
 	// opCounts tracks how many times each limited opcode has executed for this
 	// input. It is allocated lazily on the first charge.
 	opCounts map[byte]int
-
-	mustSucceed bool
 }
 
 // newTaprootExecutionCtx returns a fresh instance of the taproot execution
@@ -112,6 +106,9 @@ type Engine struct {
 	prevOutFetcher ArkPrevOutFetcher
 	assetPacket    asset.Packet
 	emulatorPacket EmulatorPacket
+	expiry         *int64
+	currentTime    BigNum
+	intentMessage  []byte
 
 	// The following fields handle keeping track of the current execution state
 	// of the engine.
@@ -137,17 +134,15 @@ type Engine struct {
 	//
 	// condStack tracks the conditional execution state with support for
 	// multiple nested conditional execution opcodes.
-	scripts        [][]byte
-	scriptIdx      int
-	opcodeIdx      int
-	tokenizer      ScriptTokenizer
-	dstack         stack
-	astack         stack
-	condStack      []int
-	witnessVersion int
-	witnessProgram []byte
-	inputAmount    int64
-	taprootCtx     *taprootExecutionCtx
+	scripts     [][]byte
+	scriptIdx   int
+	opcodeIdx   int
+	tokenizer   ScriptTokenizer
+	dstack      stack
+	astack      stack
+	condStack   []int
+	inputAmount int64
+	taprootCtx  *taprootExecutionCtx
 
 	// limits is the per-input opcode-execution compute brake. NewEngine sets it
 	// to DefaultComputeLimits; it may be replaced before execution via
@@ -359,144 +354,6 @@ func (vm *Engine) checkValidPC() error {
 	return nil
 }
 
-// isWitnessVersionActive returns true if a witness program was extracted
-// during the initialization of the Engine, and the program's version matches
-// the specified version.
-func (vm *Engine) isWitnessVersionActive(version uint) bool {
-	return vm.witnessProgram != nil && uint(vm.witnessVersion) == version
-}
-
-// verifyWitnessProgram validates the stored witness program using the passed
-// witness as input.
-func (vm *Engine) verifyWitnessProgram(witness wire.TxWitness) error {
-	if !vm.isWitnessVersionActive(txscript.TaprootWitnessVersion) ||
-		len(vm.witnessProgram) != payToTaprootDataSize {
-		return fmt.Errorf("arkscript engine only supports taproot")
-	}
-
-	// If there're no stack elements at all, then this is an
-	// invalid spend.
-	if len(witness) == 0 {
-		return scriptError(txscript.ErrWitnessProgramEmpty, "witness "+
-			"program empty passed empty witness")
-	}
-
-	// At this point, we know taproot is active, so we'll populate
-	// the taproot execution context.
-	vm.taprootCtx = newTaprootExecutionCtx()
-
-	// If we can detect the annex, then drop that off the stack,
-	// we'll only need it to compute the sighash later.
-	if isAnnexedWitness(witness) {
-		vm.taprootCtx.annex, _ = extractAnnex(witness)
-
-		// Snip the annex off the end of the witness stack.
-		witness = witness[:len(witness)-1]
-	}
-
-	// From here, we'll either be validating a normal key spend, or
-	// a spend from the tap script leaf using a committed leaf.
-	switch {
-	// If there's only a single element left on the stack (the
-	// signature), then we'll apply the normal top-level schnorr
-	// signature verification.
-	case len(witness) == 1:
-		// As we only have a single element left (after maybe
-		// removing the annex), we'll do normal taproot
-		// keyspend validation.
-		rawSig := witness[0]
-		err := txscript.VerifyTaprootKeySpend(
-			vm.witnessProgram, rawSig, &vm.tx, vm.txIdx,
-			vm.prevOutFetcher, vm.hashCache, vm.sigCache,
-		)
-		if err != nil {
-			return err
-		}
-
-		vm.taprootCtx.mustSucceed = true
-		return nil
-
-	// Otherwise, we need to attempt full tapscript leaf
-	// verification in place.
-	default:
-		// First, attempt to parse the control block, if this
-		// isn't formatted properly, then we'll end execution
-		// right here.
-		controlBlock, err := txscript.ParseControlBlock(
-			witness[len(witness)-1],
-		)
-		if err != nil {
-			return err
-		}
-
-		// Now that we know the control block is valid, we'll
-		// verify the top-level taproot commitment, which
-		// proves that the specified script was committed to in
-		// the merkle tree.
-		witnessScript := witness[len(witness)-2]
-		err = txscript.VerifyTaprootLeafCommitment(
-			controlBlock, vm.witnessProgram, witnessScript,
-		)
-		if err != nil {
-			return err
-		}
-
-		// Before we proceed with normal execution, check the
-		// leaf version of the script, as if the policy flag is
-		// active, then we should only allow the base leaf
-		// version.
-		if controlBlock.LeafVersion != txscript.BaseLeafVersion {
-			errStr := fmt.Sprintf("tapscript is attempting "+
-				"to use version: %v", controlBlock.LeafVersion)
-			return scriptError(
-				txscript.ErrDiscourageUpgradeableTaprootVersion, errStr,
-			)
-		}
-
-		// Now that we know we don't have any op success
-		// fields, ensure that the script parses properly.
-		err = checkScriptParses(vm.version, witnessScript)
-		if err != nil {
-			return err
-		}
-
-		// Now that we know the script parses, and we have a
-		// valid leaf version, we'll save the tap leaf (and its
-		// hash) as we need both for signature validation later.
-		vm.taprootCtx.tapLeaf = txscript.NewBaseTapLeaf(witnessScript)
-		vm.taprootCtx.tapLeafHash = vm.taprootCtx.tapLeaf.TapHash()
-
-		// Otherwise, we'll now "recurse" one level deeper, and
-		// set the remaining witness (leaving off the annex and
-		// the witness script) as the execution stack, and
-		// enter further execution.
-		vm.scripts = append(vm.scripts, witnessScript)
-		vm.SetStack(witness[:len(witness)-2])
-	}
-
-	// In addition to the normal script element size limits, taproot also
-	// enforces a limit on the max _starting_ stack size.
-	if vm.dstack.Depth() > txscript.MaxStackSize {
-		str := fmt.Sprintf("tapscript stack size %d > max allowed %d",
-			vm.dstack.Depth(), txscript.MaxStackSize)
-		return scriptError(txscript.ErrStackOverflow, str)
-	}
-
-	// All elements within the witness stack must not be greater
-	// than the maximum bytes which are allowed to be pushed onto
-	// the stack.
-	for _, witElement := range vm.GetStack() {
-		if len(witElement) > txscript.MaxScriptElementSize {
-			str := fmt.Sprintf("element size %d exceeds "+
-				"max allowed size %d", len(witElement),
-				txscript.MaxScriptElementSize)
-			return scriptError(txscript.ErrElementTooBig, str)
-		}
-	}
-
-	return nil
-}
-
 // DisasmPC returns the string for the disassembly of the opcode that will be
 // next to execute when Step is called.
 func (vm *Engine) DisasmPC() (string, error) {
@@ -564,10 +421,6 @@ func (vm *Engine) DisasmScript(idx int) (string, error) {
 // successful, leaving a a true boolean on the stack.  An error otherwise,
 // including if the script has not finished.
 func (vm *Engine) CheckErrorCondition(finalScript bool) error {
-	if vm.taprootCtx != nil && vm.taprootCtx.mustSucceed {
-		return nil
-	}
-
 	// Check execution is actually done by ensuring the script index is after
 	// the final script in the array script.
 	if vm.scriptIdx < len(vm.scripts) {
@@ -667,18 +520,7 @@ func (vm *Engine) Step() (done bool, err error) {
 		vm.opcodeIdx = 0
 
 		// Advance to the next script as needed.
-		switch {
-		case vm.scriptIdx == 1 && vm.witnessProgram != nil:
-			vm.scriptIdx++
-
-			witness := vm.tx.TxIn[vm.txIdx].Witness
-			if err := vm.verifyWitnessProgram(witness); err != nil {
-				return false, err
-			}
-
-		default:
-			vm.scriptIdx++
-		}
+		vm.scriptIdx++
 
 		// Skip empty scripts.
 		if vm.scriptIdx < len(vm.scripts) && len(vm.scripts[vm.scriptIdx]) == 0 {
@@ -859,6 +701,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
 		limits:         DefaultComputeLimits(),
+		currentTime:    BigNumFromInt64(time.Now().Unix()),
 	}
 
 	// The signature script must only contain data pushes.
@@ -891,32 +734,6 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 
 	vm.dstack.verifyMinimalData = true
 	vm.astack.verifyMinimalData = true
-
-	// Extract the witness program from the public key script.
-	if txscript.IsWitnessProgram(vm.scripts[1]) {
-		// The scriptSig must be *empty* for all native witness
-		// programs, otherwise we introduce malleability.
-		if len(scriptSig) != 0 {
-			errStr := "native witness program cannot " +
-				"also have a signature script"
-			return nil, scriptError(txscript.ErrWitnessMalleated, errStr)
-		}
-
-		var err error
-		vm.witnessVersion, vm.witnessProgram, err = txscript.ExtractWitnessProgramInfo(
-			scriptPubKey,
-		)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// If we didn't find a witness program, then there MUST NOT
-		// be any witness data associated with the input being validated.
-		if len(tx.TxIn[txIdx].Witness) != 0 {
-			errStr := "non-witness inputs cannot have a witness"
-			return nil, scriptError(txscript.ErrWitnessUnexpected, errStr)
-		}
-	}
 
 	// Setup the current tokenizer used to parse through the script one opcode
 	// at a time with the script associated with the program counter.
@@ -954,26 +771,4 @@ func checkScriptParses(scriptVersion uint16, script []byte) error {
 		// Nothing to do.
 	}
 	return tokenizer.Err()
-}
-
-// isAnnexedWitness returns true if the passed witness has a final push
-// that is a witness annex.
-func isAnnexedWitness(witness wire.TxWitness) bool {
-	if len(witness) < 2 {
-		return false
-	}
-
-	lastElement := witness[len(witness)-1]
-	return len(lastElement) > 0 && lastElement[0] == txscript.TaprootAnnexTag
-}
-
-// extractAnnex attempts to extract the annex from the passed witness. If the
-// witness doesn't contain an annex, then an error is returned.
-func extractAnnex(witness [][]byte) ([]byte, error) {
-	if !isAnnexedWitness(witness) {
-		return nil, scriptError(txscript.ErrWitnessHasNoAnnex, "")
-	}
-
-	lastElement := witness[len(witness)-1]
-	return lastElement, nil
 }

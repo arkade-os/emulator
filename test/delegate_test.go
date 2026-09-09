@@ -14,13 +14,13 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -40,26 +40,24 @@ const (
 // key) with an extra CSV exit leaf for the user. The emulator only signs
 // once the arkade covenant on the spending tx passes.
 //
-// Self-send arkade script — enforces output[0] preserves the spent VTXO's
-// pkScript and value, and gates the spend to intent-proof txs only (v2).
+// Self-send arkade script — enforces output[i-1] preserves the spent VTXO's
+// pkScript and value, and gates the spend to register intents only with strict
+// cosigner verification.
 // Witness stack: [].
 //
-//	OP_INSPECTVERSION OP_2 OP_EQUALVERIFY          # intent proof only (v2, not v3)
-//	OP_0 OP_INSPECTOUTPUTSCRIPTPUBKEY
-//	OP_1 OP_EQUALVERIFY                            # force taproot
-//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTSCRIPTPUBKEY
-//	OP_1 OP_EQUALVERIFY                            # force taproot
-//	OP_EQUALVERIFY                                 # programs equal
-//	OP_0 OP_INSPECTOUTPUTVALUE
-//	OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTVALUE
-//	OP_EQUAL                                       # values equal
+//	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIMEVERIFY          # within 1024 seconds of expiry
+//	"type" OP_INSPECTINTENTMESSAGE OP_VERIFY "register" OP_EQUALVERIFY  # type == "register"
+//	"onchain_output_indexes" OP_INSPECTINTENTMESSAGE OP_VERIFY "[]" OP_EQUALVERIFY  # no onchain outputs
+//	"cosigners_public_keys.0" OP_INSPECTINTENTMESSAGE OP_VERIFY <pubkey> OP_EQUALVERIFY  # cosigner[0] == delegate key
+//	"cosigners_public_keys.1" OP_INSPECTINTENTMESSAGE OP_NOT OP_VERIFY OP_DROP  # no second cosigner
+//	OP_PUSHCURRENTINPUTINDEX OP_1SUB OP_7 OP_0 OP_TUNNEL  # output i-1, script+value+assets flags, no exceptions
 //
 // Delegate path — MultisigClosure [server, emulator_tweaked]. Any solver
 // can trigger the refresh; the covenant acts in the user's place.
 // Exit path — CSVMultisigClosure for the user. Unilateral exit remains
 // available if the emulator or arkd refuse to cooperate.
 //
-// The v=2 version gate blocks off-chain Ark txs (v=3): without it a solver
+// The intent-message gate blocks off-chain Ark txs: without it a solver
 // could spend the delegate VTXO via SubmitTx in a self-send loop, burning
 // fees without ever refreshing the VTXO through a batch.
 //
@@ -89,8 +87,52 @@ func TestCovenantDelegate(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// covenant: output[0] preserves the spent VTXO (same pkScript and value)
-	delegateArkadeScript := enforceSelfSend(t)
+	// solver-owned cosigner, drives Musig2 on behalf of the absent user.
+	// Generated before the covenant script so its pubkey can be pinned in it.
+	cosignerKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	signerSession := tree.NewTreeSignerSession(cosignerKey)
+	delegateSignerPubkeyHex := signerSession.GetPublicKey()
+
+	// covenant: spending is allowed near expiry if output[0] preserves the spent VTXO
+	// with additional checks on intent message fields
+	delegateArkadeScript, err := txscript.NewScriptBuilder().
+		AddOp(arkade.OP_PUSHEXPIRY).
+		AddInt64(1024).
+		AddOp(arkade.OP_SUB).
+		AddOp(arkade.OP_CHECKTIMEVERIFY).
+		// Check intent message type == "register"
+		AddData([]byte("type")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(intent.IntentMessageTypeRegister)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check onchain_output_indexes == "[]"
+		AddData([]byte("onchain_output_indexes")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte("[]")).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check cosigners_public_keys.0 == delegate's vtxotree signer pubkey
+		AddData([]byte("cosigners_public_keys.0")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(delegateSignerPubkeyHex)).
+		AddOp(arkade.OP_EQUALVERIFY).
+		// Check cosigners_public_keys.1 does not exist (only one cosigner allowed)
+		AddData([]byte("cosigners_public_keys.1")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_NOT).
+		AddOp(txscript.OP_VERIFY).
+		AddOp(txscript.OP_DROP).
+		// Tunnel: output i-1, script+value+assets flags, no asset exceptions
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
+		AddOp(arkade.OP_1SUB).
+		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue | arkade.TunnelAssets).
+		AddInt64(0).
+		AddOp(arkade.OP_TUNNEL).
+		Script()
+	require.NoError(t, err)
 
 	// delegate VTXO: [server, emulator_tweaked] for refresh, [alice]+CSV for exit
 	delegateVtxoScript := script.TapscriptsVtxoScript{
@@ -127,11 +169,6 @@ func TestCovenantDelegate(t *testing.T) {
 		aliceAddr.Signer, delegateVtxoScript, delegateAmount,
 	)
 
-	// solver-owned cosigner, drives Musig2 on behalf of the absent user
-	cosignerKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	signerSession := tree.NewTreeSignerSession(cosignerKey)
-
 	buildIntent := func(outputs []*wire.TxOut) (*psbt.Packet, string) {
 		t.Helper()
 
@@ -139,7 +176,9 @@ func TestCovenantDelegate(t *testing.T) {
 			BaseMessage: intent.BaseMessage{
 				Type: intent.IntentMessageTypeRegister,
 			},
-			CosignersPublicKeys: []string{signerSession.GetPublicKey()},
+			// non-nil so it encodes as "[]" (nil marshals to null, a covenant miss)
+			OnchainOutputIndexes: []int{},
+			CosignersPublicKeys:  []string{delegateSignerPubkeyHex},
 		}.Encode()
 		require.NoError(t, err)
 
@@ -177,7 +216,7 @@ func TestCovenantDelegate(t *testing.T) {
 		addEmulatorPacket(t, intentPtx, []arkade.EmulatorEntry{
 			{Vin: 1, Script: delegateArkadeScript},
 		})
-		// required by OP_INSPECTINPUTSCRIPTPUBKEY on input 1
+		// required by OP_TUNNEL on input 1
 		require.NoError(t, txutils.SetArkPsbtField(
 			intentPtx, 1, arkade.PrevArkTxField, *fundingTx,
 		))
@@ -209,7 +248,7 @@ func TestCovenantDelegate(t *testing.T) {
 		{Value: delegateAmount - 1, PkScript: delegatePkScript},
 	})
 
-	// Invalid: off-chain Ark tx (v3) rejected by the version gate
+	// Invalid: off-chain Ark tx rejected by the intent-message gate
 	infos, err := grpcAlice.GetInfo(ctx)
 	require.NoError(t, err)
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
@@ -236,8 +275,6 @@ func TestCovenantDelegate(t *testing.T) {
 	validPtx, validMessage := buildIntent([]*wire.TxOut{
 		{Value: delegateAmount, PkScript: delegatePkScript},
 	})
-	require.NoError(t, executeArkadeScripts(t, validPtx, nil, emulatorPubKey))
-
 	encodedValidProof, err := validPtx.B64Encode()
 	require.NoError(t, err)
 
@@ -255,7 +292,7 @@ func TestCovenantDelegate(t *testing.T) {
 	intentId, err := grpcAlice.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := client.TapscriptsVtxo{
+	vtxo := types.VtxoWithTapTree{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
 				Txid: delegateInput.Outpoint.Hash.String(),
@@ -270,7 +307,7 @@ func TestCovenantDelegate(t *testing.T) {
 	handler := &delegateBatchEventsHandler{
 		intentId:       intentId,
 		intent:         signedIntent,
-		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
 		signerSession:  signerSession,
 		emulatorClient: emulatorClient,
 		wallet:         aliceWallet,
@@ -278,7 +315,7 @@ func TestCovenantDelegate(t *testing.T) {
 		explorer:       explorerSvc,
 	}
 
-	topics := arksdk.GetEventStreamTopics(
+	topics := clientlib.GetEventStreamTopics(
 		[]types.Outpoint{vtxo.Outpoint},
 		[]tree.SignerSession{signerSession},
 	)
@@ -287,7 +324,7 @@ func TestCovenantDelegate(t *testing.T) {
 	t.Cleanup(stop)
 
 	capturing := &capturingBatchEventsHandler{delegateBatchEventsHandler: handler}
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, capturing)
+	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, capturing)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 	require.NotNil(t, capturing.vtxoTree)
@@ -297,11 +334,7 @@ func TestCovenantDelegate(t *testing.T) {
 
 	// refreshed VTXO is a batch leaf (not preconfirmed)
 	require.Eventually(t, func() bool {
-		req := indexer.GetVtxosRequestOption{}
-		if err := req.WithOutpoints([]types.Outpoint{refreshedOutpoint}); err != nil {
-			return false
-		}
-		resp, err := indexerSvc.GetVtxos(ctx, req)
+		resp, err := indexerSvc.GetVtxos(ctx, indexer.WithOutpoints([]types.Outpoint{refreshedOutpoint}))
 		if err != nil || resp == nil || len(resp.Vtxos) != 1 {
 			return false
 		}
@@ -310,9 +343,12 @@ func TestCovenantDelegate(t *testing.T) {
 	}, 10*time.Second, 200*time.Millisecond, "refreshed delegate VTXO not found or preconfirmed")
 }
 
-// enforceSelfSend builds an arkade script that asserts output[0] has the same
-// pkScript and value as the current input, and that the spending tx is an
-// intent proof (v2). Witness stack: [].
+// enforceSelfSend builds an arkade script that asserts the output paired with
+// the current input (intent proof input i, whose input 0 is the BIP322
+// message, maps to output i-1) has the same pkScript and value, and that the
+// spending tx is an intent proof (v2). Binding the output to the input index
+// stops two equal delegate VTXOs from both being "preserved" by one output.
+// Witness stack: [].
 func enforceSelfSend(t *testing.T) []byte {
 	t.Helper()
 
@@ -320,22 +356,11 @@ func enforceSelfSend(t *testing.T) []byte {
 		AddOp(arkade.OP_INSPECTVERSION).
 		AddInt64(2).
 		AddOp(arkade.OP_EQUALVERIFY).
-		// output[0] witness program == input[self] witness program
-		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTSCRIPTPUBKEY).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY). // segwit v1
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
-		AddOp(arkade.OP_INSPECTINPUTSCRIPTPUBKEY).
-		AddOp(arkade.OP_1).
-		AddOp(arkade.OP_EQUALVERIFY). // segwit v1
-		AddOp(arkade.OP_EQUALVERIFY).
-		// output[0] value == input[self] value
+		AddOp(arkade.OP_1SUB).
+		AddInt64(arkade.TunnelScriptPubKey | arkade.TunnelValue).
 		AddInt64(0).
-		AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).
-		AddOp(arkade.OP_INSPECTINPUTVALUE).
-		AddOp(arkade.OP_EQUAL).
+		AddOp(arkade.OP_TUNNEL).
 		Script()
 	require.NoError(t, err)
 
@@ -344,11 +369,11 @@ func enforceSelfSend(t *testing.T) []byte {
 
 // fundDelegate locks amount sats into a VTXO with the given script and returns
 // the spend input for its forfeit leaf plus the funding ark tx (needed by
-// OP_INSPECTINPUTSCRIPTPUBKEY via arkade.PrevArkTxField).
+// OP_TUNNEL via arkade.PrevArkTxField).
 func fundDelegate(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.ArkClient,
+	alice arksdk.Wallet,
 	indexerSvc indexer.Indexer,
 	serverSigner *btcec.PublicKey,
 	delegateVtxoScript script.TapscriptsVtxoScript,

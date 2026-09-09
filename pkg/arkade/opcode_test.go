@@ -2,6 +2,7 @@ package arkade
 
 import (
 	"bytes"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -20,9 +21,247 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	gnarkbn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	gnarksecp256k1fp "github.com/consensys/gnark-crypto/ecc/secp256k1/fp"
+	gnarksecp256k1fr "github.com/consensys/gnark-crypto/ecc/secp256k1/fr"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOpcodeVectors(t *testing.T) {
+	for opcode, spec := range opcodeSpecs {
+		if spec == nil {
+			continue
+		}
+
+		opcode := byte(opcode)
+		t.Run(opcodeArray[opcode].name, func(t *testing.T) {
+			t.Parallel()
+
+			runVector := func(t *testing.T, v opcodeVector) {
+				t.Helper()
+				world := buildOpcodeWorld()
+				if v.setupWorld != nil {
+					v.setupWorld(world)
+				}
+				vm, err := newOpcodeEngine(world, 0)
+				require.NoError(t, err)
+				if v.setupWorld != nil {
+					vm.emulatorPacket = world.packet
+				}
+				vm.SetStack(v.inputStack)
+				vm.SetAltStack(v.inputAltStack)
+				if v.setupVM != nil {
+					v.setupVM(vm)
+				}
+				opcodeData := append([]byte(nil), v.opcodeData...)
+				before := cloneEngineForExpectedResult(vm)
+
+				require.NotNil(t, spec.checkProperties)
+				err = invokeOpcodeWithData(spec.opcode, opcodeData, vm)
+				spec.checkProperties(
+					t,
+					opcodeCheckContext{
+						before:     before,
+						after:      vm,
+						opcodeData: opcodeData,
+						execErr:    err,
+					},
+				)
+
+				if v.expectedError != 0 {
+					requireScriptErrorCode(t, err, v.expectedError)
+					return
+				}
+				if v.expectedExecErr != nil {
+					require.ErrorIs(t, err, v.expectedExecErr)
+					return
+				}
+				require.NoError(t, err)
+
+				if v.expectedStack != nil {
+					require.Equal(t, v.expectedStack, vm.GetStack())
+				}
+				if v.expectedAltStack != nil {
+					require.Equal(t, v.expectedAltStack, vm.GetAltStack())
+				}
+			}
+
+			t.Run("valid", func(t *testing.T) {
+				for _, v := range spec.validVectors {
+					t.Run(v.name, func(t *testing.T) {
+						t.Parallel()
+						runVector(t, v)
+					})
+				}
+			})
+			t.Run("invalid", func(t *testing.T) {
+				for _, v := range spec.invalidVectors {
+					t.Run(v.name, func(t *testing.T) {
+						t.Parallel()
+						runVector(t, v)
+					})
+				}
+			})
+		})
+	}
+}
+
+func TestOpcodeDisasm(t *testing.T) {
+	for opcode, spec := range opcodeSpecs {
+		if spec == nil {
+			continue
+		}
+
+		opcodeVal := byte(opcode)
+		t.Run(opcodeArray[opcodeVal].name, func(t *testing.T) {
+			t.Parallel()
+
+			data := []byte{}
+			expectedCompact := opcodeArray[opcodeVal].name
+			expectedFull := opcodeArray[opcodeVal].name
+
+			if spec.disasm != nil {
+				data = spec.disasm.data
+				expectedCompact = spec.disasm.compact
+				expectedFull = spec.disasm.full
+			}
+
+			// Compact mode
+			var buf strings.Builder
+			disasmOpcode(&buf, &opcodeArray[opcodeVal], data, true)
+			require.Equal(t, expectedCompact, buf.String(), "compact disasm mismatch")
+
+			// Full mode
+			buf.Reset()
+			disasmOpcode(&buf, &opcodeArray[opcodeVal], data, false)
+			require.Equal(t, expectedFull, buf.String(), "full disasm mismatch")
+		})
+	}
+}
+
+// TestOpcodeSha256StateDecodeIsBounded proves that OP_SHA256UPDATE and
+// OP_SHA256FINALIZE cannot be driven into large allocations by the serialized
+// context they pop off the stack. Both opcodes always fail on these inputs, so
+// the observable defect is the memory spent on the way to that failure: a few
+// stack bytes buying ~10MiB per execution is a cheap denial of service.
+//
+// Deliberately not parallel: the assertion reads process-wide alloc counters.
+func TestOpcodeSha256StateDecodeIsBounded(t *testing.T) {
+	const (
+		runs     = 64
+		maxAlloc = 1 << 20 // 1MiB/call; the unfixed decoder spends ~10MiB.
+	)
+
+	states := map[string][]byte{
+		"huge_message": sha256StateHugeMessage,
+		"huge_slice":   sha256StateHugeSlice,
+		"truncated":    sha256InitGolden[:len(sha256InitGolden)-1],
+		"oversized":    append(append([]byte(nil), sha256InitGolden...), make([]byte, 256)...),
+	}
+
+	for _, op := range []byte{OP_SHA256UPDATE, OP_SHA256FINALIZE} {
+		for name, state := range states {
+			t.Run(fmt.Sprintf("%s/%s", opcodeArray[op].name, name), func(t *testing.T) {
+				vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+				require.NoError(t, err)
+
+				// The state must be rejected outright.
+				vm.SetStack([][]byte{state, []byte("x")})
+				requireScriptErrorCode(
+					t, invokeOpcodeWithData(op, nil, vm),
+					txscript.ErrInvalidStackOperation,
+				)
+
+				perRun := allocBytesPerRun(runs, func() {
+					vm.SetStack([][]byte{state, []byte("x")})
+					_ = invokeOpcodeWithData(op, nil, vm)
+				})
+				require.Lessf(t, perRun, uint64(maxAlloc),
+					"%d state bytes allocated %d bytes per execution",
+					len(state), perRun)
+			})
+		}
+	}
+}
+
+// TestOpcodeSha256StateRoundTripsGolden guards against the bounds check above
+// being tightened into rejecting the states the VM itself produces.
+func TestOpcodeSha256StateRoundTripsGolden(t *testing.T) {
+	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+	require.NoError(t, err)
+
+	vm.SetStack([][]byte{[]byte("Hello")})
+	require.NoError(t, invokeOpcodeWithData(OP_SHA256INITIALIZE, nil, vm))
+	require.Equal(t, [][]byte{sha256InitGolden}, vm.GetStack())
+
+	vm.SetStack([][]byte{sha256InitGolden, []byte(" World")})
+	require.NoError(t, invokeOpcodeWithData(OP_SHA256UPDATE, nil, vm))
+	require.Equal(t, [][]byte{sha256UpdateGolden}, vm.GetStack())
+
+	vm.SetStack([][]byte{sha256UpdateGolden, []byte("!")})
+	require.NoError(t, invokeOpcodeWithData(OP_SHA256FINALIZE, nil, vm))
+	require.Equal(t, [][]byte{sha256FinalizeGolden}, vm.GetStack())
+}
+
+func TestOpcodeModexpSmoke(t *testing.T) {
+	require.Equal(t, "OP_MODEXP", opcodeArray[OP_MODEXP].name)
+	require.Equal(t, 1, opcodeArray[OP_MODEXP].length)
+	require.NotNil(t, opcodeArray[OP_MODEXP].opfunc)
+}
+
+func TestOpcodeECMulScalarVerifyRejectsInfinity(t *testing.T) {
+	vm := &Engine{}
+	vm.dstack.PushByteArray(make([]byte, 32)) // k = 0
+	vm.dstack.PushByteArray(mustDecodeHex(generatorHex))
+	vm.dstack.PushByteArray(infinityCompressed)
+
+	requireScriptErrorCode(
+		t, opcodeECMulScalarVerify(nil, nil, vm), txscript.ErrInvalidStackOperation,
+	)
+}
+
+func TestOpcodeTweakVerifyRejectsInfinity(t *testing.T) {
+	// P = x(G) tweaked by n-1 cancels to the point at infinity.
+	vm := &Engine{}
+	vm.dstack.PushByteArray(mustDecodeHex(generatorHex)[1:])
+	vm.dstack.PushByteArray(mustDecodeHex(orderMinusOneHex))
+	vm.dstack.PushByteArray(infinityCompressed)
+
+	requireScriptErrorCode(t, opcodeTweakVerify(nil, nil, vm), txscript.ErrInvalidStackOperation)
+}
+
+func TestOpcodeECMulScalarVerifyRequiresCompressedP(t *testing.T) {
+	priv, err := secp.GeneratePrivateKey()
+	require.NoError(t, err)
+
+	var scalar secp.ModNScalar
+	scalar.SetInt(2)
+	k := make([]byte, 32)
+	k[31] = 2
+
+	var point, result secp.JacobianPoint
+	priv.PubKey().AsJacobian(&point)
+	secp.ScalarMultNonConst(&scalar, &point, &result)
+	result.ToAffine()
+	Q := secp.NewPublicKey(&result.X, &result.Y).SerializeCompressed()
+
+	// the compressed encoding of the same key is accepted
+	vm := &Engine{}
+	vm.dstack.PushByteArray(k)
+	vm.dstack.PushByteArray(priv.PubKey().SerializeCompressed())
+	vm.dstack.PushByteArray(Q)
+	require.NoError(t, opcodeECMulScalarVerify(nil, nil, vm))
+
+	// the uncompressed encoding is not
+	vm = &Engine{}
+	vm.dstack.PushByteArray(k)
+	vm.dstack.PushByteArray(priv.PubKey().SerializeUncompressed())
+	vm.dstack.PushByteArray(Q)
+	requireScriptErrorCode(
+		t, opcodeECMulScalarVerify(nil, nil, vm), txscript.ErrInvalidStackOperation,
+	)
+}
 
 type opcodeSpec struct {
 	opcode          byte
@@ -201,6 +440,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_NIP:                stackOpSpec(OP_NIP),
 	OP_OVER:               stackOpSpec(OP_OVER),
 	OP_PICK:               pickSpec(),
+	OP_PUT:                putSpec(),
 	OP_ROLL:               rollSpec(),
 	OP_ROT:                stackOpSpec(OP_ROT),
 	OP_SWAP:               stackOpSpec(OP_SWAP),
@@ -308,8 +548,8 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_BIN2NUM:                       bin2NumSpec(),
 	OP_REVERSEBYTES:                  reverseBytesSpec(),
 	OP_MODEXP:                        modexpSpec(),
-	OP_UNKNOWN219:                    invalidSpec(OP_UNKNOWN219),
-	OP_UNKNOWN220:                    invalidSpec(OP_UNKNOWN220),
+	OP_PUSHEXPIRY:                    pushExpirySpec(),
+	OP_CHECKTIMEVERIFY:               checkTimeVerifySpec(),
 	OP_UNKNOWN221:                    invalidSpec(OP_UNKNOWN221),
 	OP_UNKNOWN222:                    invalidSpec(OP_UNKNOWN222),
 	OP_UNKNOWN223:                    invalidSpec(OP_UNKNOWN223),
@@ -339,7 +579,6 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_VERNOTIF:                      reservedSpec(OP_VERNOTIF),
 	OP_RESERVED1:                     reservedSpec(OP_RESERVED1),
 	OP_RESERVED2:                     reservedSpec(OP_RESERVED2),
-	OP_UNKNOWN187:                    invalidSpec(OP_UNKNOWN187),
 	OP_UNKNOWN188:                    invalidSpec(OP_UNKNOWN188),
 	OP_UNKNOWN189:                    invalidSpec(OP_UNKNOWN189),
 	OP_UNKNOWN190:                    invalidSpec(OP_UNKNOWN190),
@@ -351,8 +590,8 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_INSPECTPACKET:                 inspectPacketSpec(),
 	OP_INSPECTINPUTPACKET:            inspectInputPacketSpec(),
 	OP_SIGHASH:                       sighashSpec(),
-	OP_UNKNOWN247:                    invalidSpec(OP_UNKNOWN247),
-	OP_UNKNOWN248:                    invalidSpec(OP_UNKNOWN248),
+	OP_TUNNEL:                        tunnelSpec(),
+	OP_INSPECTINTENTMESSAGE:          inspectIntentMessageSpec(),
 	OP_UNKNOWN249:                    invalidSpec(OP_UNKNOWN249),
 	OP_SMALLINTEGER:                  invalidSpec(OP_SMALLINTEGER),
 	OP_PUBKEYS:                       invalidSpec(OP_PUBKEYS),
@@ -360,151 +599,6 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_PUBKEYHASH:                    invalidSpec(OP_PUBKEYHASH),
 	OP_PUBKEY:                        invalidSpec(OP_PUBKEY),
 	OP_INVALIDOPCODE:                 invalidSpec(OP_INVALIDOPCODE),
-}
-
-func TestOpcodeVectors(t *testing.T) {
-	t.Parallel()
-
-	for opcode, spec := range opcodeSpecs {
-		if spec == nil {
-			continue
-		}
-
-		opcode := byte(opcode)
-		t.Run(opcodeArray[opcode].name, func(t *testing.T) {
-			t.Parallel()
-
-			runVector := func(t *testing.T, v opcodeVector) {
-				t.Helper()
-				world := buildOpcodeWorld()
-				if v.setupWorld != nil {
-					v.setupWorld(world)
-				}
-				vm, err := newOpcodeEngine(world, 0)
-				require.NoError(t, err)
-				if v.setupWorld != nil {
-					vm.emulatorPacket = world.packet
-				}
-				vm.SetStack(v.inputStack)
-				vm.SetAltStack(v.inputAltStack)
-				if v.setupVM != nil {
-					v.setupVM(vm)
-				}
-				opcodeData := append([]byte(nil), v.opcodeData...)
-				before := cloneEngineForExpectedResult(vm)
-
-				require.NotNil(t, spec.checkProperties)
-				err = invokeOpcodeWithData(spec.opcode, opcodeData, vm)
-				spec.checkProperties(
-					t,
-					opcodeCheckContext{
-						before:     before,
-						after:      vm,
-						opcodeData: opcodeData,
-						execErr:    err,
-					},
-				)
-
-				if v.expectedError != 0 {
-					requireScriptErrorCode(t, err, v.expectedError)
-					return
-				}
-				if v.expectedExecErr != nil {
-					require.ErrorIs(t, err, v.expectedExecErr)
-					return
-				}
-				require.NoError(t, err)
-
-				if v.expectedStack != nil {
-					require.Equal(t, v.expectedStack, vm.GetStack())
-				}
-				if v.expectedAltStack != nil {
-					require.Equal(t, v.expectedAltStack, vm.GetAltStack())
-				}
-			}
-
-			t.Run("valid", func(t *testing.T) {
-				t.Parallel()
-				for _, v := range spec.validVectors {
-					t.Run(v.name, func(t *testing.T) {
-						t.Parallel()
-						runVector(t, v)
-					})
-				}
-			})
-			t.Run("invalid", func(t *testing.T) {
-				t.Parallel()
-				for _, v := range spec.invalidVectors {
-					t.Run(v.name, func(t *testing.T) {
-						t.Parallel()
-						runVector(t, v)
-					})
-				}
-			})
-		})
-	}
-}
-
-func TestOpcodeDisasm(t *testing.T) {
-	t.Parallel()
-
-	for opcode, spec := range opcodeSpecs {
-		if spec == nil {
-			continue
-		}
-
-		opcodeVal := byte(opcode)
-		t.Run(opcodeArray[opcodeVal].name, func(t *testing.T) {
-			t.Parallel()
-
-			data := []byte{}
-			expectedCompact := opcodeArray[opcodeVal].name
-			expectedFull := opcodeArray[opcodeVal].name
-
-			if spec.disasm != nil {
-				data = spec.disasm.data
-				expectedCompact = spec.disasm.compact
-				expectedFull = spec.disasm.full
-			}
-
-			// Compact mode
-			var buf strings.Builder
-			disasmOpcode(&buf, &opcodeArray[opcodeVal], data, true)
-			require.Equal(t, expectedCompact, buf.String(), "compact disasm mismatch")
-
-			// Full mode
-			buf.Reset()
-			disasmOpcode(&buf, &opcodeArray[opcodeVal], data, false)
-			require.Equal(t, expectedFull, buf.String(), "full disasm mismatch")
-		})
-	}
-}
-
-// Builders
-func constantSpec(op byte, val int64) *opcodeSpec {
-	compact := strconv.FormatInt(val, 10)
-	full := opcodeArray[op].name
-	wantTop := scriptNum(val).Bytes()
-	return &opcodeSpec{
-		opcode: op,
-		checkProperties: func(t *testing.T, c opcodeCheckContext) {
-			t.Helper()
-			require.NoError(t, c.execErr)
-			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-			beforeStack := c.before.GetStack()
-			afterStack := c.after.GetStack()
-			require.Equal(t, len(beforeStack)+1, len(afterStack))
-			require.Equal(t, beforeStack, afterStack[:len(beforeStack)])
-			require.Equal(t, wantTop, afterStack[len(afterStack)-1])
-		},
-		validVectors: []opcodeVector{
-			{name: "push", expectedStack: [][]byte{scriptNum(val).Bytes()}},
-		},
-		disasm: &opcodeDisasm{
-			compact: compact,
-			full:    full,
-		},
-	}
 }
 
 func pushDataPropertyChecker(op byte) opcodePropertyChecker {
@@ -537,6 +631,869 @@ func pushDataPropertyChecker(op byte) opcodePropertyChecker {
 			"opcode=%s",
 			opcodeArray[op].name,
 		)
+	}
+}
+
+func unchangedStateChecker() opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.NoError(t, c.execErr)
+		require.Equal(t, c.before.GetStack(), c.after.GetStack())
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+	}
+}
+
+func unchangedStateWithErrorCodeChecker(code txscript.ErrorCode) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		requireScriptErrorCode(t, c.execErr, code)
+		require.Equal(t, c.before.GetStack(), c.after.GetStack())
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+	}
+}
+
+func errorNoMutationChecker(code txscript.ErrorCode) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		requireScriptErrorCode(t, c.execErr, code)
+		require.Equal(t, c.before.GetStack(), c.after.GetStack())
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+	}
+}
+
+func ecmulLikePropertyChecker() opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+		if c.execErr != nil {
+			requireScriptErrorCode(t, c.execErr, txscript.ErrInvalidStackOperation)
+			return
+		}
+		require.Equal(t, len(c.before.GetStack())-3, len(c.after.GetStack()))
+	}
+}
+
+func byteTransformPropertyChecker(op byte) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrInvalidIndex,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+				txscript.ErrElementTooBig,
+			)
+			require.LessOrEqual(t, afterDepth, beforeDepth)
+			return
+		}
+
+		switch op {
+		case OP_INVERT:
+			require.Equal(t, beforeDepth, afterDepth)
+		case OP_SIZE:
+			require.Equal(t, beforeDepth+1, afterDepth)
+		case OP_CAT, OP_LEFT, OP_RIGHT:
+			require.Equal(t, beforeDepth-1, afterDepth)
+		case OP_SUBSTR:
+			require.Equal(t, beforeDepth-2, afterDepth)
+		default:
+			t.Fatalf("unsupported byte transform %s", opcodeArray[op].name)
+		}
+
+		if op == OP_SIZE {
+			top := c.after.GetStack()[afterDepth-1]
+			require.LessOrEqual(t, len(top), 5)
+		}
+	}
+}
+
+func equalPropertyChecker(op byte) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			requireScriptErrorCodeIn(
+				t,
+				c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrEqualVerify,
+			)
+			require.LessOrEqual(t, afterDepth, beforeDepth)
+			return
+		}
+
+		if op == OP_EQUAL {
+			require.Equal(t, beforeDepth-1, afterDepth)
+			top := c.after.GetStack()[afterDepth-1]
+			require.True(t, len(top) == 0 || bytes.Equal(top, []byte{1}))
+			return
+		}
+
+		require.Equal(t, beforeDepth-2, afterDepth)
+	}
+}
+
+type unaryBigNumCase struct {
+	name string
+	in   BigNum
+	out  BigNum
+}
+
+type binaryBigNumCase struct {
+	name string
+	a    BigNum
+	b    BigNum
+	out  BigNum
+}
+
+func mustBigNumBytes(n BigNum) []byte {
+	b, err := n.Bytes()
+	if err != nil {
+		panic(fmt.Sprintf("BigNum.Bytes: %v", err))
+	}
+	return b
+}
+
+func mustBigNumFromBigInt(v *big.Int) BigNum {
+	n := BigNum{big: new(big.Int).Set(v), useBig: true}
+	if _, err := n.Bytes(); err != nil {
+		panic(fmt.Sprintf("invalid BigNum test value: %v", err))
+	}
+	return n
+}
+
+func binaryBigNumVector(tc binaryBigNumCase) opcodeVector {
+	return opcodeVector{
+		name: tc.name,
+		inputStack: [][]byte{
+			mustBigNumBytes(tc.a),
+			mustBigNumBytes(tc.b),
+		},
+		expectedStack: [][]byte{mustBigNumBytes(tc.out)},
+	}
+}
+
+type ternaryBigNumCase struct {
+	name string
+	a    BigNum
+	b    BigNum
+	c    BigNum
+	out  BigNum
+}
+
+func ternaryBigNumVector(tc ternaryBigNumCase) opcodeVector {
+	return opcodeVector{
+		name: tc.name,
+		inputStack: [][]byte{
+			mustBigNumBytes(tc.a),
+			mustBigNumBytes(tc.b),
+			mustBigNumBytes(tc.c),
+		},
+		expectedStack: [][]byte{mustBigNumBytes(tc.out)},
+	}
+}
+
+func unaryBigNumVector(tc unaryBigNumCase) opcodeVector {
+	return opcodeVector{
+		name:          tc.name,
+		inputStack:    [][]byte{mustBigNumBytes(tc.in)},
+		expectedStack: [][]byte{mustBigNumBytes(tc.out)},
+	}
+}
+
+func maxPositiveBigNum(bytesLen int) BigNum {
+	b := bytes.Repeat([]byte{0xff}, bytesLen)
+	b[bytesLen-1] = 0x7f
+	n, err := BigNumFromBytes(b)
+	if err != nil {
+		panic(fmt.Sprintf("BigNumFromBytes(maxPositiveBigNum): %v", err))
+	}
+	return n
+}
+
+func requireCanonicalBoolStackItem(t *testing.T, got []byte, want bool) {
+	t.Helper()
+	if want {
+		require.Equal(t, []byte{0x01}, got)
+		return
+	}
+	require.Equal(t, zeroStackItem(), got)
+}
+
+func arithmeticBigNumPropertyChecker(
+	eval func(a, b BigNum) (BigNum, error),
+	errChecks ...func(*testing.T, error),
+) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			for _, check := range errChecks {
+				check(t, c.execErr)
+			}
+			require.True(t, afterDepth <= beforeDepth && afterDepth >= beforeDepth-2)
+			return
+		}
+
+		require.Equal(t, beforeDepth-1, afterDepth)
+
+		b, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+		require.NoError(t, err)
+		a, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
+		require.NoError(t, err)
+		want, err := eval(a, b)
+		require.NoError(t, err)
+		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
+		require.NoError(t, err)
+		require.Zero(t, want.Cmp(got))
+	}
+}
+
+func ternaryArithmeticBigNumPropertyChecker(
+	eval func(a, b, c BigNum) (BigNum, error),
+	errChecks ...func(*testing.T, error),
+) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			for _, check := range errChecks {
+				check(t, c.execErr)
+			}
+			require.True(t, afterDepth <= beforeDepth && afterDepth >= beforeDepth-3)
+			return
+		}
+
+		require.Equal(t, beforeDepth-2, afterDepth)
+
+		c3, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+		require.NoError(t, err)
+		c2, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
+		require.NoError(t, err)
+		c1, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-3])
+		require.NoError(t, err)
+		want, err := eval(c1, c2, c3)
+		require.NoError(t, err)
+		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
+		require.NoError(t, err)
+		require.Zero(t, want.Cmp(got))
+	}
+}
+
+func comparisonBigNumPropertyChecker(
+	cmp func(a, b BigNum) bool,
+	errChecks ...func(*testing.T, error),
+) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			for _, check := range errChecks {
+				check(t, c.execErr)
+			}
+			require.True(t, afterDepth <= beforeDepth && afterDepth >= beforeDepth-2)
+			return
+		}
+
+		require.Equal(t, beforeDepth-1, afterDepth)
+
+		b, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+		require.NoError(t, err)
+		a, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
+		require.NoError(t, err)
+		requireCanonicalBoolStackItem(t, c.after.GetStack()[afterDepth-1], cmp(a, b))
+	}
+}
+
+func unaryBigNumPropertyChecker(
+	eval func(BigNum) BigNum,
+	errChecks ...func(*testing.T, error),
+) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			for _, check := range errChecks {
+				check(t, c.execErr)
+			}
+			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+			return
+		}
+
+		require.Equal(t, beforeDepth, afterDepth)
+
+		in, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+		require.NoError(t, err)
+		want := eval(in)
+		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
+		require.NoError(t, err)
+		require.Zero(t, want.Cmp(got))
+	}
+}
+
+func unaryBoolBigNumPropertyChecker(
+	eval func(BigNum) bool,
+	errChecks ...func(*testing.T, error),
+) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			for _, check := range errChecks {
+				check(t, c.execErr)
+			}
+			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+			return
+		}
+
+		require.Equal(t, beforeDepth, afterDepth)
+
+		in, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+		require.NoError(t, err)
+		requireCanonicalBoolStackItem(t, c.after.GetStack()[afterDepth-1], eval(in))
+	}
+}
+
+func requireBigNumScriptErrorCodes(t *testing.T, err error) {
+	t.Helper()
+	requireScriptErrorCodeIn(t, err,
+		txscript.ErrInvalidStackOperation,
+		txscript.ErrNumberTooBig,
+		txscript.ErrMinimalData,
+	)
+}
+
+func requireBigNumDivisionError(t *testing.T, err error) {
+	t.Helper()
+	require.True(t,
+		errors.Is(err, ErrBigNumDivisionByZero) ||
+			isScriptError(err, txscript.ErrInvalidStackOperation) ||
+			isScriptError(err, txscript.ErrNumberTooBig) ||
+			isScriptError(err, txscript.ErrMinimalData),
+		"unexpected division error: %T: %v", err, err,
+	)
+}
+
+func requireBigNumModuloError(t *testing.T, err error) {
+	t.Helper()
+	require.True(t,
+		errors.Is(err, ErrBigNumModuloByZero) ||
+			isScriptError(err, txscript.ErrInvalidStackOperation) ||
+			isScriptError(err, txscript.ErrNumberTooBig) ||
+			isScriptError(err, txscript.ErrMinimalData),
+		"unexpected modulo error: %T: %v", err, err,
+	)
+}
+
+// seqBytes returns a byte slice of length n filled with the values 0,1,2,...
+// modulo 256. Used so reversal can be verified by the property checker
+// without restating the expected bytes in the test vector.
+func seqBytes(n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = byte(i)
+	}
+	return out
+}
+
+// sighashTestLeafScript is the witness script we synthesize for OP_SIGHASH
+// unit tests. The bytes are inconsequential to the digest the opcode produces
+// other than that the same script is also fed into the expected sighash
+// computation below, so anything that parses as a tapscript leaf works.
+var sighashTestLeafScript = []byte{OP_SIGHASH}
+
+// installSighashTapContext synthesizes the tapscript execution context that
+// the engine would normally populate during verifyWitnessProgram. Tests run
+// opcodes in isolation, so we wire it up directly here.
+func installSighashTapContext(vm *Engine, annex []byte) {
+	if vm.hashCache == nil {
+		vm.hashCache = txscript.NewTxSigHashes(&vm.tx, vm.prevOutFetcher)
+	}
+	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
+		txscript.NewBaseTapLeaf(sighashTestLeafScript),
+	)
+	if len(annex) > 0 {
+		vm.taprootCtx.annex = append([]byte(nil), annex...)
+	}
+}
+
+// expectedSighash returns the digest that OP_SIGHASH should push for the
+// given flag. Correctness of the digest (round-trip with
+// OP_CHECKSIGFROMSTACK, witness-blob masking, domain separation from the
+// BIP342 digest) is covered by dedicated tests in engine_test.go; this
+// helper is a stability check that the opcode and the helper agree.
+func expectedSighash(t *testing.T, vm *Engine, hashType txscript.SigHashType) []byte {
+	t.Helper()
+	digest, err := computeArkadeSighash(vm, hashType)
+	require.NoError(t, err)
+	return digest
+}
+
+var sha256InitGolden = mustDecodeHex(
+	"097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005",
+)
+
+var sha256UpdateGolden = mustDecodeHex(
+	"097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f20576f726c640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b",
+)
+
+var sha256FinalizeGolden = mustDecodeHex(
+	"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+)
+
+func inspectInputPropertyChecker(op byte) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrInvalidIndex,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+			)
+			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+			return
+		}
+
+		switch op {
+		case OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY:
+			require.Equal(t, beforeDepth+1, afterDepth)
+		case OP_INSPECTINPUTVALUE, OP_INSPECTINPUTSEQUENCE:
+			require.Equal(t, beforeDepth, afterDepth)
+		default:
+			t.Fatalf("unsupported inspect input op %s", opcodeArray[op].name)
+		}
+
+		top := c.after.GetStack()[afterDepth-1]
+		switch op {
+		case OP_INSPECTINPUTOUTPOINT:
+			require.LessOrEqual(t, len(top), 5)
+			require.Len(t, c.after.GetStack()[afterDepth-2], 32)
+		case OP_INSPECTINPUTVALUE:
+			index, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+			require.NoError(t, err)
+			prevOut := c.before.prevOutFetcher.FetchPrevOutput(c.before.tx.TxIn[int(index.BigInt().Int64())].PreviousOutPoint)
+			require.NotNil(t, prevOut)
+			want, err := BigNumFromUint64(uint64(prevOut.Value)).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, top)
+			topBigNum, err := BigNumFromBytes(top)
+			require.NoError(t, err)
+			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
+			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
+		case OP_INSPECTINPUTSCRIPTPUBKEY:
+			require.LessOrEqual(t, len(top), 5)
+			programOrHash := c.after.GetStack()[afterDepth-2]
+			require.NotEmpty(t, programOrHash)
+		case OP_INSPECTINPUTSEQUENCE:
+			index, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+			require.NoError(t, err)
+			want, err := BigNumFromUint64(uint64(c.before.tx.TxIn[int(index.BigInt().Int64())].Sequence)).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, top)
+		}
+	}
+}
+
+func inspectOutputPropertyChecker(op byte) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrInvalidIndex,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+			)
+			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+			return
+		}
+
+		switch op {
+		case OP_INSPECTOUTPUTVALUE:
+			require.Equal(t, beforeDepth, afterDepth)
+			index, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
+			require.NoError(t, err)
+			want, err := BigNumFromUint64(uint64(c.before.tx.TxOut[int(index.BigInt().Int64())].Value)).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, c.after.GetStack()[afterDepth-1])
+			topBigNum, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
+			require.NoError(t, err)
+			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
+			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
+		case OP_INSPECTOUTPUTSCRIPTPUBKEY:
+			require.Equal(t, beforeDepth+1, afterDepth)
+			require.LessOrEqual(t, len(c.after.GetStack()[afterDepth-1]), 5)
+			require.NotEmpty(t, c.after.GetStack()[afterDepth-2])
+		default:
+			t.Fatalf("unsupported inspect output op %s", opcodeArray[op].name)
+		}
+	}
+}
+
+func inspectMetaPropertyChecker(op byte) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+		require.NoError(t, c.execErr)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		require.Equal(t, beforeDepth+1, afterDepth)
+
+		top := c.after.GetStack()[afterDepth-1]
+		switch op {
+		case OP_INSPECTVERSION:
+			want, err := BigNumFromUint64(uint64(uint32(c.before.tx.Version))).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, top)
+		case OP_INSPECTLOCKTIME:
+			want, err := BigNumFromUint64(uint64(c.before.tx.LockTime)).Bytes()
+			require.NoError(t, err)
+			require.Equal(t, want, top)
+		case OP_PUSHCURRENTINPUTINDEX, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS:
+			require.LessOrEqual(t, len(top), 5)
+		default:
+			t.Fatalf("unsupported inspect meta op %s", opcodeArray[op].name)
+		}
+	}
+}
+
+func inspectInputArkadePropertyChecker() opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrInvalidIndex,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+			)
+			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+			return
+		}
+
+		require.Equal(t, beforeDepth, afterDepth)
+		require.Len(t, c.after.GetStack()[afterDepth-1], 32)
+	}
+}
+
+func inspectPacketPropertyChecker(op byte) opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+
+		beforeDepth := len(c.before.GetStack())
+		afterDepth := len(c.after.GetStack())
+		if c.execErr != nil {
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrInvalidIndex,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+				txscript.ErrElementTooBig,
+			)
+			switch op {
+			case OP_INSPECTPACKET:
+				require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
+			case OP_INSPECTINPUTPACKET:
+				require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1 || afterDepth == beforeDepth-2)
+			default:
+				t.Fatalf("unsupported inspect packet op %s", opcodeArray[op].name)
+			}
+			return
+		}
+
+		switch op {
+		case OP_INSPECTPACKET:
+			require.Equal(t, beforeDepth+1, afterDepth)
+		case OP_INSPECTINPUTPACKET:
+			require.Equal(t, beforeDepth, afterDepth)
+		default:
+			t.Fatalf("unsupported inspect packet op %s", opcodeArray[op].name)
+		}
+
+		flag := c.after.GetStack()[afterDepth-1]
+		require.True(t, bytes.Equal(flag, zeroStackItem()) || bytes.Equal(flag, []byte{1}))
+		require.LessOrEqual(t, len(c.after.GetStack()[afterDepth-2]), txscript.MaxScriptElementSize)
+	}
+}
+
+func buildOpcodeWorld() *opcodeWorld {
+	seed := []byte("opcode-vectors")
+	outpoint0 := wire.OutPoint{Hash: hashWithSalt(seed, 0x10), Index: 10}
+	tx := wire.MsgTx{
+		Version:  2,
+		LockTime: 144,
+		TxIn:     []*wire.TxIn{{PreviousOutPoint: outpoint0, Sequence: 100}},
+		TxOut:    []*wire.TxOut{{Value: 7000, PkScript: []byte{OP_TRUE}}},
+	}
+	prevouts := map[wire.OutPoint]*wire.TxOut{
+		outpoint0: {Value: 5000, PkScript: []byte{OP_1, 0x20}},
+	}
+	return &opcodeWorld{
+		tx:          tx,
+		prevouts:    prevouts,
+		prevFetcher: newTestArkPrevOutFetcher(txscript.NewMultiPrevOutFetcher(prevouts), nil, nil),
+	}
+}
+
+func makeOpcodePlainTx() wire.MsgTx {
+	return wire.MsgTx{
+		Version: 1,
+		TxIn: []*wire.TxIn{{
+			PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0},
+		}},
+	}
+}
+
+func makeOpcodeTxWithExtension(packets ...extension.Packet) wire.MsgTx {
+	ext := extension.Extension(packets)
+	txOut, err := ext.TxOut()
+	if err != nil {
+		panic(fmt.Sprintf("Extension.TxOut: %v", err))
+	}
+	tx := makeOpcodePlainTx()
+	tx.TxOut = []*wire.TxOut{txOut}
+	return tx
+}
+
+func makeOpcodeTxWithMalformedExtension(payload []byte) wire.MsgTx {
+	tx := makeOpcodePlainTx()
+	tx.TxOut = []*wire.TxOut{{
+		Value:    0,
+		PkScript: append([]byte{txscript.OP_RETURN, byte(len(payload))}, payload...),
+	}}
+	return tx
+}
+
+func attachOpcodePrevArkTx(w *opcodeWorld, prevTx wire.MsgTx) {
+	outpoint := w.tx.TxIn[0].PreviousOutPoint
+	w.prevFetcher = newTestArkPrevOutFetcher(
+		txscript.NewMultiPrevOutFetcher(w.prevouts),
+		map[wire.OutPoint]*wire.MsgTx{outpoint: &prevTx},
+		map[wire.OutPoint]uint32{outpoint: outpoint.Index},
+	)
+}
+
+func newOpcodeEngine(world *opcodeWorld, txIdx int) (*Engine, error) {
+	txCopy := world.tx.Copy()
+	spk := []byte{OP_TRUE}
+	inputAmount := int64(0)
+
+	if txIdx >= 0 && txIdx < len(txCopy.TxIn) {
+		if witness := world.witnessByVin[txIdx]; len(witness) > 0 {
+			txCopy.TxIn[txIdx].Witness = cloneWitness(witness)
+		}
+		if script := world.execScriptByVin[txIdx]; len(script) > 0 {
+			spk = cloneBytes(script)
+		}
+		if world.prevFetcher != nil {
+			if prevOut := world.prevFetcher.FetchPrevOutput(txCopy.TxIn[txIdx].PreviousOutPoint); prevOut != nil {
+				inputAmount = prevOut.Value
+			}
+		}
+	}
+
+	vm, err := NewEngine(spk, txCopy, txIdx, txscript.NewSigCache(32), nil, inputAmount, world.prevFetcher)
+	if err != nil {
+		return nil, err
+	}
+	vm.dstack.verifyMinimalData = true
+	vm.astack.verifyMinimalData = true
+	return vm, nil
+}
+
+func invokeOpcodeWithData(opcode byte, data []byte, vm *Engine) error {
+	op := &opcodeArray[opcode]
+	if op.opfunc == nil {
+		return nil
+	}
+	if data == nil {
+		if op.length > 1 {
+			data = make([]byte, op.length-1)
+		}
+	}
+	return vm.executeOpcode(op, data)
+}
+
+func requireScriptErrorCode(t *testing.T, err error, code txscript.ErrorCode) {
+	t.Helper()
+	require.Error(t, err)
+	scriptErr, ok := err.(txscript.Error)
+	require.Truef(t, ok, "expected txscript.Error, got %T: %v", err, err)
+	require.Equal(t, code, scriptErr.ErrorCode)
+}
+
+func requireScriptErrorCodeIn(t *testing.T, err error, codes ...txscript.ErrorCode) {
+	t.Helper()
+	require.Error(t, err)
+	scriptErr, ok := err.(txscript.Error)
+	require.Truef(t, ok, "expected txscript.Error, got %T: %v", err, err)
+	if slices.Contains(codes, scriptErr.ErrorCode) {
+		return
+	}
+	t.Fatalf("unexpected txscript error code: got=%v want one of=%v", scriptErr.ErrorCode, codes)
+}
+
+func hashWithSalt(seed []byte, salt byte) chainhash.Hash {
+	b := make([]byte, len(seed)+1)
+	copy(b, seed)
+	b[len(seed)] = salt
+	sum := sha256.Sum256(b)
+	var h chainhash.Hash
+	copy(h[:], sum[:])
+	return h
+}
+
+func mustDecodeHex(hexStr string) []byte {
+	b, err := hex.DecodeString(hexStr)
+	if err != nil {
+		panic(fmt.Sprintf("invalid hex string: %v", err))
+	}
+	return b
+}
+
+func zeroStackItem() []byte {
+	return scriptNum(0).Bytes()
+}
+
+func falseStackItem() []byte {
+	return fromBool(false)
+}
+
+func emptyByteVector() []byte {
+	return []byte{}
+}
+
+func opcodeWorldTxWeight() []byte {
+	world := buildOpcodeWorld()
+	return mustBigNumBytes(BigNumFromUint64(uint64(world.tx.SerializeSizeStripped() * 4)))
+}
+
+func hashBytes(h chainhash.Hash) []byte {
+	return append([]byte(nil), h[:]...)
+}
+
+func sha256Bytes(data []byte) []byte {
+	sum := sha256.Sum256(data)
+	return append([]byte(nil), sum[:]...)
+}
+
+// Malicious serialized SHA256 contexts. gob sizes its allocations from length
+// prefixes carried in its own input, so these tiny blobs each cost megabytes
+// before the decode fails.
+var (
+	// A bare gob message header declaring a ~1GiB message body.
+	sha256StateHugeMessage = mustDecodeHex("fc3fffffff")
+
+	// A structurally well-framed type descriptor (its declared message length
+	// matches the bytes present) whose struct field-slice length has been
+	// patched to 0xFFFFFF elements. Proves that validating the framing is not
+	// on its own enough: the amplification also lives in nested lengths.
+	sha256StateHugeSlice = mustDecodeHex(
+		"1d7f030101015301ff800001fdffffff010141010400010142010c000000",
+	)
+)
+
+// allocBytesPerRun reports the average bytes allocated per call to fn.
+func allocBytesPerRun(runs int, fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for range runs {
+		fn()
+	}
+	runtime.ReadMemStats(&after)
+	return (after.TotalAlloc - before.TotalAlloc) / uint64(runs)
+}
+
+const (
+	// secp256k1 group order minus one, the tweak that cancels the generator point.
+	orderMinusOneHex = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140"
+	// compressed secp256k1 generator point.
+	generatorHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+)
+
+// compressed serialization of the point at infinity, which is not a valid encoding:
+// both opcodes must reject it rather than accept it as a matching Q.
+var infinityCompressed = mustDecodeHex(
+	"020000000000000000000000000000000000000000000000000000000000000000",
+)
+
+// Builders
+func constantSpec(op byte, val int64) *opcodeSpec {
+	compact := strconv.FormatInt(val, 10)
+	full := opcodeArray[op].name
+	wantTop := scriptNum(val).Bytes()
+	return &opcodeSpec{
+		opcode: op,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.NoError(t, c.execErr)
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			beforeStack := c.before.GetStack()
+			afterStack := c.after.GetStack()
+			require.Equal(t, len(beforeStack)+1, len(afterStack))
+			require.Equal(t, beforeStack, afterStack[:len(beforeStack)])
+			require.Equal(t, wantTop, afterStack[len(afterStack)-1])
+		},
+		validVectors: []opcodeVector{
+			{name: "push", expectedStack: [][]byte{scriptNum(val).Bytes()}},
+		},
+		disasm: &opcodeDisasm{
+			compact: compact,
+			full:    full,
+		},
 	}
 }
 
@@ -667,6 +1624,30 @@ func invalidSpec(op byte) *opcodeSpec {
 	}
 }
 
+func pushExpirySpec() *opcodeSpec {
+	expiry := int64(1_700_000_000)
+	return &opcodeSpec{
+		opcode: OP_PUSHEXPIRY,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			if c.execErr == nil {
+				require.Len(t, c.after.GetStack(), len(c.before.GetStack())+1)
+			}
+		},
+		validVectors: []opcodeVector{{
+			name: "push",
+			setupVM: func(vm *Engine) {
+				vm.expiry = &expiry
+			},
+			expectedStack: [][]byte{scriptNum(expiry).Bytes()},
+		}},
+		invalidVectors: []opcodeVector{
+			{name: "missing expiry", expectedError: txscript.ErrInvalidStackOperation},
+		},
+	}
+}
+
 func reservedSpec(op byte) *opcodeSpec {
 	return &opcodeSpec{
 		opcode:          op,
@@ -674,34 +1655,6 @@ func reservedSpec(op byte) *opcodeSpec {
 		invalidVectors: []opcodeVector{
 			{name: "reserved", expectedError: txscript.ErrReservedOpcode},
 		},
-	}
-}
-
-func unchangedStateChecker() opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.NoError(t, c.execErr)
-		require.Equal(t, c.before.GetStack(), c.after.GetStack())
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-	}
-}
-
-func unchangedStateWithErrorCodeChecker(code txscript.ErrorCode) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		requireScriptErrorCode(t, c.execErr, code)
-		require.Equal(t, c.before.GetStack(), c.after.GetStack())
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-	}
-}
-
-func errorNoMutationChecker(code txscript.ErrorCode) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		requireScriptErrorCode(t, c.execErr, code)
-		require.Equal(t, c.before.GetStack(), c.after.GetStack())
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
 	}
 }
 
@@ -756,19 +1709,6 @@ func tweakVerifySpec() *opcodeSpec {
 		invalidVectors: []opcodeVector{
 			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
 		},
-	}
-}
-
-func ecmulLikePropertyChecker() opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-		if c.execErr != nil {
-			requireScriptErrorCode(t, c.execErr, txscript.ErrInvalidStackOperation)
-			return
-		}
-		require.Equal(t, len(c.before.GetStack())-3, len(c.after.GetStack()))
 	}
 }
 
@@ -1198,6 +2138,77 @@ func pickSpec() *opcodeSpec {
 	}
 }
 
+func putSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_PUT,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+
+			beforeStack := c.before.GetStack()
+			afterStack := c.after.GetStack()
+			if c.execErr != nil {
+				requireScriptErrorCodeIn(t, c.execErr,
+					txscript.ErrInvalidStackOperation,
+					txscript.ErrNumberTooBig,
+					txscript.ErrMinimalData,
+				)
+				require.GreaterOrEqual(t, len(afterStack), len(beforeStack)-2)
+				require.LessOrEqual(t, len(afterStack), len(beforeStack))
+				return
+			}
+
+			require.Equal(t, len(beforeStack)-2, len(afterStack))
+			n, err := MakeScriptNum(beforeStack[len(beforeStack)-1], true, maxScriptNumLen)
+			require.NoError(t, err)
+			expected := slices.Clone(beforeStack[:len(beforeStack)-2])
+			expected[len(expected)-int(n)-1] = beforeStack[len(beforeStack)-2]
+			require.Equal(t, expected, afterStack)
+		},
+		validVectors: []opcodeVector{
+			{
+				name:          "put_0",
+				inputStack:    [][]byte{{0x01}, {0x02}, {0x09}, nil},
+				expectedStack: [][]byte{{0x01}, {0x09}},
+			},
+			{
+				name:          "put_1",
+				inputStack:    [][]byte{{0x01}, {0x02}, {0x09}, scriptNum(1).Bytes()},
+				expectedStack: [][]byte{{0x09}, {0x02}},
+			},
+			{
+				name:          "put_2",
+				inputStack:    [][]byte{{0x01}, {0x02}, {0x03}, {0x09}, scriptNum(2).Bytes()},
+				expectedStack: [][]byte{{0x09}, {0x02}, {0x03}},
+			},
+			{
+				name:          "put_empty",
+				inputStack:    [][]byte{{0x01}, {0x02}, nil, nil},
+				expectedStack: [][]byte{{0x01}, nil},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{
+				name:          "negative_index",
+				inputStack:    [][]byte{{0x01}, {0x09}, scriptNum(-1).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "out_of_range",
+				inputStack:    [][]byte{{0x01}, {0x09}, scriptNum(1).Bytes()},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:          "missing_target",
+				inputStack:    [][]byte{{0x09}, nil},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+		},
+	}
+}
+
 func rollSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode: OP_ROLL,
@@ -1503,46 +2514,6 @@ func invertSpec() *opcodeSpec {
 	}
 }
 
-func byteTransformPropertyChecker(op byte) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			requireScriptErrorCodeIn(t, c.execErr,
-				txscript.ErrInvalidStackOperation,
-				txscript.ErrInvalidIndex,
-				txscript.ErrNumberTooBig,
-				txscript.ErrMinimalData,
-				txscript.ErrElementTooBig,
-			)
-			require.LessOrEqual(t, afterDepth, beforeDepth)
-			return
-		}
-
-		switch op {
-		case OP_INVERT:
-			require.Equal(t, beforeDepth, afterDepth)
-		case OP_SIZE:
-			require.Equal(t, beforeDepth+1, afterDepth)
-		case OP_CAT, OP_LEFT, OP_RIGHT:
-			require.Equal(t, beforeDepth-1, afterDepth)
-		case OP_SUBSTR:
-			require.Equal(t, beforeDepth-2, afterDepth)
-		default:
-			t.Fatalf("unsupported byte transform %s", opcodeArray[op].name)
-		}
-
-		if op == OP_SIZE {
-			top := c.after.GetStack()[afterDepth-1]
-			require.LessOrEqual(t, len(top), 5)
-		}
-	}
-}
-
 func equalSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode:          OP_EQUAL,
@@ -1584,36 +2555,6 @@ func equalVerifySpec() *opcodeSpec {
 				expectedError: txscript.ErrInvalidStackOperation,
 			},
 		},
-	}
-}
-
-func equalPropertyChecker(op byte) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			requireScriptErrorCodeIn(
-				t,
-				c.execErr,
-				txscript.ErrInvalidStackOperation,
-				txscript.ErrEqualVerify,
-			)
-			require.LessOrEqual(t, afterDepth, beforeDepth)
-			return
-		}
-
-		if op == OP_EQUAL {
-			require.Equal(t, beforeDepth-1, afterDepth)
-			top := c.after.GetStack()[afterDepth-1]
-			require.True(t, len(top) == 0 || bytes.Equal(top, []byte{1}))
-			return
-		}
-
-		require.Equal(t, beforeDepth-2, afterDepth)
 	}
 }
 
@@ -1843,278 +2784,6 @@ func digestSpec() *opcodeSpec {
 			},
 		},
 	}
-}
-
-type unaryBigNumCase struct {
-	name string
-	in   BigNum
-	out  BigNum
-}
-
-type binaryBigNumCase struct {
-	name string
-	a    BigNum
-	b    BigNum
-	out  BigNum
-}
-
-func mustBigNumBytes(n BigNum) []byte {
-	b, err := n.Bytes()
-	if err != nil {
-		panic(fmt.Sprintf("BigNum.Bytes: %v", err))
-	}
-	return b
-}
-
-func mustBigNumFromBigInt(v *big.Int) BigNum {
-	n := BigNum{big: new(big.Int).Set(v), useBig: true}
-	if _, err := n.Bytes(); err != nil {
-		panic(fmt.Sprintf("invalid BigNum test value: %v", err))
-	}
-	return n
-}
-
-func binaryBigNumVector(tc binaryBigNumCase) opcodeVector {
-	return opcodeVector{
-		name: tc.name,
-		inputStack: [][]byte{
-			mustBigNumBytes(tc.a),
-			mustBigNumBytes(tc.b),
-		},
-		expectedStack: [][]byte{mustBigNumBytes(tc.out)},
-	}
-}
-
-type ternaryBigNumCase struct {
-	name string
-	a    BigNum
-	b    BigNum
-	c    BigNum
-	out  BigNum
-}
-
-func ternaryBigNumVector(tc ternaryBigNumCase) opcodeVector {
-	return opcodeVector{
-		name: tc.name,
-		inputStack: [][]byte{
-			mustBigNumBytes(tc.a),
-			mustBigNumBytes(tc.b),
-			mustBigNumBytes(tc.c),
-		},
-		expectedStack: [][]byte{mustBigNumBytes(tc.out)},
-	}
-}
-
-func unaryBigNumVector(tc unaryBigNumCase) opcodeVector {
-	return opcodeVector{
-		name:          tc.name,
-		inputStack:    [][]byte{mustBigNumBytes(tc.in)},
-		expectedStack: [][]byte{mustBigNumBytes(tc.out)},
-	}
-}
-
-func maxPositiveBigNum(bytesLen int) BigNum {
-	b := bytes.Repeat([]byte{0xff}, bytesLen)
-	b[bytesLen-1] = 0x7f
-	n, err := BigNumFromBytes(b)
-	if err != nil {
-		panic(fmt.Sprintf("BigNumFromBytes(maxPositiveBigNum): %v", err))
-	}
-	return n
-}
-
-func requireCanonicalBoolStackItem(t *testing.T, got []byte, want bool) {
-	t.Helper()
-	if want {
-		require.Equal(t, []byte{0x01}, got)
-		return
-	}
-	require.Equal(t, zeroStackItem(), got)
-}
-
-func arithmeticBigNumPropertyChecker(
-	eval func(a, b BigNum) (BigNum, error),
-	errChecks ...func(*testing.T, error),
-) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			for _, check := range errChecks {
-				check(t, c.execErr)
-			}
-			require.True(t, afterDepth <= beforeDepth && afterDepth >= beforeDepth-2)
-			return
-		}
-
-		require.Equal(t, beforeDepth-1, afterDepth)
-
-		b, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-		require.NoError(t, err)
-		a, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
-		require.NoError(t, err)
-		want, err := eval(a, b)
-		require.NoError(t, err)
-		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
-		require.NoError(t, err)
-		require.Zero(t, want.Cmp(got))
-	}
-}
-
-func ternaryArithmeticBigNumPropertyChecker(
-	eval func(a, b, c BigNum) (BigNum, error),
-	errChecks ...func(*testing.T, error),
-) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			for _, check := range errChecks {
-				check(t, c.execErr)
-			}
-			require.True(t, afterDepth <= beforeDepth && afterDepth >= beforeDepth-3)
-			return
-		}
-
-		require.Equal(t, beforeDepth-2, afterDepth)
-
-		c3, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-		require.NoError(t, err)
-		c2, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
-		require.NoError(t, err)
-		c1, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-3])
-		require.NoError(t, err)
-		want, err := eval(c1, c2, c3)
-		require.NoError(t, err)
-		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
-		require.NoError(t, err)
-		require.Zero(t, want.Cmp(got))
-	}
-}
-
-func comparisonBigNumPropertyChecker(
-	cmp func(a, b BigNum) bool,
-	errChecks ...func(*testing.T, error),
-) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			for _, check := range errChecks {
-				check(t, c.execErr)
-			}
-			require.True(t, afterDepth <= beforeDepth && afterDepth >= beforeDepth-2)
-			return
-		}
-
-		require.Equal(t, beforeDepth-1, afterDepth)
-
-		b, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-		require.NoError(t, err)
-		a, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-2])
-		require.NoError(t, err)
-		requireCanonicalBoolStackItem(t, c.after.GetStack()[afterDepth-1], cmp(a, b))
-	}
-}
-
-func unaryBigNumPropertyChecker(
-	eval func(BigNum) BigNum,
-	errChecks ...func(*testing.T, error),
-) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			for _, check := range errChecks {
-				check(t, c.execErr)
-			}
-			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
-			return
-		}
-
-		require.Equal(t, beforeDepth, afterDepth)
-
-		in, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-		require.NoError(t, err)
-		want := eval(in)
-		got, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
-		require.NoError(t, err)
-		require.Zero(t, want.Cmp(got))
-	}
-}
-
-func unaryBoolBigNumPropertyChecker(
-	eval func(BigNum) bool,
-	errChecks ...func(*testing.T, error),
-) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			for _, check := range errChecks {
-				check(t, c.execErr)
-			}
-			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
-			return
-		}
-
-		require.Equal(t, beforeDepth, afterDepth)
-
-		in, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-		require.NoError(t, err)
-		requireCanonicalBoolStackItem(t, c.after.GetStack()[afterDepth-1], eval(in))
-	}
-}
-
-func requireBigNumScriptErrorCodes(t *testing.T, err error) {
-	t.Helper()
-	requireScriptErrorCodeIn(t, err,
-		txscript.ErrInvalidStackOperation,
-		txscript.ErrNumberTooBig,
-		txscript.ErrMinimalData,
-	)
-}
-
-func requireBigNumDivisionError(t *testing.T, err error) {
-	t.Helper()
-	require.True(t,
-		errors.Is(err, ErrBigNumDivisionByZero) ||
-			isScriptError(err, txscript.ErrInvalidStackOperation) ||
-			isScriptError(err, txscript.ErrNumberTooBig) ||
-			isScriptError(err, txscript.ErrMinimalData),
-		"unexpected division error: %T: %v", err, err,
-	)
-}
-
-func requireBigNumModuloError(t *testing.T, err error) {
-	t.Helper()
-	require.True(t,
-		errors.Is(err, ErrBigNumModuloByZero) ||
-			isScriptError(err, txscript.ErrInvalidStackOperation) ||
-			isScriptError(err, txscript.ErrNumberTooBig) ||
-			isScriptError(err, txscript.ErrMinimalData),
-		"unexpected modulo error: %T: %v", err, err,
-	)
 }
 
 func oneAddSpec() *opcodeSpec {
@@ -4161,17 +4830,6 @@ func reverseBytesSpec() *opcodeSpec {
 	}
 }
 
-// seqBytes returns a byte slice of length n filled with the values 0,1,2,...
-// modulo 256. Used so reversal can be verified by the property checker
-// without restating the expected bytes in the test vector.
-func seqBytes(n int) []byte {
-	out := make([]byte, n)
-	for i := range out {
-		out[i] = byte(i)
-	}
-	return out
-}
-
 func txWeightSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode: OP_TXWEIGHT,
@@ -4189,39 +4847,6 @@ func txWeightSpec() *opcodeSpec {
 			{name: "push", expectedStack: [][]byte{opcodeWorldTxWeight()}},
 		},
 	}
-}
-
-// sighashTestLeafScript is the witness script we synthesize for OP_SIGHASH
-// unit tests. The bytes are inconsequential to the digest the opcode produces
-// other than that the same script is also fed into the expected sighash
-// computation below, so anything that parses as a tapscript leaf works.
-var sighashTestLeafScript = []byte{OP_SIGHASH}
-
-// installSighashTapContext synthesizes the tapscript execution context that
-// the engine would normally populate during verifyWitnessProgram. Tests run
-// opcodes in isolation, so we wire it up directly here.
-func installSighashTapContext(vm *Engine, annex []byte) {
-	if vm.hashCache == nil {
-		vm.hashCache = txscript.NewTxSigHashes(&vm.tx, vm.prevOutFetcher)
-	}
-	vm.taprootCtx = newTaprootExecutionCtxForLeaf(
-		txscript.NewBaseTapLeaf(sighashTestLeafScript),
-	)
-	if len(annex) > 0 {
-		vm.taprootCtx.annex = append([]byte(nil), annex...)
-	}
-}
-
-// expectedSighash returns the digest that OP_SIGHASH should push for the
-// given flag. Correctness of the digest (round-trip with
-// OP_CHECKSIGFROMSTACK, witness-blob masking, domain separation from the
-// BIP342 digest) is covered by dedicated tests in engine_test.go; this
-// helper is a stability check that the opcode and the helper agree.
-func expectedSighash(t *testing.T, vm *Engine, hashType txscript.SigHashType) []byte {
-	t.Helper()
-	digest, err := computeArkadeSighash(vm, hashType)
-	require.NoError(t, err)
-	return digest
 }
 
 func sighashSpec() *opcodeSpec {
@@ -4460,6 +5085,74 @@ func checkLockTimeVerifySpec() *opcodeSpec {
 	}
 }
 
+func checkTimeVerifySpec() *opcodeSpec {
+	currentTime := int64(1_700_000_000)
+	return &opcodeSpec{
+		opcode: OP_CHECKTIMEVERIFY,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+			if c.execErr == nil {
+				beforeStack := c.before.GetStack()
+				require.Equal(t, beforeStack[:len(beforeStack)-1], c.after.GetStack())
+				return
+			}
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrNegativeLockTime,
+				txscript.ErrUnsatisfiedLockTime,
+				txscript.ErrNumberTooBig,
+				txscript.ErrMinimalData,
+			)
+		},
+		validVectors: []opcodeVector{
+			{
+				name:       "past",
+				inputStack: [][]byte{scriptNum(currentTime - 1).Bytes()},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+			},
+			{
+				name:       "exact_time_ignores_transaction_locktime_and_sequence",
+				inputStack: [][]byte{scriptNum(currentTime).Bytes()},
+				setupWorld: func(w *opcodeWorld) {
+					w.tx.LockTime = 0
+					w.tx.TxIn[0].Sequence = wire.MaxTxInSequenceNum
+				},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name:       "future",
+				inputStack: [][]byte{scriptNum(currentTime + 1).Bytes()},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:       "large_future_timestamp",
+				inputStack: [][]byte{{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00}},
+				setupVM: func(vm *Engine) {
+					vm.currentTime = BigNumFromInt64(currentTime)
+				},
+				expectedError: txscript.ErrUnsatisfiedLockTime,
+			},
+			{
+				name:          "negative",
+				inputStack:    [][]byte{scriptNum(-1).Bytes()},
+				expectedError: txscript.ErrNegativeLockTime,
+			},
+		},
+	}
+}
+
 func checkSequenceVerifySpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode: OP_CHECKSEQUENCEVERIFY,
@@ -4653,18 +5346,6 @@ func sha256FinalizeSpec() *opcodeSpec {
 		},
 	}
 }
-
-var sha256InitGolden = mustDecodeHex(
-	"097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005",
-)
-
-var sha256UpdateGolden = mustDecodeHex(
-	"097f060102ff8200000070ff80006c736861036a09e667bb67ae853c6ef372a54ff53a510e527f9b05688c1f83d9ab5be0cd1948656c6c6f20576f726c640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b",
-)
-
-var sha256FinalizeGolden = mustDecodeHex(
-	"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
-)
 
 func inspectInputOutpointSpec() *opcodeSpec {
 	input0Hash := hashWithSalt([]byte("opcode-vectors"), 0x10)
@@ -5070,135 +5751,6 @@ func inspectInputPacketSpec() *opcodeSpec {
 	}
 }
 
-func inspectInputPropertyChecker(op byte) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			requireScriptErrorCodeIn(t, c.execErr,
-				txscript.ErrInvalidStackOperation,
-				txscript.ErrInvalidIndex,
-				txscript.ErrNumberTooBig,
-				txscript.ErrMinimalData,
-			)
-			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
-			return
-		}
-
-		switch op {
-		case OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY:
-			require.Equal(t, beforeDepth+1, afterDepth)
-		case OP_INSPECTINPUTVALUE, OP_INSPECTINPUTSEQUENCE:
-			require.Equal(t, beforeDepth, afterDepth)
-		default:
-			t.Fatalf("unsupported inspect input op %s", opcodeArray[op].name)
-		}
-
-		top := c.after.GetStack()[afterDepth-1]
-		switch op {
-		case OP_INSPECTINPUTOUTPOINT:
-			require.LessOrEqual(t, len(top), 5)
-			require.Len(t, c.after.GetStack()[afterDepth-2], 32)
-		case OP_INSPECTINPUTVALUE:
-			index, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-			require.NoError(t, err)
-			prevOut := c.before.prevOutFetcher.FetchPrevOutput(c.before.tx.TxIn[int(index.BigInt().Int64())].PreviousOutPoint)
-			require.NotNil(t, prevOut)
-			want, err := BigNumFromUint64(uint64(prevOut.Value)).Bytes()
-			require.NoError(t, err)
-			require.Equal(t, want, top)
-			topBigNum, err := BigNumFromBytes(top)
-			require.NoError(t, err)
-			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
-			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
-		case OP_INSPECTINPUTSCRIPTPUBKEY:
-			require.LessOrEqual(t, len(top), 5)
-			programOrHash := c.after.GetStack()[afterDepth-2]
-			require.NotEmpty(t, programOrHash)
-		case OP_INSPECTINPUTSEQUENCE:
-			index, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-			require.NoError(t, err)
-			want, err := BigNumFromUint64(uint64(c.before.tx.TxIn[int(index.BigInt().Int64())].Sequence)).Bytes()
-			require.NoError(t, err)
-			require.Equal(t, want, top)
-		}
-	}
-}
-
-func inspectOutputPropertyChecker(op byte) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			requireScriptErrorCodeIn(t, c.execErr,
-				txscript.ErrInvalidStackOperation,
-				txscript.ErrInvalidIndex,
-				txscript.ErrNumberTooBig,
-				txscript.ErrMinimalData,
-			)
-			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
-			return
-		}
-
-		switch op {
-		case OP_INSPECTOUTPUTVALUE:
-			require.Equal(t, beforeDepth, afterDepth)
-			index, err := BigNumFromBytes(c.before.GetStack()[beforeDepth-1])
-			require.NoError(t, err)
-			want, err := BigNumFromUint64(uint64(c.before.tx.TxOut[int(index.BigInt().Int64())].Value)).Bytes()
-			require.NoError(t, err)
-			require.Equal(t, want, c.after.GetStack()[afterDepth-1])
-			topBigNum, err := BigNumFromBytes(c.after.GetStack()[afterDepth-1])
-			require.NoError(t, err)
-			require.LessOrEqual(t, topBigNum.Cmp(BigNumFromUint64(btcutil.MaxSatoshi)), 0)
-			require.GreaterOrEqual(t, topBigNum.Cmp(BigNumFromUint64(0)), 0)
-		case OP_INSPECTOUTPUTSCRIPTPUBKEY:
-			require.Equal(t, beforeDepth+1, afterDepth)
-			require.LessOrEqual(t, len(c.after.GetStack()[afterDepth-1]), 5)
-			require.NotEmpty(t, c.after.GetStack()[afterDepth-2])
-		default:
-			t.Fatalf("unsupported inspect output op %s", opcodeArray[op].name)
-		}
-	}
-}
-
-func inspectMetaPropertyChecker(op byte) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-		require.NoError(t, c.execErr)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		require.Equal(t, beforeDepth+1, afterDepth)
-
-		top := c.after.GetStack()[afterDepth-1]
-		switch op {
-		case OP_INSPECTVERSION:
-			want, err := BigNumFromUint64(uint64(uint32(c.before.tx.Version))).Bytes()
-			require.NoError(t, err)
-			require.Equal(t, want, top)
-		case OP_INSPECTLOCKTIME:
-			want, err := BigNumFromUint64(uint64(c.before.tx.LockTime)).Bytes()
-			require.NoError(t, err)
-			require.Equal(t, want, top)
-		case OP_PUSHCURRENTINPUTINDEX, OP_INSPECTNUMINPUTS, OP_INSPECTNUMOUTPUTS:
-			require.LessOrEqual(t, len(top), 5)
-		default:
-			t.Fatalf("unsupported inspect meta op %s", opcodeArray[op].name)
-		}
-	}
-}
-
 func inspectInputArkadeScriptHashSpec() *opcodeSpec {
 	return &opcodeSpec{
 		opcode:          OP_INSPECTINPUTARKADESCRIPTHASH,
@@ -5288,403 +5840,375 @@ func inspectInputArkadeWitnessHashSpec() *opcodeSpec {
 	}
 }
 
-func inspectInputArkadePropertyChecker() opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			requireScriptErrorCodeIn(t, c.execErr,
-				txscript.ErrInvalidStackOperation,
-				txscript.ErrInvalidIndex,
-				txscript.ErrNumberTooBig,
-				txscript.ErrMinimalData,
-			)
-			require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
-			return
-		}
-
-		require.Equal(t, beforeDepth, afterDepth)
-		require.Len(t, c.after.GetStack()[afterDepth-1], 32)
-	}
-}
-
-func inspectPacketPropertyChecker(op byte) opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-
-		beforeDepth := len(c.before.GetStack())
-		afterDepth := len(c.after.GetStack())
-		if c.execErr != nil {
-			requireScriptErrorCodeIn(t, c.execErr,
-				txscript.ErrInvalidStackOperation,
-				txscript.ErrInvalidIndex,
-				txscript.ErrNumberTooBig,
-				txscript.ErrMinimalData,
-				txscript.ErrElementTooBig,
-			)
-			switch op {
-			case OP_INSPECTPACKET:
-				require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1)
-			case OP_INSPECTINPUTPACKET:
-				require.True(t, afterDepth == beforeDepth || afterDepth == beforeDepth-1 || afterDepth == beforeDepth-2)
-			default:
-				t.Fatalf("unsupported inspect packet op %s", opcodeArray[op].name)
+func tunnelSpec() *opcodeSpec {
+	return &opcodeSpec{
+		opcode: OP_TUNNEL,
+		checkProperties: func(t *testing.T, c opcodeCheckContext) {
+			t.Helper()
+			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+			require.Equal(t, c.before.condStack, c.after.condStack)
+			if c.execErr != nil {
+				requireScriptErrorCodeIn(t, c.execErr, txscript.ErrInvalidStackOperation, txscript.ErrInvalidIndex, txscript.ErrNumberTooBig, txscript.ErrMinimalData)
+				return
 			}
-			return
-		}
-
-		switch op {
-		case OP_INSPECTPACKET:
-			require.Equal(t, beforeDepth+1, afterDepth)
-		case OP_INSPECTINPUTPACKET:
-			require.Equal(t, beforeDepth, afterDepth)
-		default:
-			t.Fatalf("unsupported inspect packet op %s", opcodeArray[op].name)
-		}
-
-		flag := c.after.GetStack()[afterDepth-1]
-		require.True(t, bytes.Equal(flag, zeroStackItem()) || bytes.Equal(flag, []byte{1}))
-		require.LessOrEqual(t, len(c.after.GetStack()[afterDepth-2]), txscript.MaxScriptElementSize)
-	}
-}
-
-func buildOpcodeWorld() *opcodeWorld {
-	seed := []byte("opcode-vectors")
-	outpoint0 := wire.OutPoint{Hash: hashWithSalt(seed, 0x10), Index: 10}
-	tx := wire.MsgTx{
-		Version:  2,
-		LockTime: 144,
-		TxIn:     []*wire.TxIn{{PreviousOutPoint: outpoint0, Sequence: 100}},
-		TxOut:    []*wire.TxOut{{Value: 7000, PkScript: []byte{OP_TRUE}}},
-	}
-	prevouts := map[wire.OutPoint]*wire.TxOut{
-		outpoint0: {Value: 5000, PkScript: []byte{OP_1, 0x20}},
-	}
-	return &opcodeWorld{
-		tx:          tx,
-		prevouts:    prevouts,
-		prevFetcher: newTestArkPrevOutFetcher(txscript.NewMultiPrevOutFetcher(prevouts), nil, nil),
-	}
-}
-
-func makeOpcodePlainTx() wire.MsgTx {
-	return wire.MsgTx{
-		Version: 1,
-		TxIn: []*wire.TxIn{{
-			PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0},
+			require.NotEmpty(t, c.after.GetStack())
+			require.Equal(t, []byte{1}, c.after.GetStack()[len(c.after.GetStack())-1])
+		},
+		validVectors: []opcodeVector{{
+			name:          "value",
+			inputStack:    tunnelStack(0, TunnelValue),
+			setupWorld:    func(w *opcodeWorld) { w.tx.TxOut[0].Value = w.prevouts[w.tx.TxIn[0].PreviousOutPoint].Value },
+			expectedStack: [][]byte{{1}},
 		}},
+		invalidVectors: []opcodeVector{{name: "underflow", expectedError: txscript.ErrInvalidStackOperation}},
 	}
 }
 
-func makeOpcodeTxWithExtension(packets ...extension.Packet) wire.MsgTx {
-	ext := extension.Extension(packets)
-	txOut, err := ext.TxOut()
-	if err != nil {
-		panic(fmt.Sprintf("Extension.TxOut: %v", err))
+// ecMulSpec builds the OP_ECMUL opcodeSpec.
+func ecMulSpec() *opcodeSpec {
+	g1x, g1y := secp256k1Gen()
+	g1x2, g1y2 := secp256k1Double(g1x, g1y)
+
+	p1x, p1y := secp256r1Gen()
+	p1x2, p1y2 := secp256r1Double(p1x, p1y)
+
+	bnGx, bnGy := bn254G1Gen()
+	bnG2x, bnG2y := bn254G1Double(bnGx, bnGy)
+
+	nSecp256k1 := gnarksecp256k1fr.Modulus()
+	nP256 := elliptic.P256().Params().N
+	nBN254 := gnarkbn254fr.Modulus()
+	pSecp256k1 := gnarksecp256k1fp.Modulus()
+
+	// (order - 1) * G = -G. Last valid scalar — confirms the boundary
+	// check on the scalar is `<` and not `<=`.
+	one := big.NewInt(1)
+	nSecp256k1Minus1 := new(big.Int).Sub(nSecp256k1, one)
+	nP256Minus1 := new(big.Int).Sub(nP256, one)
+	nBN254Minus1 := new(big.Int).Sub(nBN254, one)
+	g1negY := secp256k1NegY(g1y)
+	p1negY := secp256r1NegY(p1y)
+	bnGnegY := bn254G1NegY(bnGy)
+
+	var zero []byte
+
+	return &opcodeSpec{
+		opcode:          OP_ECMUL,
+		checkProperties: ecPropertyChecker(4, 2),
+		validVectors: []opcodeVector{
+			{
+				name: "secp256k1_k_zero_is_infinity",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					zero,
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "secp256k1_k_one",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					bnBytesUint(1),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedStack: [][]byte{bnBytes(g1x), bnBytes(g1y)},
+			},
+			{
+				name: "secp256k1_k_two",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					bnBytesUint(2),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedStack: [][]byte{bnBytes(g1x2), bnBytes(g1y2)},
+			},
+			{
+				name: "secp256k1_infinity_times_anything",
+				inputStack: [][]byte{
+					zero, zero,
+					bnBytesUint(42),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "secp256k1_k_eq_order_minus_one_is_negG",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					bnBytes(nSecp256k1Minus1),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedStack: [][]byte{bnBytes(g1x), bnBytes(g1negY)},
+			},
+			{
+				name: "secp256r1_k_one",
+				inputStack: [][]byte{
+					bnBytes(p1x), bnBytes(p1y),
+					bnBytesUint(1),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{bnBytes(p1x), bnBytes(p1y)},
+			},
+			{
+				name: "secp256r1_k_two",
+				inputStack: [][]byte{
+					bnBytes(p1x), bnBytes(p1y),
+					bnBytesUint(2),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{bnBytes(p1x2), bnBytes(p1y2)},
+			},
+			{
+				name: "secp256r1_k_zero",
+				inputStack: [][]byte{
+					bnBytes(p1x), bnBytes(p1y),
+					zero,
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "secp256r1_infinity_times_anything",
+				inputStack: [][]byte{
+					zero, zero,
+					bnBytesUint(42),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "secp256r1_k_eq_order_minus_one_is_negG",
+				inputStack: [][]byte{
+					bnBytes(p1x), bnBytes(p1y),
+					bnBytes(nP256Minus1),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedStack: [][]byte{bnBytes(p1x), bnBytes(p1negY)},
+			},
+			{
+				name: "alt_bn128_k_two",
+				inputStack: [][]byte{
+					bnBytes(bnGx), bnBytes(bnGy),
+					bnBytesUint(2),
+					bnBytesUint(uint64(CurveAltBN128)),
+				},
+				expectedStack: [][]byte{bnBytes(bnG2x), bnBytes(bnG2y)},
+			},
+			{
+				name: "alt_bn128_k_zero",
+				inputStack: [][]byte{
+					bnBytes(bnGx), bnBytes(bnGy),
+					zero,
+					bnBytesUint(uint64(CurveAltBN128)),
+				},
+				expectedStack: [][]byte{zero, zero},
+			},
+			{
+				name: "alt_bn128_k_eq_order_minus_one_is_negG",
+				inputStack: [][]byte{
+					bnBytes(bnGx), bnBytes(bnGy),
+					bnBytes(nBN254Minus1),
+					bnBytesUint(uint64(CurveAltBN128)),
+				},
+				expectedStack: [][]byte{bnBytes(bnGx), bnBytes(bnGnegY)},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{
+				name:          "underflow",
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "unsupported_curve_id",
+				inputStack: [][]byte{
+					zero, zero, zero, bnBytesUint(99),
+				},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "scalar_equal_to_group_order_secp256k1",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					bnBytes(nSecp256k1),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "scalar_equal_to_group_order_secp256r1",
+				inputStack: [][]byte{
+					bnBytes(p1x), bnBytes(p1y),
+					bnBytes(nP256),
+					bnBytesUint(uint64(CurveSecp256r1)),
+				},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "scalar_equal_to_group_order_alt_bn128",
+				inputStack: [][]byte{
+					bnBytes(bnGx), bnBytes(bnGy),
+					bnBytes(nBN254),
+					bnBytesUint(uint64(CurveAltBN128)),
+				},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "negative_scalar",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					{0x81}, // -1
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "off_curve_secp256k1",
+				inputStack: [][]byte{
+					bnBytesUint(1), bnBytesUint(1),
+					bnBytesUint(1),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "out_of_field_coordinate",
+				inputStack: [][]byte{
+					bnBytes(pSecp256k1), bnBytes(g1y),
+					bnBytesUint(1),
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name: "non_minimal_scalar",
+				inputStack: [][]byte{
+					bnBytes(g1x), bnBytes(g1y),
+					{0x05, 0x00},
+					bnBytesUint(uint64(CurveSecp256k1)),
+				},
+				expectedError: txscript.ErrMinimalData,
+			},
+		},
 	}
-	tx := makeOpcodePlainTx()
-	tx.TxOut = []*wire.TxOut{txOut}
-	return tx
 }
 
-func makeOpcodeTxWithMalformedExtension(payload []byte) wire.MsgTx {
-	tx := makeOpcodePlainTx()
-	tx.TxOut = []*wire.TxOut{{
-		Value:    0,
-		PkScript: append([]byte{txscript.OP_RETURN, byte(len(payload))}, payload...),
-	}}
-	return tx
-}
+func inspectIntentMessageSpec() *opcodeSpec {
+	message := `{"type":"register","onchain_output_indexes":[1,2],"valid_at":1000,"expire_at":2000,"cosigners_public_keys":["0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"]}`
+	setupMessage := WithIntentMessage(message)
 
-func attachOpcodePrevArkTx(w *opcodeWorld, prevTx wire.MsgTx) {
-	outpoint := w.tx.TxIn[0].PreviousOutPoint
-	w.prevFetcher = newTestArkPrevOutFetcher(
-		txscript.NewMultiPrevOutFetcher(w.prevouts),
-		map[wire.OutPoint]*wire.MsgTx{outpoint: &prevTx},
-		map[wire.OutPoint]uint32{outpoint: outpoint.Index},
-	)
-}
-
-func newOpcodeEngine(world *opcodeWorld, txIdx int) (*Engine, error) {
-	txCopy := world.tx.Copy()
-	spk := []byte{OP_TRUE}
-	inputAmount := int64(0)
-
-	if txIdx >= 0 && txIdx < len(txCopy.TxIn) {
-		if witness := world.witnessByVin[txIdx]; len(witness) > 0 {
-			txCopy.TxIn[txIdx].Witness = cloneWitness(witness)
-		}
-		if script := world.execScriptByVin[txIdx]; len(script) > 0 {
-			spk = cloneBytes(script)
-		}
-		if world.prevFetcher != nil {
-			if prevOut := world.prevFetcher.FetchPrevOutput(txCopy.TxIn[txIdx].PreviousOutPoint); prevOut != nil {
-				inputAmount = prevOut.Value
-			}
-		}
+	return &opcodeSpec{
+		opcode:          OP_INSPECTINTENTMESSAGE,
+		checkProperties: inspectIntentMessagePropertyChecker,
+		validVectors: []opcodeVector{
+			{
+				name:          "no_context",
+				inputStack:    [][]byte{[]byte("type")},
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:          "type",
+				inputStack:    [][]byte{[]byte("type")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{[]byte("register"), {1}},
+			},
+			{
+				name:          "expire_at",
+				inputStack:    [][]byte{[]byte("expire_at")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{scriptNum(2000).Bytes(), {1}},
+			},
+			{
+				name:          "cosigner",
+				inputStack:    [][]byte{[]byte("cosigners_public_keys.0")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{[]byte("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"), {1}},
+			},
+			{
+				name:       "false_value_is_present",
+				inputStack: [][]byte{[]byte("enabled")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(`{"enabled":false}`)(vm)
+				},
+				expectedStack: [][]byte{nil, {1}},
+			},
+			{
+				name:          "onchain_output_indexes",
+				inputStack:    [][]byte{[]byte("onchain_output_indexes")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{[]byte("[1,2]"), {1}},
+			},
+			{
+				name:          "onchain_output_index",
+				inputStack:    [][]byte{[]byte("onchain_output_indexes.0")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{scriptNum(1).Bytes(), {1}},
+			},
+			{
+				name:          "missing",
+				inputStack:    [][]byte{[]byte("missing")},
+				setupVM:       setupMessage,
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:       "non_integer",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(`{"value":1e-1}`)(vm)
+				},
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:       "truncated_exponent_is_miss",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(`{"value":1e}`)(vm)
+				},
+				expectedStack: [][]byte{nil, nil},
+			},
+			{
+				name:       "malformed_exponent_is_miss",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(`{"value":1e5x}`)(vm)
+				},
+				expectedStack: [][]byte{nil, nil},
+			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
+			{
+				name:          "complex_path_errors",
+				inputStack:    [][]byte{[]byte("onchain_output_indexes.#")},
+				setupVM:       setupMessage,
+				expectedError: txscript.ErrInvalidStackOperation,
+			},
+			{
+				name:       "oversized_result",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					raw := `{"value":"` +
+						strings.Repeat("a", txscript.MaxScriptElementSize+1) + `"}`
+					WithIntentMessage(raw)(vm)
+				},
+				expectedError: txscript.ErrElementTooBig,
+			},
+			{
+				name:       "oversized_integer",
+				inputStack: [][]byte{[]byte("value")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(`{"value":1e2000}`)(vm)
+				},
+				expectedError: txscript.ErrNumberTooBig,
+			},
+			{
+				name:       "oversized_message",
+				inputStack: [][]byte{[]byte("type")},
+				setupVM: func(vm *Engine) {
+					WithIntentMessage(strings.Repeat("0", maxIntentMessageSize+1))(vm)
+				},
+				expectedError: txscript.ErrElementTooBig,
+			},
+		},
 	}
-
-	vm, err := NewEngine(spk, txCopy, txIdx, txscript.NewSigCache(32), nil, inputAmount, world.prevFetcher)
-	if err != nil {
-		return nil, err
-	}
-	vm.dstack.verifyMinimalData = true
-	vm.astack.verifyMinimalData = true
-	return vm, nil
-}
-
-func invokeOpcodeWithData(opcode byte, data []byte, vm *Engine) error {
-	op := &opcodeArray[opcode]
-	if op.opfunc == nil {
-		return nil
-	}
-	if data == nil {
-		if op.length > 1 {
-			data = make([]byte, op.length-1)
-		}
-	}
-	return vm.executeOpcode(op, data)
-}
-
-func requireScriptErrorCode(t *testing.T, err error, code txscript.ErrorCode) {
-	t.Helper()
-	require.Error(t, err)
-	scriptErr, ok := err.(txscript.Error)
-	require.Truef(t, ok, "expected txscript.Error, got %T: %v", err, err)
-	require.Equal(t, code, scriptErr.ErrorCode)
-}
-
-func requireScriptErrorCodeIn(t *testing.T, err error, codes ...txscript.ErrorCode) {
-	t.Helper()
-	require.Error(t, err)
-	scriptErr, ok := err.(txscript.Error)
-	require.Truef(t, ok, "expected txscript.Error, got %T: %v", err, err)
-	if slices.Contains(codes, scriptErr.ErrorCode) {
-		return
-	}
-	t.Fatalf("unexpected txscript error code: got=%v want one of=%v", scriptErr.ErrorCode, codes)
-}
-
-func hashWithSalt(seed []byte, salt byte) chainhash.Hash {
-	b := make([]byte, len(seed)+1)
-	copy(b, seed)
-	b[len(seed)] = salt
-	sum := sha256.Sum256(b)
-	var h chainhash.Hash
-	copy(h[:], sum[:])
-	return h
-}
-
-func mustDecodeHex(hexStr string) []byte {
-	b, err := hex.DecodeString(hexStr)
-	if err != nil {
-		panic(fmt.Sprintf("invalid hex string: %v", err))
-	}
-	return b
-}
-
-func zeroStackItem() []byte {
-	return scriptNum(0).Bytes()
-}
-
-func falseStackItem() []byte {
-	return fromBool(false)
-}
-
-func emptyByteVector() []byte {
-	return []byte{}
-}
-
-func opcodeWorldTxWeight() []byte {
-	world := buildOpcodeWorld()
-	return mustBigNumBytes(BigNumFromUint64(uint64(world.tx.SerializeSizeStripped() * 4)))
-}
-
-func hashBytes(h chainhash.Hash) []byte {
-	return append([]byte(nil), h[:]...)
-}
-
-func sha256Bytes(data []byte) []byte {
-	sum := sha256.Sum256(data)
-	return append([]byte(nil), sum[:]...)
-}
-
-// Malicious serialized SHA256 contexts. gob sizes its allocations from length
-// prefixes carried in its own input, so these tiny blobs each cost megabytes
-// before the decode fails.
-var (
-	// A bare gob message header declaring a ~1GiB message body.
-	sha256StateHugeMessage = mustDecodeHex("fc3fffffff")
-
-	// A structurally well-framed type descriptor (its declared message length
-	// matches the bytes present) whose struct field-slice length has been
-	// patched to 0xFFFFFF elements. Proves that validating the framing is not
-	// on its own enough: the amplification also lives in nested lengths.
-	sha256StateHugeSlice = mustDecodeHex(
-		"1d7f030101015301ff800001fdffffff010141010400010142010c000000",
-	)
-)
-
-// allocBytesPerRun reports the average bytes allocated per call to fn.
-func allocBytesPerRun(runs int, fn func()) uint64 {
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	for range runs {
-		fn()
-	}
-	runtime.ReadMemStats(&after)
-	return (after.TotalAlloc - before.TotalAlloc) / uint64(runs)
-}
-
-// TestOpcodeSha256StateDecodeIsBounded proves that OP_SHA256UPDATE and
-// OP_SHA256FINALIZE cannot be driven into large allocations by the serialized
-// context they pop off the stack. Both opcodes always fail on these inputs, so
-// the observable defect is the memory spent on the way to that failure: a few
-// stack bytes buying ~10MiB per execution is a cheap denial of service.
-//
-// Deliberately not parallel: the assertion reads process-wide alloc counters.
-func TestOpcodeSha256StateDecodeIsBounded(t *testing.T) {
-	const (
-		runs     = 64
-		maxAlloc = 1 << 20 // 1MiB/call; the unfixed decoder spends ~10MiB.
-	)
-
-	states := map[string][]byte{
-		"huge_message": sha256StateHugeMessage,
-		"huge_slice":   sha256StateHugeSlice,
-		"truncated":    sha256InitGolden[:len(sha256InitGolden)-1],
-		"oversized":    append(append([]byte(nil), sha256InitGolden...), make([]byte, 256)...),
-	}
-
-	for _, op := range []byte{OP_SHA256UPDATE, OP_SHA256FINALIZE} {
-		for name, state := range states {
-			t.Run(fmt.Sprintf("%s/%s", opcodeArray[op].name, name), func(t *testing.T) {
-				vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
-				require.NoError(t, err)
-
-				// The state must be rejected outright.
-				vm.SetStack([][]byte{state, []byte("x")})
-				requireScriptErrorCode(
-					t, invokeOpcodeWithData(op, nil, vm),
-					txscript.ErrInvalidStackOperation,
-				)
-
-				perRun := allocBytesPerRun(runs, func() {
-					vm.SetStack([][]byte{state, []byte("x")})
-					_ = invokeOpcodeWithData(op, nil, vm)
-				})
-				require.Lessf(t, perRun, uint64(maxAlloc),
-					"%d state bytes allocated %d bytes per execution",
-					len(state), perRun)
-			})
-		}
-	}
-}
-
-// TestOpcodeSha256StateRoundTripsGolden guards against the bounds check above
-// being tightened into rejecting the states the VM itself produces.
-func TestOpcodeSha256StateRoundTripsGolden(t *testing.T) {
-	t.Parallel()
-
-	vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
-	require.NoError(t, err)
-
-	vm.SetStack([][]byte{[]byte("Hello")})
-	require.NoError(t, invokeOpcodeWithData(OP_SHA256INITIALIZE, nil, vm))
-	require.Equal(t, [][]byte{sha256InitGolden}, vm.GetStack())
-
-	vm.SetStack([][]byte{sha256InitGolden, []byte(" World")})
-	require.NoError(t, invokeOpcodeWithData(OP_SHA256UPDATE, nil, vm))
-	require.Equal(t, [][]byte{sha256UpdateGolden}, vm.GetStack())
-
-	vm.SetStack([][]byte{sha256UpdateGolden, []byte("!")})
-	require.NoError(t, invokeOpcodeWithData(OP_SHA256FINALIZE, nil, vm))
-	require.Equal(t, [][]byte{sha256FinalizeGolden}, vm.GetStack())
-}
-
-func TestOpcodeModexpSmoke(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, "OP_MODEXP", opcodeArray[OP_MODEXP].name)
-	require.Equal(t, 1, opcodeArray[OP_MODEXP].length)
-	require.NotNil(t, opcodeArray[OP_MODEXP].opfunc)
-}
-
-const (
-	// secp256k1 group order minus one, the tweak that cancels the generator point.
-	orderMinusOneHex = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140"
-	// compressed secp256k1 generator point.
-	generatorHex = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
-)
-
-// compressed serialization of the point at infinity, which is not a valid encoding:
-// both opcodes must reject it rather than accept it as a matching Q.
-var infinityCompressed = mustDecodeHex(
-	"020000000000000000000000000000000000000000000000000000000000000000",
-)
-
-func TestOpcodeECMulScalarVerifyRejectsInfinity(t *testing.T) {
-	t.Parallel()
-
-	vm := &Engine{}
-	vm.dstack.PushByteArray(make([]byte, 32)) // k = 0
-	vm.dstack.PushByteArray(mustDecodeHex(generatorHex))
-	vm.dstack.PushByteArray(infinityCompressed)
-
-	requireScriptErrorCode(
-		t, opcodeECMulScalarVerify(nil, nil, vm), txscript.ErrInvalidStackOperation,
-	)
-}
-
-func TestOpcodeTweakVerifyRejectsInfinity(t *testing.T) {
-	t.Parallel()
-
-	// P = x(G) tweaked by n-1 cancels to the point at infinity.
-	vm := &Engine{}
-	vm.dstack.PushByteArray(mustDecodeHex(generatorHex)[1:])
-	vm.dstack.PushByteArray(mustDecodeHex(orderMinusOneHex))
-	vm.dstack.PushByteArray(infinityCompressed)
-
-	requireScriptErrorCode(t, opcodeTweakVerify(nil, nil, vm), txscript.ErrInvalidStackOperation)
-}
-
-func TestOpcodeECMulScalarVerifyRequiresCompressedP(t *testing.T) {
-	t.Parallel()
-
-	priv, err := secp.GeneratePrivateKey()
-	require.NoError(t, err)
-
-	var scalar secp.ModNScalar
-	scalar.SetInt(2)
-	k := make([]byte, 32)
-	k[31] = 2
-
-	var point, result secp.JacobianPoint
-	priv.PubKey().AsJacobian(&point)
-	secp.ScalarMultNonConst(&scalar, &point, &result)
-	result.ToAffine()
-	Q := secp.NewPublicKey(&result.X, &result.Y).SerializeCompressed()
-
-	// the compressed encoding of the same key is accepted
-	vm := &Engine{}
-	vm.dstack.PushByteArray(k)
-	vm.dstack.PushByteArray(priv.PubKey().SerializeCompressed())
-	vm.dstack.PushByteArray(Q)
-	require.NoError(t, opcodeECMulScalarVerify(nil, nil, vm))
-
-	// the uncompressed encoding is not
-	vm = &Engine{}
-	vm.dstack.PushByteArray(k)
-	vm.dstack.PushByteArray(priv.PubKey().SerializeUncompressed())
-	vm.dstack.PushByteArray(Q)
-	requireScriptErrorCode(
-		t, opcodeECMulScalarVerify(nil, nil, vm), txscript.ErrInvalidStackOperation,
-	)
 }

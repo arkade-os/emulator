@@ -2406,7 +2406,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	}
 }
 
-// runTapscriptLeaf wires a witness-script leaf onto a single-input transaction
+// runTapscriptLeaf executes a tapscript leaf against a single-input transaction
 // and returns the engine ready to execute. The caller owns the pre-signature
 // `witnessStack` (anything below the leaf + control block); this helper
 // appends the leaf and control block itself.
@@ -2432,14 +2432,6 @@ func runTapscriptLeaf(
 		internalPriv.PubKey(), leafHash[:],
 	)
 
-	controlBlock := &txscript.ControlBlock{
-		InternalKey:     internalPriv.PubKey(),
-		LeafVersion:     txscript.BaseLeafVersion,
-		OutputKeyYIsOdd: outputKey.SerializeCompressed()[0] == 0x03,
-	}
-	controlBytes, err := controlBlock.ToBytes()
-	require.NoError(t, err)
-
 	prevScript, err := txscript.PayToTaprootScript(outputKey)
 	require.NoError(t, err)
 
@@ -2456,10 +2448,6 @@ func runTapscriptLeaf(
 		}},
 	}
 
-	witness := append(append(wire.TxWitness(nil), witnessStack...),
-		leafScript, controlBytes)
-	tx.TxIn[0].Witness = witness
-
 	prevouts := map[wire.OutPoint]*wire.TxOut{
 		outpoint: {Value: prevValue, PkScript: prevScript},
 	}
@@ -2467,14 +2455,17 @@ func runTapscriptLeaf(
 		txscript.NewMultiPrevOutFetcher(prevouts), nil, nil,
 	)
 
+	// Execute the leaf directly, as ArkadeScript.Execute does.
 	engine, err := NewEngine(
-		prevScript, tx, 0,
+		leafScript, tx, 0,
 		txscript.NewSigCache(32),
 		txscript.NewTxSigHashes(tx, fetcher),
 		prevValue,
 		fetcher,
 	)
 	require.NoError(t, err)
+	engine.taprootCtx = newTaprootExecutionCtxForLeaf(leaf)
+	engine.SetStack(witnessStack)
 
 	return engine
 }
@@ -2541,7 +2532,7 @@ func TestOpSighashMatchesCheckSigFromStack(t *testing.T) {
 		leafScript, txscript.SigHashDefault)
 	sig, err := schnorr.Sign(signingPriv, sigHash)
 	require.NoError(t, err)
-	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
+	engine.SetStack(wire.TxWitness{sig.Serialize(), pubKeyX})
 
 	require.NoError(t, engine.Execute(),
 		"OP_SIGHASH digest must equal the arkade sighash a witness signature commits to")
@@ -2570,7 +2561,7 @@ func TestOpCheckSigArkadeSighash(t *testing.T) {
 		leafScript, txscript.SigHashDefault)
 	sig, err := schnorr.Sign(signingPriv, sigHash)
 	require.NoError(t, err)
-	engine.tx.TxIn[0].Witness[0] = sig.Serialize()
+	engine.SetStack(wire.TxWitness{sig.Serialize()})
 
 	require.NoError(t, engine.Execute(),
 		"OP_CHECKSIG must accept a signature over the arkade sighash")

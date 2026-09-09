@@ -14,12 +14,10 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -157,14 +155,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
-	signedTx, err := bobWallet.SignTransaction(
-		ctx,
-		explorer,
-		encodedValidTx,
-	)
+	signedTx, err := bobWallet.SignTransaction(ctx, encodedValidTx, nil)
 	require.NoError(t, err)
 
 	encodedValidCheckpoints := make([]string, 0, len(validCheckpoints))
@@ -172,11 +163,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 		encoded, err := checkpoint.B64Encode()
 		require.NoError(t, err)
 
-		signed, err := bobWallet.SignTransaction(
-			ctx,
-			explorer,
-			encoded,
-		)
+		signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 
 		encodedValidCheckpoints = append(encodedValidCheckpoints, signed)
@@ -215,9 +202,6 @@ func TestSettlementWithAsset(t *testing.T) {
 		//nolint:errcheck
 		conn.Close()
 	})
-
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
 
 	// =========================================================================
 	// Phase 1: Create settle and mint contract addresses
@@ -337,7 +321,7 @@ func TestSettlementWithAsset(t *testing.T) {
 	encodedMintTx, err := mintTx.B64Encode()
 	require.NoError(t, err)
 
-	signedMintTx, err := bobWallet.SignTransaction(ctx, explorer, encodedMintTx)
+	signedMintTx, err := bobWallet.SignTransaction(ctx, encodedMintTx, nil)
 	require.NoError(t, err)
 
 	encodedMintCheckpoints := make([]string, 0, len(mintCheckpoints))
@@ -345,7 +329,7 @@ func TestSettlementWithAsset(t *testing.T) {
 		encoded, err := checkpoint.B64Encode()
 		require.NoError(t, err)
 
-		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 		encodedMintCheckpoints = append(encodedMintCheckpoints, signed)
 	}
@@ -469,7 +453,7 @@ func TestSettlementWithAsset(t *testing.T) {
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
+	signedIntentProof, err := bobWallet.SignTransaction(ctx, encodedIntentProof, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
@@ -488,7 +472,7 @@ func TestSettlementWithAsset(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := client.TapscriptsVtxo{
+	vtxo := types.VtxoWithTapTree{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
 				Txid: mintResultPtx.UnsignedTx.TxHash().String(),
@@ -503,21 +487,21 @@ func TestSettlementWithAsset(t *testing.T) {
 	emulatorBatchHandler := &delegateBatchEventsHandler{
 		intentId:       intentId,
 		intent:         signedIntent,
-		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
 		signerSession:  treeSignerSession,
 		emulatorClient: emulatorClient,
 		wallet:         bobWallet,
 		client:         grpcClient,
 	}
 
-	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
+	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		stop()
 	})
 
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
+	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }

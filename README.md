@@ -68,15 +68,18 @@ When the emulator receives a transaction, it:
 
 ### Native VTXO delegation via OP_TUNNEL
 
-Renewing a VTXO through every Arkade batch settlement without the owner — permanent delegation — is supported today via a self-send covenant (an Arkade Script that enforces the output preserves the input's `scriptPubKey` and value). 
-
-A dedicated `OP_TUNNEL` opcode is coming that makes this an explicit, auditable script path:
+Renewing a VTXO through every Arkade batch settlement without the owner — permanent delegation — is expressed with `OP_TUNNEL`:
 
 ```
-<output_index> OP_TUNNEL
+<output_index> <flags> OP_TUNNEL
 ```
 
-`OP_TUNNEL` succeeds when the selected output exactly preserves the source VTXO's `scriptPubKey`, value, and assets within a configured renewal window. Once documented separately, delegation will not need to be explained as part of this README.
+`OP_TUNNEL` succeeds when the output at `output_index` preserves the fields of the current input selected by `flags` (`1` scriptPubKey, `2` value, `4` assets — combinable). See the [opcode table](#transaction-introspection-transaction) for the full stack signature.
+
+### Arkade Script examples
+
+- [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
+- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant uses `OP_TUNNEL` to preserve the input's scriptPubKey + value on the output paired with its input index (output i-1, so equal VTXOs cannot share one output) and is gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
 
 ---
 
@@ -356,6 +359,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | OP_TXWEIGHT | 214 | 0xd6 | Nothing | weight | Pushes the transaction weight as a minimally-encoded BigNum. Weight is calculated as `SerializeSizeStripped() * 4`. |
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
 | OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [Arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
+| OP_TUNNEL | 247 | 0xf7 | output_index flags [asset_txid asset_gidx]... exception_count | True/fail | Requires the selected output to preserve fields from the current input. `flags` is a bitmask: `1` preserves the logical VTXO scriptPubKey, `2` preserves the directly spent output's value, and `4` preserves input-local asset IDs and amounts. Asset IDs listed before `exception_count` are excluded from the asset check and require flag `4`. Flags must be nonzero and may be combined. |
 
 ### Packet Introspection
 
@@ -363,6 +367,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTPACKET | 244 | 0xf4 | packet_type | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the current transaction's extension. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. |
 | OP_INSPECTINPUTPACKET | 245 | 0xf5 | packet_type input_index | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the ARK extension of the previous Arkade transaction spent by the input at `input_index`. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. Fails on negative / out-of-range `input_index`. |
+| OP_INSPECTINTENTMESSAGE | 248 | 0xf8 | path | value 1 (or `<empty>` 0) | Reads a field of the canonical intent message bound to the current execution (only set while validating a `SubmitIntent` proof; pushes `<empty>` 0 otherwise). `path` is a dot-separated sequence of lowercase `[a-z_][a-z0-9_]*` keys and non-padded array indexes, e.g. `outpoints.0`; any other syntax (GJSON operators, wildcards) fails. Strings push their raw bytes, integers push a minimally-encoded BigNum, `true` pushes `0x01`, `false` pushes `<empty>`, and objects / arrays push their raw JSON. Missing fields, `null`, and non-integer numbers push `<empty>` 0. Fails if the value exceeds 520 bytes or the number exceeds the BigNum range. |
 
 ### Data Manipulation
 

@@ -233,7 +233,7 @@ const (
 	OP_NOP9                = 0xb8 // 184
 	OP_NOP10               = 0xb9 // 185
 	OP_CHECKSIGADD         = 0xba // 186
-	OP_UNKNOWN187          = 0xbb // 187
+	OP_PUT                 = 0xbb // 187
 	OP_UNKNOWN188          = 0xbc // 188
 	OP_UNKNOWN189          = 0xbd // 189
 	OP_UNKNOWN190          = 0xbe // 190
@@ -280,8 +280,8 @@ const (
 	OP_BIN2NUM                       = 0xd8 // 216
 	OP_REVERSEBYTES                  = 0xd9 // 217
 	OP_MODEXP                        = 0xda // 218
-	OP_UNKNOWN219                    = 0xdb // 219
-	OP_UNKNOWN220                    = 0xdc // 220
+	OP_PUSHEXPIRY                    = 0xdb // 219
+	OP_CHECKTIMEVERIFY               = 0xdc // 220
 	OP_UNKNOWN221                    = 0xdd // 221
 	OP_UNKNOWN222                    = 0xde // 222
 	OP_UNKNOWN223                    = 0xdf // 223
@@ -308,8 +308,8 @@ const (
 	OP_INSPECTPACKET                 = 0xf4 // 244
 	OP_INSPECTINPUTPACKET            = 0xf5 // 245
 	OP_SIGHASH                       = 0xf6 // 246
-	OP_UNKNOWN247                    = 0xf7 // 247
-	OP_UNKNOWN248                    = 0xf8 // 248
+	OP_TUNNEL                        = 0xf7 // 247
+	OP_INSPECTINTENTMESSAGE          = 0xf8 // 248
 	OP_UNKNOWN249                    = 0xf9 // 249
 	OP_SMALLINTEGER                  = 0xfa // 250 - bitcoin core internal
 	OP_PUBKEYS                       = 0xfb // 251 - bitcoin core internal
@@ -533,8 +533,9 @@ var opcodeArray = [256]opcode{
 	OP_NOP9:               {OP_NOP9, "OP_NOP9", 1, opcodeNop},
 	OP_NOP10:              {OP_NOP10, "OP_NOP10", 1, opcodeNop},
 
+	OP_PUT: {OP_PUT, "OP_PUT", 1, opcodePut},
+
 	// Undefined opcodes.
-	OP_UNKNOWN187: {OP_UNKNOWN187, "OP_UNKNOWN187", 1, opcodeInvalid},
 	OP_UNKNOWN188: {OP_UNKNOWN188, "OP_UNKNOWN188", 1, opcodeInvalid},
 	OP_UNKNOWN189: {OP_UNKNOWN189, "OP_UNKNOWN189", 1, opcodeInvalid},
 	OP_UNKNOWN190: {OP_UNKNOWN190, "OP_UNKNOWN190", 1, opcodeInvalid},
@@ -581,8 +582,8 @@ var opcodeArray = [256]opcode{
 	OP_BIN2NUM:                       {OP_BIN2NUM, "OP_BIN2NUM", 1, opcodeBin2Num},
 	OP_REVERSEBYTES:                  {OP_REVERSEBYTES, "OP_REVERSEBYTES", 1, opcodeReverseBytes},
 	OP_MODEXP:                        {OP_MODEXP, "OP_MODEXP", 1, opcodeModexp},
-	OP_UNKNOWN219:                    {OP_UNKNOWN219, "OP_UNKNOWN219", 1, opcodeInvalid},
-	OP_UNKNOWN220:                    {OP_UNKNOWN220, "OP_UNKNOWN220", 1, opcodeInvalid},
+	OP_PUSHEXPIRY:                    {OP_PUSHEXPIRY, "OP_PUSHEXPIRY", 1, opcodePushExpiry},
+	OP_CHECKTIMEVERIFY:               {OP_CHECKTIMEVERIFY, "OP_CHECKTIMEVERIFY", 1, opcodeCheckTimeVerify},
 	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
 	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
 	OP_UNKNOWN223:                    {OP_UNKNOWN223, "OP_UNKNOWN223", 1, opcodeInvalid},
@@ -609,8 +610,8 @@ var opcodeArray = [256]opcode{
 	OP_INSPECTPACKET:                 {OP_INSPECTPACKET, "OP_INSPECTPACKET", 1, opcodeInspectPacket},
 	OP_INSPECTINPUTPACKET:            {OP_INSPECTINPUTPACKET, "OP_INSPECTINPUTPACKET", 1, opcodeInspectInputPacket},
 	OP_SIGHASH:                       {OP_SIGHASH, "OP_SIGHASH", 1, opcodeSighash},
-	OP_UNKNOWN247:                    {OP_UNKNOWN247, "OP_UNKNOWN247", 1, opcodeInvalid},
-	OP_UNKNOWN248:                    {OP_UNKNOWN248, "OP_UNKNOWN248", 1, opcodeInvalid},
+	OP_TUNNEL:                        {OP_TUNNEL, "OP_TUNNEL", 1, opcodeTunnel},
+	OP_INSPECTINTENTMESSAGE:          {OP_INSPECTINTENTMESSAGE, "OP_INSPECTINTENTMESSAGE", 1, opcodeInspectIntentMessage},
 	OP_UNKNOWN249:                    {OP_UNKNOWN249, "OP_UNKNOWN249", 1, opcodeInvalid},
 
 	// Bitcoin Core internal use opcode.  Defined here for completeness.
@@ -978,6 +979,26 @@ func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
+// opcodeCheckTimeVerify checks that the Unix timestamp on top of the data
+// stack is not later than the emulator's current time.
+// Stack transformation: [... timestamp] -> [...]
+func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
+	n, err := vm.dstack.PopBigNum()
+	if err != nil {
+		return err
+	}
+	if n.Sign() < 0 {
+		return scriptError(txscript.ErrNegativeLockTime,
+			fmt.Sprintf("negative timestamp: %s", n.BigInt().Text(10)))
+	}
+	if n.Cmp(vm.currentTime) > 0 {
+		return scriptError(txscript.ErrUnsatisfiedLockTime,
+			fmt.Sprintf("timestamp is later than emulator time: %s > %s",
+				n.BigInt().Text(10), vm.currentTime.BigInt().Text(10)))
+	}
+	return nil
+}
+
 // opcodeCheckSequenceVerify compares the top item on the data stack to the
 // sequence number of the transaction input. The item is peeked as a BigNum.
 // The script fails if the value is negative or does not fit in uint32.
@@ -1172,6 +1193,26 @@ func opcodePick(op *opcode, data []byte, vm *Engine) error {
 	}
 
 	return vm.dstack.PickN(val.Int32())
+}
+
+// opcodePut treats the top item on the data stack as an integer and replaces
+// the item that number of items back with the value beneath it.
+//
+// Stack transformation: [xn ... x2 x1 x0 value n] -> [value ... x2 x1 x0]
+// Example with n=0: [x2 x1 x0 value 0] -> [x2 x1 value]
+// Example with n=2: [x2 x1 x0 value 2] -> [value x1 x0]
+func opcodePut(op *opcode, data []byte, vm *Engine) error {
+	val, err := vm.dstack.PopInt()
+	if err != nil {
+		return err
+	}
+
+	so, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+
+	return vm.dstack.PutN(val.Int32(), so)
 }
 
 // opcodeRoll treats the top item on the data stack as an integer and moves
@@ -2500,6 +2541,17 @@ func opcodeModexp(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 	return vm.dstack.PushBigNum(result)
+}
+
+// opcodePushExpiry pushes the VTXO's Unix expiry timestamp.
+//
+// Stack transformation: [...] -> [... expiry]
+func opcodePushExpiry(_ *opcode, _ []byte, vm *Engine) error {
+	if vm.expiry == nil {
+		return scriptError(txscript.ErrInvalidStackOperation, "OP_PUSHEXPIRY expiry not set")
+	}
+	vm.dstack.PushInt(scriptNum(*vm.expiry))
+	return nil
 }
 
 // opcodeLshift performs a left shift on BigNum operands. The shift count

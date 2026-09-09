@@ -11,9 +11,9 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/arkade-os/go-sdk/explorer"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
@@ -147,7 +147,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+		bobSigned, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 
 		fullySigned, err := emulatorClient.SubmitOnchainTx(ctx, bobSigned)
@@ -216,7 +216,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+		bobSigned, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 
 		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
@@ -237,7 +237,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+		bobSigned, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 
 		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
@@ -255,7 +255,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+		bobSigned, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 
 		_, err = emulatorClient.SubmitOnchainTx(ctx, bobSigned)
@@ -395,7 +395,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+		bobSigned, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 
 		fullySigned, err := emulatorClient.SubmitOnchainTx(ctx, bobSigned)
@@ -499,7 +499,7 @@ func waitForUtxo(
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		utxos, err := explorerSvc.GetUtxos(addr)
+		utxos, err := explorerSvc.GetUtxos([]string{addr})
 		if err == nil && len(utxos) > 0 {
 			return utxos[0]
 		}

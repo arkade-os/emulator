@@ -10,13 +10,13 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	"github.com/arkade-os/arkd/pkg/client-lib/identity"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/explorer"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
-	"github.com/arkade-os/go-sdk/types"
-	"github.com/arkade-os/go-sdk/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -195,7 +195,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 		t.Helper()
 		// Solver signs only its own BTC input (vin=1); the covenant input is
 		// signed by the emulator after the arkade script passes.
-		signed, err := solverWallet.SignTransaction(ctx, explorerSvc, b64(t, ptx))
+		signed, err := solverWallet.SignTransaction(ctx, b64(t, ptx), nil)
 		require.NoError(t, err)
 		_, _, err = emulator.SubmitTx(ctx, signed, signCheckpoints(t, ctx, solverWallet, explorerSvc, cps))
 		return err
@@ -246,7 +246,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 	addEmulatorPacket(t, bobMergeTx, []arkade.EmulatorEntry{{Vin: 0, Script: bobClaimArkade}})
 
 	waitBob := watchForPreconfirmedVtxos(t, indexerSvc, bobMergeTx, 1)
-	signedBob, err := bobWallet.SignTransaction(ctx, explorerSvc, b64(t, bobMergeTx))
+	signedBob, err := bobWallet.SignTransaction(ctx, b64(t, bobMergeTx), nil)
 	require.NoError(t, err)
 	_, _, err = emulator.SubmitTx(ctx, signedBob, signCheckpoints(t, ctx, bobWallet, explorerSvc, bobMergeCps))
 	require.NoError(t, err)
@@ -348,13 +348,13 @@ func buildRoutePacket(t *testing.T, mintTxHash chainhash.Hash, bob, change, fee 
 // offchain.VtxoInput.
 func findAccountInput(
 	t *testing.T, ctx context.Context,
-	sdk arksdk.ArkClient, indexerSvc indexer.Indexer,
+	sdk arksdk.Wallet, indexerSvc indexer.Indexer,
 	accountVtxoScript script.TapscriptsVtxoScript,
 ) offchain.VtxoInput {
 	t.Helper()
 	pk := p2trScriptForVtxoScript(t, accountVtxoScript)
 
-	spendable, _, err := sdk.ListVtxos(ctx)
+	spendable, _, err := sdk.ListVtxos(ctx, arksdk.WithSpendableOnly())
 	require.NoError(t, err)
 
 	var account types.Vtxo
@@ -401,13 +401,13 @@ func b64(t *testing.T, ptx *psbt.Packet) string {
 
 func signCheckpoints(
 	t *testing.T, ctx context.Context,
-	w wallet.WalletService, exp explorer.Explorer,
+	w identity.Identity, exp explorer.Explorer,
 	cps []*psbt.Packet,
 ) []string {
 	t.Helper()
 	out := make([]string, 0, len(cps))
 	for _, cp := range cps {
-		signed, err := w.SignTransaction(ctx, exp, b64(t, cp))
+		signed, err := w.SignTransaction(ctx, b64(t, cp), nil)
 		require.NoError(t, err)
 		out = append(out, signed)
 	}

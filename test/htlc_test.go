@@ -10,10 +10,10 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/indexer"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -411,7 +411,7 @@ func randomP2TR(t *testing.T) []byte {
 func fund(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.ArkClient,
+	alice arksdk.Wallet,
 	indexerSvc indexer.Indexer,
 	serverSigner *btcec.PublicKey,
 	htlcVtxoScript script.TapscriptsVtxoScript,

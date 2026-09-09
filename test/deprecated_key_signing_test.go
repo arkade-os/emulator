@@ -14,12 +14,11 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
@@ -73,9 +72,6 @@ func runSubmitTxWithDeprecatedKey(
 	bobWallet, _, bobPubKey := setupWallet(t, ctx)
 	aliceAddr := fundAndSettleAlice(t, ctx, alice, 10_000)
 	indexerSvc := setupIndexer(t)
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
 	require.NoError(t, err)
 	arkadeScript, err := txscript.NewScriptBuilder().
@@ -135,13 +131,13 @@ func runSubmitTxWithDeprecatedKey(
 
 	encodedTx, err := tx.B64Encode()
 	require.NoError(t, err)
-	signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+	signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 	require.NoError(t, err)
 	signedCheckpoints := make([]string, 0, len(checkpoints))
 	for _, checkpoint := range checkpoints {
 		encoded, err := checkpoint.B64Encode()
 		require.NoError(t, err)
-		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 		signedCheckpoints = append(signedCheckpoints, signed)
 	}
@@ -248,7 +244,7 @@ func runSubmitIntentFinalizationWithDeprecatedKey(
 	intentID, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := client.TapscriptsVtxo{
+	vtxo := types.VtxoWithTapTree{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
 				Txid: delegateInput.Outpoint.Hash.String(),
@@ -262,18 +258,18 @@ func runSubmitIntentFinalizationWithDeprecatedKey(
 	batchHandler := &delegateBatchEventsHandler{
 		intentId:       intentID,
 		intent:         signedIntent,
-		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
 		signerSession:  signerSession,
 		emulatorClient: emulatorClient,
 		wallet:         aliceWallet,
 		client:         grpcClient,
 		explorer:       explorerSvc,
 	}
-	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{signerSession})
+	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{signerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(stop)
-	commitmentTxid, err := arksdk.JoinBatchSession(
+	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(
 		ctx, eventStream, &capturingBatchEventsHandler{delegateBatchEventsHandler: batchHandler},
 	)
 	require.NoError(t, err)
@@ -361,7 +357,7 @@ func runSubmitOnchainWithDeprecatedKey(
 	)
 	encoded, err := ptx.B64Encode()
 	require.NoError(t, err)
-	bobSigned, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+	bobSigned, err := bobWallet.SignTransaction(ctx, encoded, nil)
 	require.NoError(t, err)
 	fullySigned, err := emulatorClient.SubmitOnchainTx(ctx, bobSigned)
 	require.NoError(t, err)

@@ -8,12 +8,258 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	gnarkbn254 "github.com/consensys/gnark-crypto/ecc/bn254"
 	gnarkbn254fp "github.com/consensys/gnark-crypto/ecc/bn254/fp"
-	gnarkbn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	gnarksecp256k1 "github.com/consensys/gnark-crypto/ecc/secp256k1"
 	gnarksecp256k1fp "github.com/consensys/gnark-crypto/ecc/secp256k1/fp"
-	gnarksecp256k1fr "github.com/consensys/gnark-crypto/ecc/secp256k1/fr"
 	"github.com/stretchr/testify/require"
 )
+
+func TestECPairingTrueValid(t *testing.T) {
+	// Sanity check that the chosen vectors do form a valid e(G,G2)*e(-G,G2)=1.
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(pairingTrueVectors(t))
+	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
+	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
+}
+
+func TestECPairingFalseValid(t *testing.T) {
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(pairingFalseVectors())
+	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
+	require.Equal(t, [][]byte{nil}, vm.GetStack())
+}
+
+// TestECPairingOffCurveG1 verifies that an off-curve G1 input fails execution.
+func TestECPairingOffCurveG1(t *testing.T) {
+	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
+	stack := [][]byte{
+		// G1 = (1, 1), not on curve
+		bnBytesUint(1), bnBytesUint(1),
+		bnBytes(g2xC1), bnBytes(g2xC0),
+		bnBytes(g2yC1), bnBytes(g2yC0),
+		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
+	}
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(stack)
+	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestECPairingOffCurveG2 verifies that an on-field but off-curve G2 input
+// fails execution. We construct an Fp2 element that we know is on the twist
+// (via MapToCurve2), then perturb its X coordinate so it leaves the curve.
+func TestECPairingOffCurveG2(t *testing.T) {
+	g1x, g1y := bn254G1Gen()
+	g2xC0, g2xC1, _, g2yC1 := bn254G2Gen()
+	// Use the real G2 X but a y that does not satisfy the curve equation.
+	// Setting yC0 = 0 in general breaks y² = x³ + b' for the generator.
+	stack := [][]byte{
+		bnBytes(g1x), bnBytes(g1y),
+		bnBytes(g2xC1), bnBytes(g2xC0),
+		bnBytes(g2yC1), []byte{}, // yC0 := 0
+		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
+	}
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(stack)
+	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestECPairingG2NotInSubgroup verifies that a G2 point on the twist but
+// outside the r-subgroup fails execution.
+func TestECPairingG2NotInSubgroup(t *testing.T) {
+	g1x, g1y := bn254G1Gen()
+	xc0, xc1, yc0, yc1 := nonSubgroupG2(t)
+	stack := [][]byte{
+		bnBytes(g1x), bnBytes(g1y),
+		bnBytes(xc1), bnBytes(xc0),
+		bnBytes(yc1), bnBytes(yc0),
+		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
+	}
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(stack)
+	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestECPairingOutOfFieldCoordinate covers the field-modulus boundary for
+// pairing coordinates on G1.
+func TestECPairingOutOfFieldCoordinate(t *testing.T) {
+	g1y := func() *big.Int { _, y := bn254G1Gen(); return y }()
+	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
+	mod := gnarkbn254fp.Modulus()
+	stack := [][]byte{
+		bnBytes(mod), bnBytes(g1y),
+		bnBytes(g2xC1), bnBytes(g2xC0),
+		bnBytes(g2yC1), bnBytes(g2yC0),
+		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
+	}
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(stack)
+	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestECPairingOutOfFieldG2Coordinate covers the field-modulus boundary for
+// each of the four G2 Fp2 components.
+func TestECPairingOutOfFieldG2Coordinate(t *testing.T) {
+	g1x, g1y := bn254G1Gen()
+	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
+	mod := gnarkbn254fp.Modulus()
+	cases := []struct {
+		name                       string
+		xC0, xC1, yC0, yC1 *big.Int
+	}{
+		{"g2_x_c0_eq_mod", mod, g2xC1, g2yC0, g2yC1},
+		{"g2_x_c1_eq_mod", g2xC0, mod, g2yC0, g2yC1},
+		{"g2_y_c0_eq_mod", g2xC0, g2xC1, mod, g2yC1},
+		{"g2_y_c1_eq_mod", g2xC0, g2xC1, g2yC0, mod},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stack := [][]byte{
+				bnBytes(g1x), bnBytes(g1y),
+				bnBytes(tc.xC1), bnBytes(tc.xC0),
+				bnBytes(tc.yC1), bnBytes(tc.yC0),
+				bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
+			}
+			world := buildOpcodeWorld()
+			vm, err := newOpcodeEngine(world, 0)
+			require.NoError(t, err)
+			vm.SetStack(stack)
+			err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+			requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+		})
+	}
+}
+
+// TestECPairingNegativeG2Coordinate confirms a negative BigNum in any G2
+// component fails execution.
+func TestECPairingNegativeG2Coordinate(t *testing.T) {
+	g1x, g1y := bn254G1Gen()
+	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
+	negOne := []byte{0x81} // canonical minimal encoding of -1
+	cases := []struct {
+		name string
+		xC0, xC1, yC0, yC1 []byte
+	}{
+		{"g2_x_c0_negative", negOne, bnBytes(g2xC1), bnBytes(g2yC0), bnBytes(g2yC1)},
+		{"g2_x_c1_negative", bnBytes(g2xC0), negOne, bnBytes(g2yC0), bnBytes(g2yC1)},
+		{"g2_y_c0_negative", bnBytes(g2xC0), bnBytes(g2xC1), negOne, bnBytes(g2yC1)},
+		{"g2_y_c1_negative", bnBytes(g2xC0), bnBytes(g2xC1), bnBytes(g2yC0), negOne},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stack := [][]byte{
+				bnBytes(g1x), bnBytes(g1y),
+				tc.xC1, tc.xC0,
+				tc.yC1, tc.yC0,
+				bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
+			}
+			world := buildOpcodeWorld()
+			vm, err := newOpcodeEngine(world, 0)
+			require.NoError(t, err)
+			vm.SetStack(stack)
+			err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+			requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+		})
+	}
+}
+
+// TestECPairingPairCountAtMax verifies that pair_count == maxECPairingCount
+// is accepted. Confirms the bound is `>` and not `>=`. The bundle of 16
+// pairs is 8 copies of {(G, G2), (-G, G2)} so the product is the identity
+// in GT and the opcode returns true.
+func TestECPairingPairCountAtMax(t *testing.T) {
+	g1x, g1y := bn254G1Gen()
+	negY := bn254G1NegY(g1y)
+	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
+	pair := func(x, y *big.Int) [][]byte {
+		return [][]byte{
+			bnBytes(x), bnBytes(y),
+			bnBytes(g2xC1), bnBytes(g2xC0),
+			bnBytes(g2yC1), bnBytes(g2yC0),
+		}
+	}
+	var stack [][]byte
+	for i := 0; i < maxECPairingCount/2; i++ {
+		stack = append(stack, pair(g1x, g1y)...)
+		stack = append(stack, pair(g1x, negY)...)
+	}
+	stack = append(stack,
+		bnBytesUint(uint64(maxECPairingCount)),
+		bnBytesUint(uint64(CurveAltBN128)),
+	)
+
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(stack)
+	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
+	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
+}
+
+// TestECPairingG2InfinityIsIdentity verifies that pairs containing the G2
+// point at infinity contribute the identity to the product, so a single
+// pair (P, 0_G2) produces a true result.
+func TestECPairingG2InfinityIsIdentity(t *testing.T) {
+	g1x, g1y := bn254G1Gen()
+	z := []byte(nil)
+	stack := [][]byte{
+		bnBytes(g1x), bnBytes(g1y),
+		z, z, // G2 x: c1=0, c0=0
+		z, z, // G2 y: c1=0, c0=0
+		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
+	}
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+	vm.SetStack(stack)
+	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
+	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
+}
+
+// TestECPairingZeroPairCountRejected verifies that OP_ECPAIRING refuses a
+// pair_count of zero instead of vacuously pushing true.
+//
+// EIP-197 defines the empty pairing product as the identity, so an empty
+// input set is "true" there. Arkade Script has no such convention to honour:
+// OP_ECPAIRING exists to gate a covenant on a real pairing-product check, so
+// accepting zero pairs lets anyone satisfy that gate by supplying no pairs at
+// all, bypassing whatever the check was meant to enforce.
+func TestECPairingZeroPairCountRejected(t *testing.T) {
+	world := buildOpcodeWorld()
+	vm, err := newOpcodeEngine(world, 0)
+	require.NoError(t, err)
+
+	var zero []byte // pair_count = 0
+	vm.SetStack([][]byte{zero, bnBytesUint(uint64(CurveAltBN128))})
+
+	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
+	require.Error(t, err, "pair_count=0 must fail the script, not push true")
+	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
+}
+
+// TestBN254PairingCheckRejectsEmpty pins the same rule one layer down, so the
+// vacuous-true cannot be reintroduced through bn254PairingCheck directly.
+func TestBN254PairingCheckRejectsEmpty(t *testing.T) {
+	_, err := bn254PairingCheck(nil)
+	require.Error(t, err)
+
+	_, err = bn254PairingCheck([]ecPair{})
+	require.Error(t, err)
+}
 
 // bnBytes returns the canonical Arkade BigNum encoding of v. It panics on
 // values that cannot be encoded (oversized); callers in tests pass sane
@@ -30,16 +276,7 @@ func bnBytesUint(v uint64) []byte {
 	return bnBytes(new(big.Int).SetUint64(v))
 }
 
-func bigInt(s string, base int) *big.Int {
-	v, ok := new(big.Int).SetString(s, base)
-	if !ok {
-		panic("bad bigint literal: " + s)
-	}
-	return v
-}
-
 // Curve generators and helpers.
-
 func secp256k1Gen() (x, y *big.Int) {
 	var g gnarksecp256k1.G1Affine
 	_, gAff := gnarksecp256k1.Generators()
@@ -398,235 +635,6 @@ func ecAddSpec() *opcodeSpec {
 	}
 }
 
-// ecMulSpec builds the OP_ECMUL opcodeSpec.
-func ecMulSpec() *opcodeSpec {
-	g1x, g1y := secp256k1Gen()
-	g1x2, g1y2 := secp256k1Double(g1x, g1y)
-
-	p1x, p1y := secp256r1Gen()
-	p1x2, p1y2 := secp256r1Double(p1x, p1y)
-
-	bnGx, bnGy := bn254G1Gen()
-	bnG2x, bnG2y := bn254G1Double(bnGx, bnGy)
-
-	nSecp256k1 := gnarksecp256k1fr.Modulus()
-	nP256 := elliptic.P256().Params().N
-	nBN254 := gnarkbn254fr.Modulus()
-	pSecp256k1 := gnarksecp256k1fp.Modulus()
-
-	// (order - 1) * G = -G. Last valid scalar — confirms the boundary
-	// check on the scalar is `<` and not `<=`.
-	one := big.NewInt(1)
-	nSecp256k1Minus1 := new(big.Int).Sub(nSecp256k1, one)
-	nP256Minus1 := new(big.Int).Sub(nP256, one)
-	nBN254Minus1 := new(big.Int).Sub(nBN254, one)
-	g1negY := secp256k1NegY(g1y)
-	p1negY := secp256r1NegY(p1y)
-	bnGnegY := bn254G1NegY(bnGy)
-
-	var zero []byte
-
-	return &opcodeSpec{
-		opcode:          OP_ECMUL,
-		checkProperties: ecPropertyChecker(4, 2),
-		validVectors: []opcodeVector{
-			{
-				name: "secp256k1_k_zero_is_infinity",
-				inputStack: [][]byte{
-					bnBytes(g1x), bnBytes(g1y),
-					zero,
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedStack: [][]byte{zero, zero},
-			},
-			{
-				name: "secp256k1_k_one",
-				inputStack: [][]byte{
-					bnBytes(g1x), bnBytes(g1y),
-					bnBytesUint(1),
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedStack: [][]byte{bnBytes(g1x), bnBytes(g1y)},
-			},
-			{
-				name: "secp256k1_k_two",
-				inputStack: [][]byte{
-					bnBytes(g1x), bnBytes(g1y),
-					bnBytesUint(2),
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedStack: [][]byte{bnBytes(g1x2), bnBytes(g1y2)},
-			},
-			{
-				name: "secp256k1_infinity_times_anything",
-				inputStack: [][]byte{
-					zero, zero,
-					bnBytesUint(42),
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedStack: [][]byte{zero, zero},
-			},
-			{
-				name: "secp256k1_k_eq_order_minus_one_is_negG",
-				inputStack: [][]byte{
-					bnBytes(g1x), bnBytes(g1y),
-					bnBytes(nSecp256k1Minus1),
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedStack: [][]byte{bnBytes(g1x), bnBytes(g1negY)},
-			},
-			{
-				name: "secp256r1_k_one",
-				inputStack: [][]byte{
-					bnBytes(p1x), bnBytes(p1y),
-					bnBytesUint(1),
-					bnBytesUint(uint64(CurveSecp256r1)),
-				},
-				expectedStack: [][]byte{bnBytes(p1x), bnBytes(p1y)},
-			},
-			{
-				name: "secp256r1_k_two",
-				inputStack: [][]byte{
-					bnBytes(p1x), bnBytes(p1y),
-					bnBytesUint(2),
-					bnBytesUint(uint64(CurveSecp256r1)),
-				},
-				expectedStack: [][]byte{bnBytes(p1x2), bnBytes(p1y2)},
-			},
-			{
-				name: "secp256r1_k_zero",
-				inputStack: [][]byte{
-					bnBytes(p1x), bnBytes(p1y),
-					zero,
-					bnBytesUint(uint64(CurveSecp256r1)),
-				},
-				expectedStack: [][]byte{zero, zero},
-			},
-			{
-				name: "secp256r1_infinity_times_anything",
-				inputStack: [][]byte{
-					zero, zero,
-					bnBytesUint(42),
-					bnBytesUint(uint64(CurveSecp256r1)),
-				},
-				expectedStack: [][]byte{zero, zero},
-			},
-			{
-				name: "secp256r1_k_eq_order_minus_one_is_negG",
-				inputStack: [][]byte{
-					bnBytes(p1x), bnBytes(p1y),
-					bnBytes(nP256Minus1),
-					bnBytesUint(uint64(CurveSecp256r1)),
-				},
-				expectedStack: [][]byte{bnBytes(p1x), bnBytes(p1negY)},
-			},
-			{
-				name: "alt_bn128_k_two",
-				inputStack: [][]byte{
-					bnBytes(bnGx), bnBytes(bnGy),
-					bnBytesUint(2),
-					bnBytesUint(uint64(CurveAltBN128)),
-				},
-				expectedStack: [][]byte{bnBytes(bnG2x), bnBytes(bnG2y)},
-			},
-			{
-				name: "alt_bn128_k_zero",
-				inputStack: [][]byte{
-					bnBytes(bnGx), bnBytes(bnGy),
-					zero,
-					bnBytesUint(uint64(CurveAltBN128)),
-				},
-				expectedStack: [][]byte{zero, zero},
-			},
-			{
-				name: "alt_bn128_k_eq_order_minus_one_is_negG",
-				inputStack: [][]byte{
-					bnBytes(bnGx), bnBytes(bnGy),
-					bnBytes(nBN254Minus1),
-					bnBytesUint(uint64(CurveAltBN128)),
-				},
-				expectedStack: [][]byte{bnBytes(bnGx), bnBytes(bnGnegY)},
-			},
-		},
-		invalidVectors: []opcodeVector{
-			{
-				name:          "underflow",
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "unsupported_curve_id",
-				inputStack: [][]byte{
-					zero, zero, zero, bnBytesUint(99),
-				},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "scalar_equal_to_group_order_secp256k1",
-				inputStack: [][]byte{
-					bnBytes(g1x), bnBytes(g1y),
-					bnBytes(nSecp256k1),
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "scalar_equal_to_group_order_secp256r1",
-				inputStack: [][]byte{
-					bnBytes(p1x), bnBytes(p1y),
-					bnBytes(nP256),
-					bnBytesUint(uint64(CurveSecp256r1)),
-				},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "scalar_equal_to_group_order_alt_bn128",
-				inputStack: [][]byte{
-					bnBytes(bnGx), bnBytes(bnGy),
-					bnBytes(nBN254),
-					bnBytesUint(uint64(CurveAltBN128)),
-				},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "negative_scalar",
-				inputStack: [][]byte{
-					bnBytes(g1x), bnBytes(g1y),
-					{0x81}, // -1
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "off_curve_secp256k1",
-				inputStack: [][]byte{
-					bnBytesUint(1), bnBytesUint(1),
-					bnBytesUint(1),
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "out_of_field_coordinate",
-				inputStack: [][]byte{
-					bnBytes(pSecp256k1), bnBytes(g1y),
-					bnBytesUint(1),
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedError: txscript.ErrInvalidStackOperation,
-			},
-			{
-				name: "non_minimal_scalar",
-				inputStack: [][]byte{
-					bnBytes(g1x), bnBytes(g1y),
-					{0x05, 0x00},
-					bnBytesUint(uint64(CurveSecp256k1)),
-				},
-				expectedError: txscript.ErrMinimalData,
-			},
-		},
-	}
-}
-
 // pairingTrueVectors returns a stack that encodes a valid pairing-product
 // check evaluating to true: e(G1, G2) * e(-G1, G2) == 1.
 func pairingTrueVectors(t *testing.T) [][]byte {
@@ -660,51 +668,6 @@ func pairingFalseVectors() [][]byte {
 		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
 	}
 	return stack
-}
-
-func TestECPairingTrueValid(t *testing.T) {
-	// Sanity check that the chosen vectors do form a valid e(G,G2)*e(-G,G2)=1.
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(pairingTrueVectors(t))
-	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
-	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
-}
-
-func TestECPairingFalseValid(t *testing.T) {
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(pairingFalseVectors())
-	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
-	require.Equal(t, [][]byte{nil}, vm.GetStack())
-}
-
-// pairingPropertyChecker is a relaxed version that does not require the
-// pushed boolean to round-trip through BigNumFromBytes — true is `{0x01}`,
-// false is `nil`, both consensus-canonical bool encodings.
-func pairingPropertyChecker() opcodePropertyChecker {
-	return func(t *testing.T, c opcodeCheckContext) {
-		t.Helper()
-		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
-		require.Equal(t, c.before.condStack, c.after.condStack)
-		if c.execErr != nil {
-			requireScriptErrorCodeIn(t, c.execErr,
-				txscript.ErrInvalidStackOperation,
-				txscript.ErrMinimalData,
-				txscript.ErrNumberTooBig,
-			)
-			return
-		}
-		// On success, the after-stack must have grown by exactly one item
-		// (a bool), and that item must be either `{0x01}` (true) or `{}` (false).
-		afterStack := c.after.GetStack()
-		require.NotEmpty(t, afterStack)
-		top := afterStack[len(afterStack)-1]
-		require.True(t, len(top) == 0 || (len(top) == 1 && top[0] == 0x01),
-			"OP_ECPAIRING pushed a non-canonical bool %x", top)
-	}
 }
 
 // ecPairingSpec builds the OP_ECPAIRING opcodeSpec.
@@ -799,231 +762,28 @@ func ecPairingSpec() *opcodeSpec {
 	}
 }
 
-// TestECPairingOffCurveG1 verifies that an off-curve G1 input fails execution.
-func TestECPairingOffCurveG1(t *testing.T) {
-	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
-	stack := [][]byte{
-		// G1 = (1, 1), not on curve
-		bnBytesUint(1), bnBytesUint(1),
-		bnBytes(g2xC1), bnBytes(g2xC0),
-		bnBytes(g2yC1), bnBytes(g2yC0),
-		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
-	}
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(stack)
-	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
-	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-}
-
-// TestECPairingOffCurveG2 verifies that an on-field but off-curve G2 input
-// fails execution. We construct an Fp2 element that we know is on the twist
-// (via MapToCurve2), then perturb its X coordinate so it leaves the curve.
-func TestECPairingOffCurveG2(t *testing.T) {
-	g1x, g1y := bn254G1Gen()
-	g2xC0, g2xC1, _, g2yC1 := bn254G2Gen()
-	// Use the real G2 X but a y that does not satisfy the curve equation.
-	// Setting yC0 = 0 in general breaks y² = x³ + b' for the generator.
-	stack := [][]byte{
-		bnBytes(g1x), bnBytes(g1y),
-		bnBytes(g2xC1), bnBytes(g2xC0),
-		bnBytes(g2yC1), []byte{}, // yC0 := 0
-		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
-	}
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(stack)
-	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
-	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-}
-
-// TestECPairingG2NotInSubgroup verifies that a G2 point on the twist but
-// outside the r-subgroup fails execution.
-func TestECPairingG2NotInSubgroup(t *testing.T) {
-	g1x, g1y := bn254G1Gen()
-	xc0, xc1, yc0, yc1 := nonSubgroupG2(t)
-	stack := [][]byte{
-		bnBytes(g1x), bnBytes(g1y),
-		bnBytes(xc1), bnBytes(xc0),
-		bnBytes(yc1), bnBytes(yc0),
-		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
-	}
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(stack)
-	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
-	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-}
-
-// TestECPairingOutOfFieldCoordinate covers the field-modulus boundary for
-// pairing coordinates on G1.
-func TestECPairingOutOfFieldCoordinate(t *testing.T) {
-	g1y := func() *big.Int { _, y := bn254G1Gen(); return y }()
-	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
-	mod := gnarkbn254fp.Modulus()
-	stack := [][]byte{
-		bnBytes(mod), bnBytes(g1y),
-		bnBytes(g2xC1), bnBytes(g2xC0),
-		bnBytes(g2yC1), bnBytes(g2yC0),
-		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
-	}
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(stack)
-	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
-	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-}
-
-// TestECPairingOutOfFieldG2Coordinate covers the field-modulus boundary for
-// each of the four G2 Fp2 components.
-func TestECPairingOutOfFieldG2Coordinate(t *testing.T) {
-	g1x, g1y := bn254G1Gen()
-	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
-	mod := gnarkbn254fp.Modulus()
-	cases := []struct {
-		name                       string
-		xC0, xC1, yC0, yC1 *big.Int
-	}{
-		{"g2_x_c0_eq_mod", mod, g2xC1, g2yC0, g2yC1},
-		{"g2_x_c1_eq_mod", g2xC0, mod, g2yC0, g2yC1},
-		{"g2_y_c0_eq_mod", g2xC0, g2xC1, mod, g2yC1},
-		{"g2_y_c1_eq_mod", g2xC0, g2xC1, g2yC0, mod},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			stack := [][]byte{
-				bnBytes(g1x), bnBytes(g1y),
-				bnBytes(tc.xC1), bnBytes(tc.xC0),
-				bnBytes(tc.yC1), bnBytes(tc.yC0),
-				bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
-			}
-			world := buildOpcodeWorld()
-			vm, err := newOpcodeEngine(world, 0)
-			require.NoError(t, err)
-			vm.SetStack(stack)
-			err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
-			requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-		})
-	}
-}
-
-// TestECPairingNegativeG2Coordinate confirms a negative BigNum in any G2
-// component fails execution.
-func TestECPairingNegativeG2Coordinate(t *testing.T) {
-	g1x, g1y := bn254G1Gen()
-	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
-	negOne := []byte{0x81} // canonical minimal encoding of -1
-	cases := []struct {
-		name string
-		xC0, xC1, yC0, yC1 []byte
-	}{
-		{"g2_x_c0_negative", negOne, bnBytes(g2xC1), bnBytes(g2yC0), bnBytes(g2yC1)},
-		{"g2_x_c1_negative", bnBytes(g2xC0), negOne, bnBytes(g2yC0), bnBytes(g2yC1)},
-		{"g2_y_c0_negative", bnBytes(g2xC0), bnBytes(g2xC1), negOne, bnBytes(g2yC1)},
-		{"g2_y_c1_negative", bnBytes(g2xC0), bnBytes(g2xC1), bnBytes(g2yC0), negOne},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			stack := [][]byte{
-				bnBytes(g1x), bnBytes(g1y),
-				tc.xC1, tc.xC0,
-				tc.yC1, tc.yC0,
-				bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
-			}
-			world := buildOpcodeWorld()
-			vm, err := newOpcodeEngine(world, 0)
-			require.NoError(t, err)
-			vm.SetStack(stack)
-			err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
-			requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-		})
-	}
-}
-
-// TestECPairingPairCountAtMax verifies that pair_count == maxECPairingCount
-// is accepted. Confirms the bound is `>` and not `>=`. The bundle of 16
-// pairs is 8 copies of {(G, G2), (-G, G2)} so the product is the identity
-// in GT and the opcode returns true.
-func TestECPairingPairCountAtMax(t *testing.T) {
-	g1x, g1y := bn254G1Gen()
-	negY := bn254G1NegY(g1y)
-	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
-	pair := func(x, y *big.Int) [][]byte {
-		return [][]byte{
-			bnBytes(x), bnBytes(y),
-			bnBytes(g2xC1), bnBytes(g2xC0),
-			bnBytes(g2yC1), bnBytes(g2yC0),
+// pairingPropertyChecker is a relaxed version that does not require the
+// pushed boolean to round-trip through BigNumFromBytes — true is `{0x01}`,
+// false is `nil`, both consensus-canonical bool encodings.
+func pairingPropertyChecker() opcodePropertyChecker {
+	return func(t *testing.T, c opcodeCheckContext) {
+		t.Helper()
+		require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
+		require.Equal(t, c.before.condStack, c.after.condStack)
+		if c.execErr != nil {
+			requireScriptErrorCodeIn(t, c.execErr,
+				txscript.ErrInvalidStackOperation,
+				txscript.ErrMinimalData,
+				txscript.ErrNumberTooBig,
+			)
+			return
 		}
+		// On success, the after-stack must have grown by exactly one item
+		// (a bool), and that item must be either `{0x01}` (true) or `{}` (false).
+		afterStack := c.after.GetStack()
+		require.NotEmpty(t, afterStack)
+		top := afterStack[len(afterStack)-1]
+		require.True(t, len(top) == 0 || (len(top) == 1 && top[0] == 0x01),
+			"OP_ECPAIRING pushed a non-canonical bool %x", top)
 	}
-	var stack [][]byte
-	for i := 0; i < maxECPairingCount/2; i++ {
-		stack = append(stack, pair(g1x, g1y)...)
-		stack = append(stack, pair(g1x, negY)...)
-	}
-	stack = append(stack,
-		bnBytesUint(uint64(maxECPairingCount)),
-		bnBytesUint(uint64(CurveAltBN128)),
-	)
-
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(stack)
-	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
-	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
-}
-
-// TestECPairingG2InfinityIsIdentity verifies that pairs containing the G2
-// point at infinity contribute the identity to the product, so a single
-// pair (P, 0_G2) produces a true result.
-func TestECPairingG2InfinityIsIdentity(t *testing.T) {
-	g1x, g1y := bn254G1Gen()
-	z := []byte(nil)
-	stack := [][]byte{
-		bnBytes(g1x), bnBytes(g1y),
-		z, z, // G2 x: c1=0, c0=0
-		z, z, // G2 y: c1=0, c0=0
-		bnBytesUint(1), bnBytesUint(uint64(CurveAltBN128)),
-	}
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-	vm.SetStack(stack)
-	require.NoError(t, invokeOpcodeWithData(OP_ECPAIRING, nil, vm))
-	require.Equal(t, [][]byte{{0x01}}, vm.GetStack())
-}
-
-// TestECPairingZeroPairCountRejected verifies that OP_ECPAIRING refuses a
-// pair_count of zero instead of vacuously pushing true.
-//
-// EIP-197 defines the empty pairing product as the identity, so an empty
-// input set is "true" there. Arkade Script has no such convention to honour:
-// OP_ECPAIRING exists to gate a covenant on a real pairing-product check, so
-// accepting zero pairs lets anyone satisfy that gate by supplying no pairs at
-// all, bypassing whatever the check was meant to enforce.
-func TestECPairingZeroPairCountRejected(t *testing.T) {
-	world := buildOpcodeWorld()
-	vm, err := newOpcodeEngine(world, 0)
-	require.NoError(t, err)
-
-	var zero []byte // pair_count = 0
-	vm.SetStack([][]byte{zero, bnBytesUint(uint64(CurveAltBN128))})
-
-	err = invokeOpcodeWithData(OP_ECPAIRING, nil, vm)
-	require.Error(t, err, "pair_count=0 must fail the script, not push true")
-	requireScriptErrorCode(t, err, txscript.ErrInvalidStackOperation)
-}
-
-// TestBN254PairingCheckRejectsEmpty pins the same rule one layer down, so the
-// vacuous-true cannot be reintroduced through bn254PairingCheck directly.
-func TestBN254PairingCheckRejectsEmpty(t *testing.T) {
-	_, err := bn254PairingCheck(nil)
-	require.Error(t, err)
-
-	_, err = bn254PairingCheck([]ecPair{})
-	require.Error(t, err)
 }

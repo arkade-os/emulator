@@ -21,21 +21,20 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/client"
+	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	"github.com/arkade-os/arkd/pkg/client-lib/identity"
+	singlekeywallet "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey"
+	inmemorystore "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey/store/inmemory"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	"github.com/arkade-os/go-sdk/explorer"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
-	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
-	"github.com/arkade-os/go-sdk/types"
-	"github.com/arkade-os/go-sdk/wallet"
-	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
-	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -48,11 +47,11 @@ import (
 type delegateBatchEventsHandler struct {
 	intentId       string
 	intent         emulatorclient.Intent
-	vtxosToForfeit []client.TapscriptsVtxo
+	vtxosToForfeit []types.VtxoWithTapTree
 	signerSession  tree.SignerSession
 	emulatorClient emulatorclient.TransportClient
-	wallet         wallet.WalletService
-	client         client.TransportClient
+	wallet         identity.Identity
+	client         client.Client
 	explorer       explorer.Explorer
 
 	forfeitAddress string
@@ -63,22 +62,22 @@ type delegateBatchEventsHandler struct {
 
 func (h *delegateBatchEventsHandler) OnBatchStarted(
 	ctx context.Context, event client.BatchStartedEvent,
-) (bool, error) {
+) (bool, time.Duration, error) {
 	buf := sha256.Sum256([]byte(h.intentId))
 	hashedIntentId := hex.EncodeToString(buf[:])
 
 	for _, hash := range event.HashedIntentIds {
 		if hash == hashedIntentId {
 			if err := h.client.ConfirmRegistration(ctx, h.intentId); err != nil {
-				return false, err
+				return false, -1, err
 			}
 			h.cacheBatchId = event.Id
 			h.batchExpiry = getBatchExpiryLocktime(uint32(event.BatchExpiry))
-			return false, nil
+			return false, time.Duration(event.BatchExpiry) * time.Second, nil
 		}
 	}
 
-	return true, nil
+	return true, -1, nil
 }
 
 func (h *delegateBatchEventsHandler) OnBatchFinalized(
@@ -197,33 +196,33 @@ func (h *delegateBatchEventsHandler) OnTreeNoncesAggregated(
 func (h *delegateBatchEventsHandler) OnBatchFinalization(
 	ctx context.Context, event client.BatchFinalizationEvent,
 	vtxoTree, connectorTree *tree.TxTree,
-) error {
+) ([]string, error) {
 	if len(h.vtxosToForfeit) <= 0 {
-		return nil
+		return nil, nil
 	}
 
 	if connectorTree == nil {
-		return fmt.Errorf("connector tree is nil")
+		return nil, fmt.Errorf("connector tree is nil")
 	}
 
 	forfeits, err := h.createAndSignForfeits(ctx, h.vtxosToForfeit, connectorTree.Leaves())
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	flatConnectorTree, err := connectorTree.Serialize()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	signedForfeits, signedCommitmentTx, err := h.emulatorClient.SubmitFinalization(
 		ctx, h.intent, forfeits, flatConnectorTree, event.Tx,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return h.client.SubmitSignedForfeitTxs(ctx, signedForfeits, signedCommitmentTx)
+	return signedForfeits, h.client.SubmitSignedForfeitTxs(ctx, signedForfeits, signedCommitmentTx)
 }
 
 func (h *delegateBatchEventsHandler) OnStreamStarted(_ context.Context, _ client.StreamStartedEvent) error {
@@ -231,7 +230,7 @@ func (h *delegateBatchEventsHandler) OnStreamStarted(_ context.Context, _ client
 }
 
 func (h *delegateBatchEventsHandler) createAndSignForfeits(
-	ctx context.Context, vtxosToSign []client.TapscriptsVtxo, connectorsLeaves []*psbt.Packet,
+	ctx context.Context, vtxosToSign []types.VtxoWithTapTree, connectorsLeaves []*psbt.Packet,
 ) ([]string, error) {
 	parsedForfeitAddr, err := btcutil.DecodeAddress(h.forfeitAddress, nil)
 	if err != nil {
@@ -348,7 +347,7 @@ func (h *delegateBatchEventsHandler) createAndSignForfeits(
 			return nil, err
 		}
 
-		signedForfeitTx, err := h.wallet.SignTransaction(ctx, h.explorer, b64)
+		signedForfeitTx, err := h.wallet.SignTransaction(ctx, b64, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -361,44 +360,44 @@ func (h *delegateBatchEventsHandler) createAndSignForfeits(
 
 type boardingBatchEventsHandler struct {
 	*delegateBatchEventsHandler
-	boardingVtxo client.TapscriptsVtxo
+	boardingVtxo types.VtxoWithTapTree
 }
 
 func (h *boardingBatchEventsHandler) OnBatchFinalization(
 	ctx context.Context, event client.BatchFinalizationEvent,
 	vtxoTree, connectorTree *tree.TxTree,
-) error {
+) ([]string, error) {
 	commitmentPtx, err := psbt.NewFromRawBytes(strings.NewReader(event.Tx), true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	boardingVtxoScript, err := script.ParseVtxoScript(h.boardingVtxo.Tapscripts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	forfeitClosures := boardingVtxoScript.ForfeitClosures()
 	if len(forfeitClosures) <= 0 {
-		return fmt.Errorf("no forfeit closures found")
+		return nil, fmt.Errorf("no forfeit closures found")
 	}
 
 	forfeitClosure := forfeitClosures[0]
 
 	forfeitScript, err := forfeitClosure.Script()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	_, taprootTree, err := boardingVtxoScript.TapTree()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	forfeitLeaf := txscript.NewBaseTapLeaf(forfeitScript)
 	forfeitProof, err := taprootTree.GetTaprootMerkleProof(forfeitLeaf.TapHash())
 	if err != nil {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"failed to get taproot merkle proof for boarding utxo: %s", err,
 		)
 	}
@@ -423,22 +422,22 @@ func (h *boardingBatchEventsHandler) OnBatchFinalization(
 
 	b64, err := commitmentPtx.B64Encode()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	signedCommitmentTx, err := h.wallet.SignTransaction(ctx, h.explorer, b64)
+	signedCommitmentTx, err := h.wallet.SignTransaction(ctx, b64, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	_, signedCommitmentTx, err = h.emulatorClient.SubmitFinalization(
 		ctx, h.intent, []string{}, nil, signedCommitmentTx,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return h.client.SubmitSignedForfeitTxs(ctx, []string{}, signedCommitmentTx)
+	return nil, h.client.SubmitSignedForfeitTxs(ctx, []string{}, signedCommitmentTx)
 }
 
 func getBatchExpiryLocktime(expiry uint32) arklib.RelativeLocktime {
@@ -449,20 +448,17 @@ func getBatchExpiryLocktime(expiry uint32) arklib.RelativeLocktime {
 }
 
 // setupWallet creates and unlocks a new wallet
-func setupWallet(t *testing.T, ctx context.Context) (wallet.WalletService, *btcec.PrivateKey, *btcec.PublicKey) {
+func setupWallet(t *testing.T, ctx context.Context) (identity.Identity, *btcec.PrivateKey, *btcec.PublicKey) {
 	privKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	configStore, err := inmemorystoreconfig.NewConfigStore()
+	walletStore, err := inmemorystore.NewStore()
 	require.NoError(t, err)
 
-	walletStore, err := inmemorystore.NewWalletStore()
+	wallet, err := singlekeywallet.NewIdentity(walletStore)
 	require.NoError(t, err)
 
-	wallet, err := singlekeywallet.NewBitcoinWallet(configStore, walletStore)
-	require.NoError(t, err)
-
-	_, err = wallet.Create(ctx, password, hex.EncodeToString(privKey.Serialize()))
+	_, err = wallet.Create(ctx, chaincfg.RegressionNetParams, password, hex.EncodeToString(privKey.Serialize()))
 	require.NoError(t, err)
 
 	_, err = wallet.Unlock(ctx, password)
@@ -473,9 +469,8 @@ func setupWallet(t *testing.T, ctx context.Context) (wallet.WalletService, *btce
 
 // fundAndSettleAlice funds alice's account via boarding and settles
 // sends 1$
-func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.ArkClient, amount int64) *arklib.Address {
-	_, offchainAddr, boardingAddress, err := alice.Receive(ctx)
-	require.NoError(t, err)
+func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.Wallet, amount int64) *arklib.Address {
+	offchainAddr, boardingAddress := receive(t, alice)
 
 	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
 	require.NoError(t, err)
@@ -485,7 +480,10 @@ func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.ArkClien
 	_, err = runCommand("nigiri", "faucet", boardingAddress, amountBtc)
 	require.NoError(t, err)
 
-	time.Sleep(5 * time.Second)
+	require.Eventually(t, func() bool {
+		balance, err := alice.Balance(ctx)
+		return err == nil && balance.OnchainBalance.Total > 0
+	}, 30*time.Second, 500*time.Millisecond, "boarding utxo not detected by wallet")
 
 	_, err = alice.Settle(ctx)
 	require.NoError(t, err)
@@ -511,7 +509,7 @@ func encodeCheckpoints(t *testing.T, checkpoints []*psbt.Packet) []string {
 func buildWalletFundedTx(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.ArkClient,
+	alice arksdk.Wallet,
 	indexerSvc indexer.Indexer,
 	alicePubKey *btcec.PublicKey,
 	serverSigner *btcec.PublicKey,
@@ -539,7 +537,7 @@ func buildWalletFundedTx(
 
 	fundingPkScript, err := script.P2TRScript(fundingTapKey)
 	require.NoError(t, err)
-	spendableVtxos, _, err := alice.ListVtxos(ctx)
+	spendableVtxos, _, err := alice.ListVtxos(ctx, arksdk.WithSpendableOnly())
 	require.NoError(t, err)
 
 	var fundingVtxo types.Vtxo
@@ -599,18 +597,15 @@ func submitWithArkd(
 	ctx context.Context,
 	candidateTx *psbt.Packet,
 	checkpoints []*psbt.Packet,
-	walletSvc wallet.WalletService,
-	grpcClient client.TransportClient,
+	walletSvc identity.Identity,
+	grpcClient client.Client,
 ) {
 	t.Helper()
-
-	explorerSvc, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
 
 	encodedTx, err := candidateTx.B64Encode()
 	require.NoError(t, err)
 
-	signedTx, err := walletSvc.SignTransaction(ctx, explorerSvc, encodedTx)
+	signedTx, err := walletSvc.SignTransaction(ctx, encodedTx, nil)
 	require.NoError(t, err)
 
 	txid, _, signedCheckpoints, err := grpcClient.SubmitTx(ctx, signedTx, encodeCheckpoints(t, checkpoints))
@@ -620,7 +615,7 @@ func submitWithArkd(
 
 	finalCheckpoints := make([]string, 0, len(signedCheckpoints))
 	for _, checkpoint := range signedCheckpoints {
-		signedCheckpoint, err := walletSvc.SignTransaction(ctx, explorerSvc, checkpoint)
+		signedCheckpoint, err := walletSvc.SignTransaction(ctx, checkpoint, nil)
 		require.NoError(t, err)
 		finalCheckpoints = append(finalCheckpoints, signedCheckpoint)
 	}
@@ -650,17 +645,14 @@ func watchForPreconfirmedVtxos(
 		wantedVouts[vout] = struct{}{}
 	}
 
-	subId, err := indexerSvc.SubscribeForScripts(ctx, "", hexScripts)
-	require.NoError(t, err)
-
-	eventCh, closeFn, err := indexerSvc.GetSubscription(ctx, subId)
+	subId, eventCh, closeFn, err := indexerSvc.NewSubscription(ctx, hexScripts)
 	require.NoError(t, err)
 
 	return func() {
 		t.Helper()
 		defer func() {
 			// nolint:errcheck
-			indexerSvc.UnsubscribeForScripts(ctx, subId, hexScripts)
+			indexerSvc.UpdateSubscription(ctx, subId, nil, hexScripts)
 			closeFn()
 		}()
 
@@ -676,7 +668,10 @@ func watchForPreconfirmedVtxos(
 					return
 				}
 				require.NoError(t, event.Err)
-				for _, v := range event.NewVtxos {
+				if event.Data == nil {
+					continue
+				}
+				for _, v := range event.Data.NewVtxos {
 					if v.Txid != txid {
 						continue
 					}
@@ -888,7 +883,7 @@ type recordingIndexer struct {
 }
 
 func (i *recordingIndexer) GetVirtualTxs(
-	ctx context.Context, txids []string, opts ...indexer.RequestOption,
+	ctx context.Context, txids []string, opts ...indexer.PageOption,
 ) (*indexer.VirtualTxsResponse, error) {
 	response, err := i.Indexer.GetVirtualTxs(ctx, txids, opts...)
 	if err != nil {
@@ -1332,4 +1327,14 @@ func randomP2TRScript(t *testing.T) []byte {
 	require.NoError(t, err)
 
 	return pkScript
+}
+
+// receive returns a fresh offchain and boarding address for the wallet.
+func receive(t *testing.T, w arksdk.Wallet) (offchainAddr, boardingAddr string) {
+	t.Helper()
+	offchainAddr, err := w.NewOffchainAddress(t.Context())
+	require.NoError(t, err)
+	boardingAddr, err = w.NewBoardingAddress(t.Context())
+	require.NoError(t, err)
+	return offchainAddr, boardingAddr
 }

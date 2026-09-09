@@ -8,11 +8,11 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	"github.com/arkade-os/arkd/pkg/client-lib/client"
+	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client/grpc"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer/grpc"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/arkade-os/go-sdk/client"
-	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
-	"github.com/arkade-os/go-sdk/indexer"
-	grpcindexer "github.com/arkade-os/go-sdk/indexer/grpc"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	log "github.com/sirupsen/logrus"
@@ -72,7 +72,7 @@ type service struct {
 	deprecatedKeysValidUntil *time.Time
 	publicKey                string
 	deprecatedPublicKeys     []string
-	arkdClient               client.TransportClient
+	arkdClient               client.Client
 	arkdPubKey               *btcec.PublicKey
 	indexerClient            indexer.Indexer
 	computeLimits            arkade.ComputeLimits
@@ -103,7 +103,7 @@ func New(ctx context.Context, version string, secretKey *btcec.PrivateKey, depre
 
 	clientVersion := xSdkVersionValue(version)
 
-	arkdClient, err := grpcclient.NewClient(arkdURL)
+	arkdClient, err := grpcclient.NewClient(arkdURL, clientVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create arkd client: %w", err)
 	}

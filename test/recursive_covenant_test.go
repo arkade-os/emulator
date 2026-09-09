@@ -8,9 +8,8 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -43,8 +42,7 @@ func TestRecursivePolicy(t *testing.T) {
 	// Fund Alice so she can send to Bob's policy VTXOs.
 	_ = fundAndSettleAlice(t, ctx, alice, 2*policyAmount)
 
-	_, bobOffchainAddr, _, err := bob.Receive(ctx)
-	require.NoError(t, err)
+	bobOffchainAddr, _ := receive(t, bob)
 
 	bobAddr, err := arklib.DecodeAddressV0(bobOffchainAddr)
 	require.NoError(t, err)
@@ -179,16 +177,13 @@ func TestRecursivePolicy(t *testing.T) {
 	alicePkScript, err := txscript.PayToTaprootScript(alicePubKey)
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
 	submitAndFinalize := func(candidateTx *psbt.Packet, checkpoints []*psbt.Packet) {
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0, 1)
 
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 
 		signedCheckpoints := make([]string, 0, len(checkpoints))
@@ -196,7 +191,7 @@ func TestRecursivePolicy(t *testing.T) {
 			encoded, err := cp.B64Encode()
 			require.NoError(t, err)
 
-			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
@@ -225,7 +220,7 @@ func TestRecursivePolicy(t *testing.T) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 
 		signedCheckpoints := make([]string, 0, len(checkpoints))
@@ -233,7 +228,7 @@ func TestRecursivePolicy(t *testing.T) {
 			encoded, err := cp.B64Encode()
 			require.NoError(t, err)
 
-			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}

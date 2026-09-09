@@ -164,8 +164,8 @@ func TestOpCheckSigECDSAExplicitSighashByte(t *testing.T) {
 	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{nil}, 2_000_000)
 	digest := arkadeDigest(t, &engine.tx, 0, engine.prevOutFetcher,
 		leaf, txscript.SigHashAll)
-	engine.tx.TxIn[0].Witness[0] = append(
-		ecdsaK1Compact(t, priv, digest), byte(txscript.SigHashAll))
+	engine.SetStack(wire.TxWitness{append(
+		ecdsaK1Compact(t, priv, digest), byte(txscript.SigHashAll))})
 	require.NoError(t, engine.Execute())
 }
 
@@ -271,7 +271,7 @@ func checkSigLeafECDSA(t *testing.T, extendedPubKey []byte,
 	engine := runTapscriptLeaf(t, leaf, wire.TxWitness{nil}, 2_000_000)
 	digest := arkadeDigest(t, &engine.tx, 0, engine.prevOutFetcher,
 		leaf, txscript.SigHashDefault)
-	engine.tx.TxIn[0].Witness[0] = signCompact(digest)
+	engine.SetStack(wire.TxWitness{signCompact(digest)})
 	return engine.Execute()
 }
 

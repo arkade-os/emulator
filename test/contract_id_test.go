@@ -2,6 +2,7 @@ package test
 
 import (
 	"encoding/hex"
+	arksdk "github.com/arkade-os/go-sdk"
 	"strings"
 	"testing"
 
@@ -10,9 +11,8 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/types"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -56,9 +56,6 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	require.NoError(t, err)
 
 	indexerSvc := setupIndexer(t)
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
 	// Recipient for the reader's value after the co-spend.
 	recipientKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
@@ -81,7 +78,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		signedTx, err := aliceWallet.SignTransaction(ctx, explorer, encodedTx)
+		signedTx, err := aliceWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 
 		txid, _, signedCheckpoints, err := grpcClient.SubmitTx(ctx, signedTx, encodeCheckpoints(checkpoints))
@@ -91,7 +88,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 
 		finalCheckpoints := make([]string, 0, len(signedCheckpoints))
 		for _, checkpoint := range signedCheckpoints {
-			signedCheckpoint, err := aliceWallet.SignTransaction(ctx, explorer, checkpoint)
+			signedCheckpoint, err := aliceWallet.SignTransaction(ctx, checkpoint, nil)
 			require.NoError(t, err)
 			finalCheckpoints = append(finalCheckpoints, signedCheckpoint)
 		}
@@ -148,7 +145,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 
 	fundingPkScript, err := script.P2TRScript(fundingTapKey)
 	require.NoError(t, err)
-	spendableVtxos, _, err := alice.ListVtxos(ctx)
+	spendableVtxos, _, err := alice.ListVtxos(ctx, arksdk.WithSpendableOnly())
 	require.NoError(t, err)
 
 	var fundingVtxo types.Vtxo

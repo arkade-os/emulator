@@ -10,16 +10,15 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
+	singlekeywallet "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey"
+	inmemorystore "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey/store/inmemory"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
-	"github.com/arkade-os/go-sdk/types"
-	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
-	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
@@ -48,16 +47,13 @@ func TestPayToTwoOutputs(t *testing.T) {
 	bobPrivKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	configStore, err := inmemorystoreconfig.NewConfigStore()
+	walletStore, err := inmemorystore.NewStore()
 	require.NoError(t, err)
 
-	walletStore, err := inmemorystore.NewWalletStore()
+	bobWallet, err := singlekeywallet.NewIdentity(walletStore)
 	require.NoError(t, err)
 
-	bobWallet, err := singlekeywallet.NewBitcoinWallet(configStore, walletStore)
-	require.NoError(t, err)
-
-	_, err = bobWallet.Create(ctx, password, hex.EncodeToString(bobPrivKey.Serialize()))
+	_, err = bobWallet.Create(ctx, chaincfg.RegressionNetParams, password, hex.EncodeToString(bobPrivKey.Serialize()))
 	require.NoError(t, err)
 
 	_, err = bobWallet.Unlock(ctx, password)
@@ -66,8 +62,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	bobPubKey := bobPrivKey.PubKey()
 
 	// --- Fund Alice ---
-	_, offchainAddr, boardingAddress, err := alice.Receive(ctx)
-	require.NoError(t, err)
+	offchainAddr, boardingAddress := receive(t, alice)
 
 	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
 	require.NoError(t, err)
@@ -229,9 +224,6 @@ func TestPayToTwoOutputs(t *testing.T) {
 		RevealedTapscripts: []string{hex.EncodeToString(arkadeTapscript)},
 	}
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
 	// ========================================
 	// CASE 1: Invalid — wrong address on output 0
 	// ========================================
@@ -252,14 +244,14 @@ func TestPayToTwoOutputs(t *testing.T) {
 	encodedInvalidAddrTx, err := invalidAddrTx.B64Encode()
 	require.NoError(t, err)
 
-	signedInvalidAddrTx, err := bobWallet.SignTransaction(ctx, explorer, encodedInvalidAddrTx)
+	signedInvalidAddrTx, err := bobWallet.SignTransaction(ctx, encodedInvalidAddrTx, nil)
 	require.NoError(t, err)
 
 	encodedInvalidAddrCheckpoints := make([]string, 0, len(invalidAddrCheckpoints))
 	for _, cp := range invalidAddrCheckpoints {
 		encoded, err := cp.B64Encode()
 		require.NoError(t, err)
-		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 		encodedInvalidAddrCheckpoints = append(encodedInvalidAddrCheckpoints, signed)
 	}
@@ -287,14 +279,14 @@ func TestPayToTwoOutputs(t *testing.T) {
 	encodedInvalidAmtTx, err := invalidAmtTx.B64Encode()
 	require.NoError(t, err)
 
-	signedInvalidAmtTx, err := bobWallet.SignTransaction(ctx, explorer, encodedInvalidAmtTx)
+	signedInvalidAmtTx, err := bobWallet.SignTransaction(ctx, encodedInvalidAmtTx, nil)
 	require.NoError(t, err)
 
 	encodedInvalidAmtCheckpoints := make([]string, 0, len(invalidAmtCheckpoints))
 	for _, cp := range invalidAmtCheckpoints {
 		encoded, err := cp.B64Encode()
 		require.NoError(t, err)
-		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 		encodedInvalidAmtCheckpoints = append(encodedInvalidAmtCheckpoints, signed)
 	}
@@ -322,14 +314,14 @@ func TestPayToTwoOutputs(t *testing.T) {
 	encodedValidTx, err := validTx.B64Encode()
 	require.NoError(t, err)
 
-	signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedValidTx)
+	signedTx, err := bobWallet.SignTransaction(ctx, encodedValidTx, nil)
 	require.NoError(t, err)
 
 	encodedValidCheckpoints := make([]string, 0, len(validCheckpoints))
 	for _, cp := range validCheckpoints {
 		encoded, err := cp.B64Encode()
 		require.NoError(t, err)
-		signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+		signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 		require.NoError(t, err)
 		encodedValidCheckpoints = append(encodedValidCheckpoints, signed)
 	}

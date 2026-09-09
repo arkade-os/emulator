@@ -1,7 +1,9 @@
 package application
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +11,8 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -70,7 +74,14 @@ func TestValidateMessage(t *testing.T) {
 // yielding a signature bound to a script that was never executed for it.
 func TestSubmitIntentMessageInputBinding(t *testing.T) {
 	signerKey := newResolverPrivateKey(t)
-	arkadeScript := []byte{txscript.OP_TRUE}
+	arkadeScript, err := txscript.NewScriptBuilder().
+		AddData([]byte("type")).
+		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
+		AddOp(txscript.OP_VERIFY).
+		AddData([]byte(intent.IntentMessageTypeRegister)).
+		AddOp(txscript.OP_EQUAL).
+		Script()
+	require.NoError(t, err)
 	tweaked := arkade.ComputeArkadeScriptPublicKey(
 		signerKey.PubKey(), arkade.ArkadeScriptHash(arkadeScript),
 	)
@@ -113,6 +124,33 @@ func TestSubmitIntentMessageInputBinding(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestValidateIntentMessageCommitment(t *testing.T) {
+	message, encoded := testRegisterMessage(t)
+	ptx := newIntentProof(
+		t, []intentVtxo{{}, {pkScript: []byte{txscript.OP_TRUE}}},
+		arkade.EmulatorEntry{Vin: 1, Script: []byte{txscript.OP_TRUE}},
+	)
+	ptx.Inputs[1].WitnessUtxo = &wire.TxOut{Value: 1, PkScript: []byte{txscript.OP_TRUE}}
+	bindIntentProofToMessage(t, ptx, encoded)
+
+	request := Intent{
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: message,
+	}
+	require.NoError(t, validateIntentMessageCommitment(request, encoded))
+
+	// a proof bound to non-canonical bytes fails the outpoint comparison
+	require.ErrorContains(t,
+		validateIntentMessageCommitment(request, " "+encoded), "synthetic message input")
+	require.ErrorContains(t, validateIntentMessageCommitment(request, strings.Replace(
+		encoded, `"expire_at":`, `"expire_at":1,"expire_at":`, 1,
+	)), "synthetic message input")
+
+	request.Proof.UnsignedTx.TxIn[0].PreviousOutPoint.Hash[0] ^= 0xff
+	require.ErrorContains(t,
+		validateIntentMessageCommitment(request, encoded), "synthetic message input")
 }
 
 func TestSubmitIntentRejectsOnchainOutputsBeforeSigning(t *testing.T) {
@@ -205,11 +243,109 @@ func submitTestIntent(
 ) (*psbt.Packet, error) {
 	t.Helper()
 
+	message, encoded := testRegisterMessage(t)
+	if len(ptx.Inputs) > 1 && ptx.Inputs[1].WitnessUtxo != nil {
+		bindIntentProofToMessage(t, ptx, encoded)
+	}
 	svc := &service{signer: signer{signerKey}}
 	return svc.SubmitIntent(t.Context(), Intent{
 		Proof:   intent.Proof{Packet: *ptx},
-		Message: &intent.RegisterMessage{ExpireAt: time.Now().Add(time.Hour).Unix()},
+		Message: message,
 	})
+}
+
+func TestExpiryForScriptOnlyQueriesIndexerForPushExpiry(t *testing.T) {
+	calls := 0
+	svc := &service{indexerClient: expiryIndexer{calls: &calls}}
+	txid := chainhash.Hash{}.String()
+
+	pushedOpcode, err := txscript.NewScriptBuilder().
+		AddData([]byte{arkade.OP_PUSHEXPIRY}).Script()
+	require.NoError(t, err)
+
+	for _, script := range [][]byte{{txscript.OP_TRUE}, pushedOpcode} {
+		_, err := svc.expiryForScript(t.Context(), script, txid, 0)
+		require.NoError(t, err)
+	}
+	require.Zero(t, calls)
+
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "not found")
+	require.Equal(t, 1, calls)
+
+	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
+		Outpoint:  types.Outpoint{Txid: chainhash.Hash{1}.String()},
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}}
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "not found")
+
+	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
+		Outpoint: types.Outpoint{Txid: txid},
+	}}}
+	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	require.ErrorContains(t, err, "has no expiry")
+}
+
+func TestSubmitIntentPushExpiry(t *testing.T) {
+	signerKey := newResolverPrivateKey(t)
+	expiresAt := time.Now().Add(time.Minute).Truncate(time.Second)
+	script, err := txscript.NewScriptBuilder().
+		AddOp(arkade.OP_PUSHEXPIRY).AddInt64(expiresAt.Unix()).AddOp(txscript.OP_EQUALVERIFY).
+		AddOp(txscript.OP_TRUE).Script()
+	require.NoError(t, err)
+	tweaked := arkade.ComputeArkadeScriptPublicKey(
+		signerKey.PubKey(), arkade.ArkadeScriptHash(script),
+	)
+	owned := newIntentVtxo(t, tweaked)
+	ptx := newIntentProof(
+		t, []intentVtxo{owned, owned}, arkade.EmulatorEntry{Vin: 1, Script: script},
+	)
+	outpoint := ptx.UnsignedTx.TxIn[1].PreviousOutPoint
+	message, encoded := testRegisterMessage(t)
+	bindIntentProofToMessage(t, ptx, encoded)
+
+	svc := &service{
+		signer: signer{signerKey},
+		indexerClient: expiryIndexer{vtxos: []types.Vtxo{{
+			Outpoint:  types.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
+			ExpiresAt: expiresAt,
+		}}},
+	}
+	signed, err := svc.SubmitIntent(t.Context(), Intent{
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: message,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, signed.Inputs[1].TaprootScriptSpendSig)
+}
+
+func testRegisterMessage(t *testing.T) (*intent.RegisterMessage, string) {
+	t.Helper()
+	message := &intent.RegisterMessage{
+		BaseMessage: intent.BaseMessage{Type: intent.IntentMessageTypeRegister},
+		ExpireAt:    time.Now().Add(time.Hour).Unix(),
+	}
+	encoded, err := message.Encode()
+	require.NoError(t, err)
+	return message, encoded
+}
+
+func bindIntentProofToMessage(t *testing.T, ptx *psbt.Packet, encoded string) {
+	t.Helper()
+	require.GreaterOrEqual(t, len(ptx.UnsignedTx.TxIn), 2)
+	require.GreaterOrEqual(t, len(ptx.Inputs), 2)
+	require.NotNil(t, ptx.Inputs[1].WitnessUtxo)
+
+	firstInput := ptx.UnsignedTx.TxIn[1]
+	expected, err := intent.New(encoded, []intent.Input{{
+		OutPoint:    &firstInput.PreviousOutPoint,
+		Sequence:    firstInput.Sequence,
+		WitnessUtxo: ptx.Inputs[1].WitnessUtxo,
+	}}, nil)
+	require.NoError(t, err)
+	ptx.UnsignedTx.TxIn[0].PreviousOutPoint = expected.UnsignedTx.TxIn[0].PreviousOutPoint
 }
 
 // intentVtxo is a taproot coin with a single multisig closure, enough for the
@@ -305,4 +441,19 @@ func newIntentProof(
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 
 	return ptx
+}
+
+type expiryIndexer struct {
+	indexer.Indexer
+	calls *int
+	vtxos []types.Vtxo
+}
+
+func (e expiryIndexer) GetVtxos(
+	context.Context, ...indexer.GetVtxosOption,
+) (*indexer.VtxosResponse, error) {
+	if e.calls != nil {
+		(*e.calls)++
+	}
+	return &indexer.VtxosResponse{Vtxos: e.vtxos}, nil
 }

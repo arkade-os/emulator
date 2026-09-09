@@ -72,6 +72,14 @@ func (defaultCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzC
 	return c
 }
 
+type putCaseBuilder struct{}
+
+func (putCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
+	c := defaultCaseBuilder{}.Build(data, world)
+	c.stackPushes = [][]byte{saltedBytes(data, 0x70), saltedBytes(data, 0x71), nil}
+	return c
+}
+
 type indexCaseBuilder struct {
 	isOut bool
 }
@@ -136,6 +144,19 @@ func (inputPacketCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeF
 		}
 	}
 	c.stackPushes = [][]byte{packetType.Bytes(), scriptNum(inputIdx).Bytes()}
+	return c
+}
+
+type tunnelCaseBuilder struct{}
+
+func (tunnelCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcodeFuzzCase {
+	c := defaultCaseBuilder{}.Build(data, world)
+	outputIndex := int64(0)
+	if len(world.world.tx.TxOut) > 0 {
+		outputIndex = int64(data[0] % uint8(len(world.world.tx.TxOut)))
+	}
+	flags := int64(data[1]%tunnelFlags) + 1
+	c.stackPushes = tunnelStack(outputIndex, flags)
 	return c
 }
 
@@ -364,6 +385,7 @@ func (b assetLookupCaseBuilder) Build(data []byte, world *opcodeFuzzWorld) opcod
 }
 
 var fuzzCaseBuilders = [256]fuzzCaseBuilder{
+	OP_PUT:                           putCaseBuilder{},
 	OP_INSPECTINPUTOUTPOINT:          indexCaseBuilder{},
 	OP_INSPECTINPUTSEQUENCE:          indexCaseBuilder{},
 	OP_INSPECTINPUTSCRIPTPUBKEY:      indexCaseBuilder{},
@@ -379,6 +401,7 @@ var fuzzCaseBuilders = [256]fuzzCaseBuilder{
 	OP_CHECKSIGVERIFY:                taprootCheckSigCaseBuilder{},
 	OP_CHECKSIGADD:                   taprootCheckSigAddCaseBuilder{},
 	OP_SIGHASH:                       sighashCaseBuilder{},
+	OP_TUNNEL:                        tunnelCaseBuilder{},
 	OP_FINDASSETGROUPBYASSETID:       assetIDLookupCaseBuilder{},
 	OP_INSPECTASSETGROUPASSETID:      assetGroupCaseBuilder{},
 	OP_INSPECTASSETGROUPCTRL:         assetGroupCaseBuilder{},
@@ -940,7 +963,6 @@ func cloneEngineForExpectedResult(vm *Engine) *Engine {
 		clone.condStack = make([]int, len(vm.condStack))
 		copy(clone.condStack, vm.condStack)
 	}
-	clone.witnessProgram = cloneBytes(vm.witnessProgram)
 	clone.dstack = cloneStack(vm.dstack)
 	clone.astack = cloneStack(vm.astack)
 	clone.emulatorPacket = cloneEmulatorPacket(vm.emulatorPacket)

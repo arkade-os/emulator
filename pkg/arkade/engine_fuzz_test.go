@@ -131,8 +131,7 @@ func fuzzMsgTxWithTaprootScriptPath(t *testing.T, fz *fuzz.ConsumeFuzzer) (wire.
 		outCount = int(b % 4)
 	}
 
-	// Step 2: Force script-path-shaped witnesses so valid indices land in the
-	// default branch of verifyWitnessProgram instead of the key-spend branch.
+	// Step 2: Build script-path-shaped witnesses.
 	tx.TxIn = make([]*wire.TxIn, inCount)
 	for i := range tx.TxIn {
 		in := &wire.TxIn{}

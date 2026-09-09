@@ -11,15 +11,15 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/client"
+	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	"github.com/arkade-os/arkd/pkg/client-lib/identity"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	"github.com/arkade-os/go-sdk/explorer"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
-	"github.com/arkade-os/go-sdk/types"
-	"github.com/arkade-os/go-sdk/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -357,10 +357,10 @@ func TestCrossInputScriptValidation(t *testing.T) {
 // crossInputTestEnv bundles the services and common fixtures used by the test.
 type crossInputTestEnv struct {
 	ctx                   context.Context
-	alice                 arksdk.ArkClient
-	bobWallet             wallet.WalletService
+	alice                 arksdk.Wallet
+	bobWallet             identity.Identity
 	bobPubKey             *btcec.PublicKey
-	grpcBob               client.TransportClient
+	grpcBob               client.Client
 	aliceAddr             *arklib.Address
 	emulatorClient        emulatorclient.TransportClient
 	emulatorPubKey        *btcec.PublicKey
@@ -937,7 +937,7 @@ func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *
 	encodedTx, err := candidateTx.B64Encode()
 	require.NoError(t, err)
 
-	signedTx, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encodedTx)
+	signedTx, err := env.bobWallet.SignTransaction(env.ctx, encodedTx, nil)
 	require.NoError(t, err)
 
 	signedCheckpoints := make([]string, 0, len(checkpoints))
@@ -945,7 +945,7 @@ func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *
 		encoded, err := checkpoint.B64Encode()
 		require.NoError(t, err)
 
-		signed, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encoded)
+		signed, err := env.bobWallet.SignTransaction(env.ctx, encoded, nil)
 		require.NoError(t, err)
 		signedCheckpoints = append(signedCheckpoints, signed)
 	}
@@ -966,7 +966,7 @@ func (env *crossInputTestEnv) submitAndFinalize(t *testing.T, candidateTx *psbt.
 	encodedTx, err := candidateTx.B64Encode()
 	require.NoError(t, err)
 
-	signedTx, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encodedTx)
+	signedTx, err := env.bobWallet.SignTransaction(env.ctx, encodedTx, nil)
 	require.NoError(t, err)
 
 	signedCheckpoints := make([]string, 0, len(checkpoints))
@@ -974,7 +974,7 @@ func (env *crossInputTestEnv) submitAndFinalize(t *testing.T, candidateTx *psbt.
 		encoded, err := checkpoint.B64Encode()
 		require.NoError(t, err)
 
-		signed, err := env.bobWallet.SignTransaction(env.ctx, env.explorer, encoded)
+		signed, err := env.bobWallet.SignTransaction(env.ctx, encoded, nil)
 		require.NoError(t, err)
 		signedCheckpoints = append(signedCheckpoints, signed)
 	}

@@ -5,11 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -42,11 +40,6 @@ func TestSignedPayToOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	indexerSvc := setupIndexer(t)
-
-	explorerSvc, err := mempoolexplorer.NewExplorer(
-		"http://localhost:3000", arklib.BitcoinRegTest,
-	)
-	require.NoError(t, err)
 
 	authorizerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
@@ -99,7 +92,7 @@ func TestSignedPayToOutput(t *testing.T) {
 		encodedTx, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		signedTx, err := bobWallet.SignTransaction(ctx, explorerSvc, encodedTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 
 		signedCheckpoints := make([]string, 0, len(checkpoints))
@@ -107,7 +100,7 @@ func TestSignedPayToOutput(t *testing.T) {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
 
-			signed, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
@@ -132,7 +125,7 @@ func TestSignedPayToOutput(t *testing.T) {
 		encodedTx, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		signedTx, err := bobWallet.SignTransaction(ctx, explorerSvc, encodedTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 
 		signedCheckpoints := make([]string, 0, len(checkpoints))
@@ -140,7 +133,7 @@ func TestSignedPayToOutput(t *testing.T) {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
 
-			signed, err := bobWallet.SignTransaction(ctx, explorerSvc, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}

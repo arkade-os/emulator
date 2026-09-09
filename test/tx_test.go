@@ -23,20 +23,19 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	"github.com/arkade-os/arkd/pkg/client-lib/client"
+	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client/grpc"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	"github.com/arkade-os/arkd/pkg/client-lib/identity"
+	singlekeywallet "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey"
+	inmemorystore "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey/store/inmemory"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer/grpc"
+	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	grpcclient "github.com/arkade-os/go-sdk/client/grpc"
-	mempoolexplorer "github.com/arkade-os/go-sdk/explorer/mempool"
-	"github.com/arkade-os/go-sdk/indexer"
-	grpcindexer "github.com/arkade-os/go-sdk/indexer/grpc"
-	"github.com/arkade-os/go-sdk/store"
-	inmemorystoreconfig "github.com/arkade-os/go-sdk/store/inmemory"
-	"github.com/arkade-os/go-sdk/types"
-	"github.com/arkade-os/go-sdk/wallet"
-	singlekeywallet "github.com/arkade-os/go-sdk/wallet/singlekey"
-	inmemorystore "github.com/arkade-os/go-sdk/wallet/singlekey/store/inmemory"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
@@ -73,8 +72,7 @@ func TestMain(m *testing.M) {
 func TestSubmitOffchain(t *testing.T) {
 	ctx := t.Context()
 	alice, grpcAlice := setupArkSDK(t)
-	_, offchainAddr, _, err := alice.Receive(ctx)
-	require.NoError(t, err)
+	offchainAddr, _ := receive(t, alice)
 	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
 	require.NoError(t, err)
 	alicePkScript, err := script.P2TRScript(aliceAddr.VtxoTapKey)
@@ -90,9 +88,6 @@ func TestSubmitOffchain(t *testing.T) {
 	altIntroWallet, _, altIntroPubKey := setupWallet(t, ctx)
 	emulatorClient, emulatorPublicKey, _ := setupEmulatorClient(t, ctx)
 	indexerSvc := setupIndexer(t)
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
 	bobPaysAliceContract := createVtxoScriptWithArkadeScript(bobPubKey, aliceAddr.Signer, emulatorPublicKey, arkade.ArkadeScriptHash(mustPayAliceScript))
 	vtxoTapKey, vtxoTapTree, err := bobPaysAliceContract.TapTree()
 	require.NoError(t, err)
@@ -212,13 +207,13 @@ func TestSubmitOffchain(t *testing.T) {
 
 		encodedInvalidTx, err := invalidTx.B64Encode()
 		require.NoError(t, err)
-		signedInvalidTx, err := bobWallet.SignTransaction(ctx, explorer, encodedInvalidTx)
+		signedInvalidTx, err := bobWallet.SignTransaction(ctx, encodedInvalidTx, nil)
 		require.NoError(t, err)
 		signedInvalidCheckpoints := make([]string, 0, len(invalidCheckpoints))
 		for _, checkpoint := range invalidCheckpoints {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
-			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedInvalidCheckpoints = append(signedInvalidCheckpoints, signed)
 		}
@@ -269,7 +264,7 @@ func TestSubmitOffchain(t *testing.T) {
 		addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}})
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedValidTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedValidTx, nil)
 		require.NoError(t, err)
 		encodedValidCheckpoints := make([]string, 0, len(validCheckpoints))
 		// no signatures addded
@@ -324,13 +319,13 @@ func TestSubmitOffchain(t *testing.T) {
 		addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}})
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedValidTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedValidTx, nil)
 		require.NoError(t, err)
 		signedValidCheckpoints := make([]string, 0, len(validCheckpoints))
 		for _, checkpoint := range validCheckpoints {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
-			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedValidCheckpoints = append(signedValidCheckpoints, signed)
 		}
@@ -379,13 +374,13 @@ func TestSubmitOffchain(t *testing.T) {
 		addEmulatorPacket(t, validTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: arkadeScriptB}})
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedValidTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedValidTx, nil)
 		require.NoError(t, err)
 		signedCheckpoints := make([]string, 0, len(validCheckpoints))
 		for _, checkpoint := range validCheckpoints {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
-			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
@@ -432,13 +427,13 @@ func TestSubmitOffchain(t *testing.T) {
 		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 		signedCheckpoints := make([]string, 0, len(checkpoints))
 		for _, checkpoint := range checkpoints {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
-			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
@@ -487,14 +482,14 @@ func TestSubmitOffchain(t *testing.T) {
 		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 		signedCheckpoints := make([]string, 0, len(checkpoints))
 		for i, checkpoint := range checkpoints {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
 			if i == 0 {
-				signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+				signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 				require.NoError(t, err)
 				signedCheckpoints = append(signedCheckpoints, signed)
 			} else {
@@ -544,21 +539,21 @@ func TestSubmitOffchain(t *testing.T) {
 		addEmulatorPacket(t, candidateTx, []arkade.EmulatorEntry{{Vin: 0, Script: mustPayAliceScript}, {Vin: 1, Script: mustPayAliceScript}})
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
-		signedTx, err := bobWallet.SignTransaction(ctx, explorer, encodedTx)
+		signedTx, err := bobWallet.SignTransaction(ctx, encodedTx, nil)
 		require.NoError(t, err)
 		signedCheckpoints := make([]string, 0, len(checkpoints))
 		for _, checkpoint := range checkpoints {
 			encoded, err := checkpoint.B64Encode()
 			require.NoError(t, err)
-			signed, err := bobWallet.SignTransaction(ctx, explorer, encoded)
+			signed, err := bobWallet.SignTransaction(ctx, encoded, nil)
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 		// foriegn emulator must sign input checkpoint 1 and tx
-		introBSigned, err := altIntroWallet.SignTransaction(ctx, explorer, signedCheckpoints[1])
+		introBSigned, err := altIntroWallet.SignTransaction(ctx, signedCheckpoints[1], nil)
 		require.NoError(t, err)
 		signedCheckpoints[1] = introBSigned
-		signedTx, err = altIntroWallet.SignTransaction(ctx, explorer, signedTx)
+		signedTx, err = altIntroWallet.SignTransaction(ctx, signedTx, nil)
 		require.NoError(t, err)
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
 		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
@@ -723,10 +718,7 @@ func TestSettlement(t *testing.T) {
 	encodedIntentProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
-	require.NoError(t, err)
-
-	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
+	signedIntentProof, err := bobWallet.SignTransaction(ctx, encodedIntentProof, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
@@ -746,7 +738,7 @@ func TestSettlement(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := client.TapscriptsVtxo{
+	vtxo := types.VtxoWithTapTree{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
 				Txid: redeemPtx.UnsignedTx.TxHash().String(),
@@ -761,21 +753,21 @@ func TestSettlement(t *testing.T) {
 	emulatorBatchHandler := &delegateBatchEventsHandler{
 		intentId:       intentId,
 		intent:         signedIntent,
-		vtxosToForfeit: []client.TapscriptsVtxo{vtxo},
+		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
 		signerSession:  treeSignerSession,
 		emulatorClient: emulatorClient,
 		wallet:         bobWallet,
 		client:         grpcClient,
 	}
 
-	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
+	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		stop()
 	})
 
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
+	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }
@@ -790,19 +782,13 @@ func TestBoarding(t *testing.T) {
 	bobPrivKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	configStore, err := inmemorystoreconfig.NewConfigStore()
+	walletStore, err := inmemorystore.NewStore()
 	require.NoError(t, err)
 
-	walletStore, err := inmemorystore.NewWalletStore()
+	bobWallet, err := singlekeywallet.NewIdentity(walletStore)
 	require.NoError(t, err)
 
-	bobWallet, err := singlekeywallet.NewBitcoinWallet(
-		configStore,
-		walletStore,
-	)
-	require.NoError(t, err)
-
-	_, err = bobWallet.Create(ctx, password, hex.EncodeToString(bobPrivKey.Serialize()))
+	_, err = bobWallet.Create(ctx, chaincfg.RegressionNetParams, password, hex.EncodeToString(bobPrivKey.Serialize()))
 	require.NoError(t, err)
 
 	_, err = bobWallet.Unlock(ctx, password)
@@ -810,8 +796,7 @@ func TestBoarding(t *testing.T) {
 
 	bobPubKey := bobPrivKey.PubKey()
 
-	_, offchainAddr, _, err := alice.Receive(ctx)
-	require.NoError(t, err)
+	offchainAddr, _ := receive(t, alice)
 
 	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
 	require.NoError(t, err)
@@ -994,7 +979,7 @@ func TestBoarding(t *testing.T) {
 	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
-	signedIntentProof, err := bobWallet.SignTransaction(ctx, explorer, encodedIntentProof)
+	signedIntentProof, err := bobWallet.SignTransaction(ctx, encodedIntentProof, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
@@ -1014,7 +999,7 @@ func TestBoarding(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := client.TapscriptsVtxo{
+	vtxo := types.VtxoWithTapTree{
 		Vtxo: types.Vtxo{
 			Outpoint: types.Outpoint{
 				Txid: faucetMsgTx.TxHash().String(),
@@ -1039,14 +1024,14 @@ func TestBoarding(t *testing.T) {
 		boardingVtxo: vtxo,
 	}
 
-	topics := arksdk.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
+	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		stop()
 	})
 
-	commitmentTxid, err := arksdk.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
+	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }
@@ -1146,9 +1131,6 @@ func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 	require.NoError(t, err)
 
 	checkpointScriptBytes, err := hex.DecodeString(infos.CheckpointTapscript)
-	require.NoError(t, err)
-
-	explorer, err := mempoolexplorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
 	require.NoError(t, err)
 
 	invalidArkadeScript, err := txscript.NewScriptBuilder().
@@ -1273,11 +1255,7 @@ func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 			encodedInvalidTx, err := invalidTx.B64Encode()
 			require.NoError(t, err)
 
-			signedInvalidTx, err := bobWallet.SignTransaction(
-				ctx,
-				explorer,
-				encodedInvalidTx,
-			)
+			signedInvalidTx, err := bobWallet.SignTransaction(ctx, encodedInvalidTx, nil)
 			require.NoError(t, err)
 
 			encodedInvalidCheckpoints := make([]string, 0, len(invalidCheckpoints))
@@ -1303,47 +1281,40 @@ func setupIndexer(t *testing.T) indexer.Indexer {
 
 func setupArkSDKwithPublicKey(
 	t *testing.T,
-) (arksdk.ArkClient, wallet.WalletService, *btcec.PublicKey, client.TransportClient) {
-	appDataStore, err := store.NewStore(store.Config{
-		ConfigStoreType:  types.InMemoryStore,
-		AppDataStoreType: types.KVStore,
-	})
+) (arksdk.Wallet, identity.Identity, *btcec.PublicKey, client.Client) {
+	walletStore, err := inmemorystore.NewStore()
 	require.NoError(t, err)
 
-	client, err := arksdk.NewArkClient(appDataStore)
-	require.NoError(t, err)
-
-	walletStore, err := inmemorystore.NewWalletStore()
-	require.NoError(t, err)
-	require.NotNil(t, walletStore)
-
-	wallet, err := singlekeywallet.NewBitcoinWallet(appDataStore.ConfigStore(), walletStore)
+	wallet, err := singlekeywallet.NewIdentity(walletStore)
 	require.NoError(t, err)
 
 	privkey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	privkeyHex := hex.EncodeToString(privkey.Serialize())
+	client, err := arksdk.NewWallet(t.TempDir(), arksdk.WithIdentity(wallet))
+	require.NoError(t, err)
+	t.Cleanup(client.Stop)
 
-	err = client.InitWithWallet(t.Context(), arksdk.InitWithWalletArgs{
-		Wallet:     wallet,
-		ClientType: arksdk.GrpcClient,
-		ServerUrl:  "localhost:7070",
-		Password:   password,
-		Seed:       privkeyHex,
-	})
+	err = client.Init(
+		t.Context(), "localhost:7070", hex.EncodeToString(privkey.Serialize()), password,
+		arksdk.WithExplorerURL("http://localhost:3000"),
+	)
 	require.NoError(t, err)
 
 	err = client.Unlock(t.Context(), password)
 	require.NoError(t, err)
 
-	grpcClient, err := grpcclient.NewClient("localhost:7070")
+	synced := <-client.IsSynced(t.Context())
+	require.NoError(t, synced.Err)
+	require.True(t, synced.Synced)
+
+	grpcClient, err := grpcclient.NewClient("localhost:7070", arksdk.HeaderVersion)
 	require.NoError(t, err)
 
 	return client, wallet, privkey.PubKey(), grpcClient
 }
 
-func setupArkSDK(t *testing.T) (arksdk.ArkClient, client.TransportClient) {
+func setupArkSDK(t *testing.T) (arksdk.Wallet, client.Client) {
 	alice, _, _, grpcAlice := setupArkSDKwithPublicKey(t)
 	return alice, grpcAlice
 }

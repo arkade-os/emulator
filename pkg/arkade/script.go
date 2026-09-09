@@ -27,6 +27,18 @@ type ArkadeScript struct {
 
 type ExecuteOption func(*Engine)
 
+// WithExpiry sets the VTXO's expiry timestamp for OP_PUSHEXPIRY.
+func WithExpiry(expiry int64) ExecuteOption {
+	return func(engine *Engine) {
+		engine.expiry = &expiry
+	}
+}
+
+// WithIntentMessage binds a canonical intent message to script execution.
+func WithIntentMessage(raw string) ExecuteOption {
+	return func(engine *Engine) { engine.intentMessage = []byte(raw) }
+}
+
 func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	return func(engine *Engine) {
 		engine.stepCallback = func(step *StepInfo) error {

@@ -364,6 +364,21 @@ func (s *stack) PickN(n int32) error {
 	return nil
 }
 
+// PutN replaces the item N items back in the stack.
+//
+// Stack transformation:
+// PutN(0, x): [x1 x2 x3] -> [x1 x2 x]
+// PutN(1, x): [x1 x2 x3] -> [x1 x x3]
+// PutN(2, x): [x1 x2 x3] -> [x x2 x3]
+func (s *stack) PutN(n int32, so []byte) error {
+	if _, err := s.PeekByteArray(n); err != nil {
+		return err
+	}
+	s.stk[len(s.stk)-int(n)-1] = so
+
+	return nil
+}
+
 // RollN moves the item N items back in the stack to the top.
 //
 // Stack transformation:

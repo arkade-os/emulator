@@ -774,6 +774,33 @@ func TestStack(t *testing.T) {
 			nil,
 		},
 		{
+			"Put0",
+			[][]byte{{1}, {2}, {3}, {4}},
+			func(s *stack) error {
+				return s.PutN(0, []byte{9})
+			},
+			nil,
+			[][]byte{{1}, {2}, {3}, {9}},
+		},
+		{
+			"Put2",
+			[][]byte{{1}, {2}, {3}, {4}},
+			func(s *stack) error {
+				return s.PutN(2, []byte{9})
+			},
+			nil,
+			[][]byte{{1}, {9}, {3}, {4}},
+		},
+		{
+			"Put too little",
+			[][]byte{{1}},
+			func(s *stack) error {
+				return s.PutN(1, []byte{9})
+			},
+			scriptError(txscript.ErrInvalidStackOperation, ""),
+			nil,
+		},
+		{
 			"Roll1",
 			[][]byte{{1}, {2}, {3}, {4}},
 			func(s *stack) error {

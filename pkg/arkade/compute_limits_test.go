@@ -24,7 +24,7 @@ func TestDefaultComputeLimitsCoversHeavyOpcodes(t *testing.T) {
 		OP_CHECKSIGFROMSTACK,
 		OP_ECADD, OP_ECMUL, OP_ECPAIRING,
 		OP_ECMULSCALARVERIFY, OP_TWEAKVERIFY,
-		OP_MODEXP,
+		OP_MODEXP, OP_INSPECTINTENTMESSAGE,
 	}
 	limits := DefaultComputeLimits()
 	for _, op := range heavy {

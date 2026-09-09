@@ -31,7 +31,7 @@ func (c ComputeLimits) Validate() error {
 func DefaultComputeLimits() ComputeLimits {
 	// Aggregate-cost note: this table is deliberately a simple per-opcode
 	// lookup, not a grouped or weighted budget. If every listed opcode is pushed
-	// to its independent cap, the measured heavy-opcode aggregate is ~37 ms per
+	// to its independent cap, the measured heavy-opcode aggregate is ~41 ms per
 	// input on an Apple M4 Pro. That is looser than the ~24 ms grouped design,
 	// but keeps the policy easy to read, configure, and reason about for now.
 	return ComputeLimits{
@@ -41,12 +41,13 @@ func DefaultComputeLimits() ComputeLimits {
 		OP_CHECKSIGADD:       50,
 		OP_CHECKSIGFROMSTACK: 50,
 		// Elliptic-curve point operations.
-		OP_ECADD:             1000, // ~3.7 µs
-		OP_ECMUL:             50,   // ~84 µs
-		OP_ECMULSCALARVERIFY: 50,   // ~84 µs
-		OP_TWEAKVERIFY:       50,   // ~84 µs
-		OP_ECPAIRING:         2,    // ~2.04 ms at the 16-pair cap
-		OP_MODEXP:            64,   // ~60 µs at the 64-byte operand cap
+		OP_ECADD:                1000, // ~3.7 µs
+		OP_ECMUL:                50,   // ~84 µs
+		OP_ECMULSCALARVERIFY:    50,   // ~84 µs
+		OP_TWEAKVERIFY:          50,   // ~84 µs
+		OP_ECPAIRING:            2,    // ~2.04 ms at the 16-pair cap
+		OP_MODEXP:               64,   // ~60 µs at the 64-byte operand cap
+		OP_INSPECTINTENTMESSAGE: 16,   // ~266 µs at the 1 MiB request ceiling
 	}
 }
 
@@ -55,7 +56,7 @@ func DefaultComputeLimits() ComputeLimits {
 // without a request-wide budget an attacker multiplies the cost of the heavy
 // opcodes by the number of inputs it supplies, each input individually within
 // its limits. Four inputs' worth bounds the measured heavy-opcode aggregate of
-// a whole request at ~150 ms on an Apple M4 Pro while leaving ample headroom
+// a whole request at ~165 ms on an Apple M4 Pro while leaving ample headroom
 // for legitimate multi-input transactions, whose inputs each spend a small
 // fraction of the per-input caps.
 const requestInputBudget = 4

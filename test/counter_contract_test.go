@@ -8,11 +8,11 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
+	"github.com/arkade-os/arkd/pkg/client-lib/client"
+	"github.com/arkade-os/arkd/pkg/client-lib/identity"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	arksdk "github.com/arkade-os/go-sdk"
-	"github.com/arkade-os/go-sdk/client"
-	"github.com/arkade-os/go-sdk/indexer"
-	"github.com/arkade-os/go-sdk/wallet"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/txscript"
@@ -150,9 +150,9 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 func deployCounterFromWallet(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.ArkClient,
-	aliceWallet wallet.WalletService,
-	grpcClient client.TransportClient,
+	alice arksdk.Wallet,
+	aliceWallet identity.Identity,
+	grpcClient client.Client,
 	indexerSvc indexer.Indexer,
 	alicePubKey *btcec.PublicKey,
 	serverSigner *btcec.PublicKey,
