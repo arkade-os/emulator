@@ -111,6 +111,16 @@
       #     shipLogs          = true;
       #   };
       environments = {
+        dev = {
+          deployment = "ark/dev";
+          region = "eu-central-1";
+          fqdn = "mutinynet.arkade.sh";
+          acmeDirectory = "https://acme-v02.api.letsencrypt.org/directory";
+          intentRetention = "24h";
+          migrationCooldown = "0s";
+          shipLogs = true;
+        };
+
         se7enz = {
           deployment = "ark/se7enz";
           region = "eu-central-1";
@@ -126,13 +136,13 @@
       # otherwise the live predecessor's PCR0, which the successor verifies before adopting
       # its state. Bump on every migration and record the generation.
       #
-      #   se7enz: the first chain (gen 1 genesis 2ab910bb…, gen 2 2acbae2d…, gen 3
-      #   bdf41b56… staged but never booted) was a smoke test, torn down 2026-09-01. Its
-      #   KMS keys are scheduled for deletion and /ark/se7enz/emulator is empty, so absence
-      #   of KMSKeyID selects genesis again. See enclave-host-spec/TEARDOWN.md.
+      #   dev:
+      #     gen 1  genesis                                <- current
       #
+      #   se7enz:
       #     gen 1  genesis                                <- current
       predecessors = {
+        dev    = "genesis";
         se7enz = "genesis";
       };
 
@@ -289,7 +299,8 @@
         # Nothing is called plain `eif`. The name carries the environment it is built for,
         # so an image cannot be mistaken for one built for somewhere else.
         #
-        #   nix build .#eif-se7enz
+        #   nix build .#eif-dev
+        eif-dev    = mkEif environments.dev predecessors.dev;
         eif-se7enz = mkEif environments.se7enz predecessors.se7enz;
 
         default = emulator;
