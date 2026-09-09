@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the built EIFs as release assets. Requires a tag ref.
+        description: Publish the built EIFs to S3. Requires a tag ref.
         type: boolean
         default: false
 
@@ -22,8 +22,9 @@ permissions:
   contents: read
 
 env:
-  # Every environment flake.nix exposes as eif-<name>. Adding one is a change
-  # here, in flake.nix, and in one upload step below.
+  # Every environment flake.nix exposes as eif-<name>. All of them are built and
+  # measured. Which of them are published is a separate decision, made by the
+  # matrix in publish-s3.
   ENVIRONMENTS: dev se7enz
 
 jobs:
@@ -77,7 +78,7 @@ jobs:
             echo
             echo "| env | PCR0 | sha256 |"
             echo "|---|---|---|"
-          } > out/measurements/RELEASE_NOTES.md
+          } > out/measurements/MEASUREMENTS.md
 
           for env in $ENVIRONMENTS; do
             mkdir -p "out/${env}"
@@ -91,15 +92,15 @@ jobs:
             (cd "out/${env}" && sha256sum emulator-* > SHA256SUMS)
 
             sha="$(sha256sum "out/${env}/emulator-${env}-${pcr0}.eif" | cut -d' ' -f1)"
-            echo "| ${env} | \`${pcr0}\` | \`${sha}\` |" >> out/measurements/RELEASE_NOTES.md
+            echo "| ${env} | \`${pcr0}\` | \`${sha}\` |" >> out/measurements/MEASUREMENTS.md
           done
 
           {
             echo
-            echo "S3 object name for each image: \`emulator/<pcr0>.eif\`"
-          } >> out/measurements/RELEASE_NOTES.md
+            echo "Published object name: \`emulator/<pcr0>.eif\`, alongside \`<pcr0>.pcr.json\`."
+          } >> out/measurements/MEASUREMENTS.md
 
-          cat out/measurements/RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
+          cat out/measurements/MEASUREMENTS.md >> "$GITHUB_STEP_SUMMARY"
 
       # pcr.json is 370 bytes and is what a reviewer wants to see. It goes up on
       # every run, including pull requests.
@@ -113,10 +114,10 @@ jobs:
       # The images are 61 MB each and are only needed by a publish job, so they
       # are not uploaded on runs that will not publish.
       #
-      # One artifact per environment, so a consumer downloads exactly the image it
-      # is publishing and cannot reach the other one. Phase 2 writes each of these
-      # to a different bucket in a different account, which is why this separation
-      # is worth a duplicated step.
+      # One artifact per environment, so the publish job downloads exactly the
+      # image it is uploading and cannot reach the other one. Each environment
+      # targets a different bucket in a different account, which is why this
+      # separation is worth a duplicated step.
       - name: Upload dev EIF
         if: steps.gate.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
@@ -133,54 +134,113 @@ jobs:
           path: out/se7enz/
           retention-days: 7
 
-  publish-release:
+  # Any tag publishes, deliberately. Pushing a throwaway tag is how an image gets
+  # into the bucket to be pinned and booted, which is the whole prototyping loop.
+  #
+  # This is looser than it looks. The object name is the PCR0, so a tag built from
+  # source that is already published writes the same name with the same bytes, and
+  # the collision check below makes it a no-op. Only genuinely new source adds an
+  # object, and nothing reads one until an ark-infra slot pins it.
+  #
+  # A branch ref still cannot publish, so a manual dispatch has to select a tag.
+  # The IAM trust policy enforces the same, accepting refs/tags/* and nothing else.
+  publish-s3:
     needs: build
-    if: needs.build.outputs.publish == 'true'
+    if: needs.build.outputs.publish == 'true' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      id-token: write
+      contents: read
+
+    strategy:
+      matrix:
+        include:
+          # Only environments with a live enclave stack are published. se7enz is
+          # built and measured on every run, but ark-infra runs modules/enclave in
+          # enclave-dev only, so nothing there would read a se7enz image. Add an
+          # entry here, and a role in that account, when that changes.
+          #
+          # role_secret names the repository secret holding the role ARN. It is not
+          # the ARN. The `secrets` context is unavailable in `strategy`, and this
+          # repository is public, so an ARN here would publish the account ID. The
+          # step below resolves the name against the secrets context, where index
+          # syntax is allowed.
+          - env: dev
+            bucket: ark-dev-enclave-images
+            region: eu-central-1
+            role_secret: AWS_EIF_PUBLISH_ROLE_ARN_DEV
 
     steps:
-      # No name, so every artifact lands in a directory named after itself:
-      # eif-dev/, eif-se7enz/, measurements/.
       - uses: actions/download-artifact@v4
         with:
-          path: .
+          name: eif-${{ matrix.env }}
+          path: eif
 
       # The publish job trusts an artefact rather than rebuilding, which is worth
       # minutes on a runner with a cold /nix/store. The checksums are what make
-      # that safe: the bytes are checked before anything is published.
+      # that safe: the bytes are checked before credentials are even requested.
       - name: Verify checksums
-        run: |
-          for dir in eif-*/; do
-            echo "verifying ${dir}"
-            (cd "$dir" && sha256sum -c SHA256SUMS)
-          done
+        working-directory: eif
+        run: sha256sum -c SHA256SUMS
 
-      - name: Publish release assets
+      # An unset secret resolves to an empty string, and configure-aws-credentials
+      # reports that as a malformed ARN. That reads like a broken workflow rather
+      # than a missing secret, so name the actual problem first.
+      - name: Check the publish role is configured
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          ROLE_ARN: ${{ secrets[matrix.role_secret] }}
+          ROLE_SECRET: ${{ matrix.role_secret }}
         run: |
-          if [ "${GITHUB_REF}" = "${GITHUB_REF#refs/tags/}" ]; then
-            echo "::error::publishing needs a tag ref; re-run this workflow with a tag selected"
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::error::repository secret ${ROLE_SECRET} is not set. Take the ARN from the ark-infra output github_actions_emulator_role_arn."
             exit 1
           fi
-          tag="${GITHUB_REF#refs/tags/}"
 
-          # Always a prerelease while this pipeline is a prototype. A prerelease
-          # fires `prereleased` and `published`, never `released`, and
-          # release.yaml listens for `released` only. So no tag pushed here can
-          # start a binary or Docker build. Drop this flag when the pipeline
-          # becomes release-driven.
-          gh release view "$tag" >/dev/null 2>&1 || \
-            gh release create "$tag" --title "$tag" --prerelease \
-              --notes-file measurements/RELEASE_NOTES.md
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[matrix.role_secret] }}
+          aws-region: ${{ matrix.region }}
 
-          gh release upload "$tag" eif-*/emulator-* --clobber
+      - name: Publish to S3
+        working-directory: eif
+        env:
+          BUCKET: ${{ matrix.bucket }}
+          ENV_NAME: ${{ matrix.env }}
+        run: |
+          pcr0="$(jq -r .PCR0 ./*.pcr.json)"
+          eif="emulator-${ENV_NAME}-${pcr0}.eif"
+          pcr="emulator-${ENV_NAME}-${pcr0}.pcr.json"
+          sha="$(sha256sum "$eif" | cut -d' ' -f1)"
 
+          # The object name is the measurement, so the same source always writes
+          # the same name. Re-running is expected to be a no-op.
+          #
+          # The digest is carried as user metadata rather than read back from S3's
+          # own checksum: `aws s3 cp` uploads 61 MB as multipart, so the native
+          # checksum is a composite of part digests, not the digest of the file.
+          existing="$(aws s3api head-object --bucket "$BUCKET" --key "emulator/${pcr0}.eif" \
+            --query 'Metadata.sha256' --output text 2>/dev/null || true)"
+
+          if [ -n "$existing" ] && [ "$existing" != "None" ]; then
+            if [ "$existing" = "$sha" ]; then
+              echo "emulator/${pcr0}.eif is already published with the same bytes; nothing to do"
+              echo "already published: \`emulator/${pcr0}.eif\`" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::emulator/${pcr0}.eif exists with sha256 ${existing}, built ${sha}"
+            exit 1
+          fi
+
+          aws s3 cp "$eif" "s3://${BUCKET}/emulator/${pcr0}.eif" --metadata "sha256=${sha}"
+          aws s3 cp "$pcr" "s3://${BUCKET}/emulator/${pcr0}.pcr.json"
+
+          # The three values modules/enclave/variables.tf refuses a slot without.
           {
-            echo "## Published"
+            echo "## Published ${ENV_NAME}"
             echo
-            gh release view "$tag" --json url --jq .url
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| eif_s3_uri | \`s3://${BUCKET}/emulator/${pcr0}.eif\` |"
+            echo "| eif_pcr0 | \`${pcr0}\` |"
+            echo "| eif_sha256 | \`${sha}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
