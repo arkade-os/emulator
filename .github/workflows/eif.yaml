@@ -22,9 +22,9 @@ permissions:
   contents: read
 
 env:
-  # Every environment flake.nix exposes as eif-<name>. All of them are built and
-  # measured. Which of them are published is a separate decision, made by the
-  # matrix in publish-s3.
+  # Every environment flake.nix exposes as eif-<name>.
+  #
+  # TODO: Try to pull these dynamically from flake?
   ENVIRONMENTS: dev se7enz
 
 jobs:
@@ -67,9 +67,7 @@ jobs:
             nix build ".#eif-${env}" --out-link "result-${env}"
           done
 
-      # One directory per environment, never a shared one. An image and the
-      # measurement it carries stay together, and no later step can reach for the
-      # wrong environment's file by accident.
+      # Use one directory per environment, avoid later steps using wrong environment.
       - name: Collect measurements
         run: |
           mkdir -p out/measurements
@@ -102,8 +100,6 @@ jobs:
 
           cat out/measurements/MEASUREMENTS.md >> "$GITHUB_STEP_SUMMARY"
 
-      # pcr.json is 370 bytes and is what a reviewer wants to see. It goes up on
-      # every run, including pull requests.
       - name: Upload measurements
         uses: actions/upload-artifact@v4
         with:
@@ -111,13 +107,6 @@ jobs:
           path: out/measurements/
           retention-days: 14
 
-      # The images are 61 MB each and are only needed by a publish job, so they
-      # are not uploaded on runs that will not publish.
-      #
-      # One artifact per environment, so the publish job downloads exactly the
-      # image it is uploading and cannot reach the other one. Each environment
-      # targets a different bucket in a different account, which is why this
-      # separation is worth a duplicated step.
       - name: Upload dev EIF
         if: steps.gate.outputs.publish == 'true'
         uses: actions/upload-artifact@v4
@@ -134,17 +123,8 @@ jobs:
           path: out/se7enz/
           retention-days: 7
 
-  # Any tag publishes, deliberately. Pushing a throwaway tag is how an image gets
-  # into the bucket to be pinned and booted, which is the whole prototyping loop.
-  #
-  # This is looser than it looks. The object name is the PCR0, so a tag built from
-  # source that is already published writes the same name with the same bytes, and
-  # the collision check below makes it a no-op. Only genuinely new source adds an
-  # object, and nothing reads one until an ark-infra slot pins it.
-  #
-  # A branch ref still cannot publish, so a manual dispatch has to select a tag.
-  # The IAM trust policy enforces the same, accepting refs/tags/* and nothing else.
   publish-s3:
+    name: publish-s3 (${{ matrix.env }})
     needs: build
     if: needs.build.outputs.publish == 'true' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -155,16 +135,8 @@ jobs:
     strategy:
       matrix:
         include:
-          # Only environments with a live enclave stack are published. se7enz is
-          # built and measured on every run, but ark-infra runs modules/enclave in
-          # enclave-dev only, so nothing there would read a se7enz image. Add an
-          # entry here, and a role in that account, when that changes.
-          #
           # role_secret names the repository secret holding the role ARN. It is not
-          # the ARN. The `secrets` context is unavailable in `strategy`, and this
-          # repository is public, so an ARN here would publish the account ID. The
-          # step below resolves the name against the secrets context, where index
-          # syntax is allowed.
+          # the ARN. GHA secrets are not allowed in the `strategy` configuration.
           - env: dev
             bucket: ark-dev-enclave-images
             region: eu-central-1
@@ -184,8 +156,7 @@ jobs:
         run: sha256sum -c SHA256SUMS
 
       # An unset secret resolves to an empty string, and configure-aws-credentials
-      # reports that as a malformed ARN. That reads like a broken workflow rather
-      # than a missing secret, so name the actual problem first.
+      # reports that as a malformed ARN. Validation.
       - name: Check the publish role is configured
         env:
           ROLE_ARN: ${{ secrets[matrix.role_secret] }}
