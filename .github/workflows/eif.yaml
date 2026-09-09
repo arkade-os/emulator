@@ -34,7 +34,7 @@ jobs:
       publish: ${{ steps.gate.outputs.publish }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: cachix/install-nix-action@v31
         with:
@@ -101,7 +101,7 @@ jobs:
           cat out/measurements/MEASUREMENTS.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload measurements
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: measurements
           path: out/measurements/
@@ -109,7 +109,7 @@ jobs:
 
       - name: Upload dev EIF
         if: steps.gate.outputs.publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: eif-dev
           path: out/dev/
@@ -117,7 +117,7 @@ jobs:
 
       - name: Upload se7enz EIF
         if: steps.gate.outputs.publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: eif-se7enz
           path: out/se7enz/
@@ -143,7 +143,7 @@ jobs:
             role_secret: AWS_EIF_PUBLISH_ROLE_ARN_DEV
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: eif-${{ matrix.env }}
           path: eif
@@ -167,7 +167,7 @@ jobs:
             exit 1
           fi
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets[matrix.role_secret] }}
           aws-region: ${{ matrix.region }}
