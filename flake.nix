@@ -28,7 +28,7 @@
       pkgs = import nixpkgs { inherit system; };
       lib = pkgs.lib;
 
-      version = "0.0.7";
+      version = "0.0.8-rc.0";
 
       # PCR0 covers every byte of the source that reaches the build, so a plain
       # `src = ./.` makes the measurement move when a README, a CI file or .gitignore
@@ -55,7 +55,16 @@
 
         # The three sibling modules (api-spec, pkg/arkade, pkg/client) are wired by
         # local `replace` directives in the root go.mod, so a single src covers all four.
-        vendorHash = "sha256-ESLXxTHKbmcXP62iyzETT6wMYDrIuwWXQPqsGkNI7SY=";
+        #
+        # Recompute whenever go.mod or go.sum changes. `version` does not affect it.
+        #   1. Set the value below to `lib.fakeHash`.
+        #   2. Run `nix build .#emulator`. It stops with a hash mismatch.
+        #   3. Copy the `got:` value into the line below.
+        #   4. Re-run `nix build .#emulator`. It now succeeds.
+        # Always go through `lib.fakeHash`. A stale hash whose vendor directory is already
+        # in /nix/store is reused without a rebuild, and go then fails much later with
+        # "inconsistent vendoring".
+        vendorHash = "sha256-sK4f/zVAH1Bj0T816cIHdIUbtdd5mbrGtlvgubbKJzA=";
 
         subPackages = [ "cmd" ];
         ldflags = [
