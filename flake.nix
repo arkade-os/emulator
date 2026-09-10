@@ -64,7 +64,7 @@
         # Always go through `lib.fakeHash`. A stale hash whose vendor directory is already
         # in /nix/store is reused without a rebuild, and go then fails much later with
         # "inconsistent vendoring".
-        vendorHash = "sha256-sK4f/zVAH1Bj0T816cIHdIUbtdd5mbrGtlvgubbKJzA=";
+        vendorHash = "sha256-bN9wY49zU7LgfkyrWwx44epOQbx/HXc+oUnfwfypvk0=";
 
         subPackages = [ "cmd" ];
         ldflags = [
