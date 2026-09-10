@@ -37,7 +37,7 @@ jobs:
 
   # Any tag publishes.
   publish:
-    name: publish
+    name: publish (${{ matrix.environment }})
     needs: build
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     permissions:
