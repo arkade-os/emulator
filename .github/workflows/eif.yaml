@@ -37,6 +37,7 @@ jobs:
 
   # Any tag publishes.
   publish:
+    name: publish
     needs: build
     if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
     permissions:
