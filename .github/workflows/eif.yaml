@@ -1,0 +1,61 @@
+name: EIF
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+    tags: ['*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the built EIFs to S3. Requires a tag ref.
+        type: boolean
+        default: false
+
+# A pull request build is superseded by its next push. A tag build is not: it is
+# the thing that produces a published measurement.
+concurrency:
+  group: eif-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ############################################################################
+  # DO NOT MERGE THIS BRANCH. Until https://github.com/ArkLabsHQ/enclave/pull/182
+  #   is merged. Re-pin from `master` or a tagged release.
+  # ############################################################################
+  build:
+    # TEST PIN — PR #182 branch.
+    uses: ArkLabsHQ/enclave/.github/workflows/eif-build.yml@48c1a951ac616cbdc31dee53e6ad4aa6a530d690
+    with:
+      environments: '["dev","se7enz"]'
+      app_name: emulator
+      version_flake_attr: emulator
+      upload_images: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+
+  # Any tag publishes.
+  publish:
+    name: publish (${{ matrix.environment }})
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - environment: dev
+            bucket: ark-dev-enclave-images
+            region: eu-central-1
+            role_secret: AWS_EIF_PUBLISH_ROLE_ARN_DEV
+    # TEST PIN — PR #182 branch.
+    uses: ArkLabsHQ/enclave/.github/workflows/eif-publish.yml@48c1a951ac616cbdc31dee53e6ad4aa6a530d690
+    with:
+      environment: ${{ matrix.environment }}
+      app_name: emulator
+      bucket: ${{ matrix.bucket }}
+      region: ${{ matrix.region }}
+    secrets:
+      role_arn: ${{ secrets[matrix.role_secret] }}
