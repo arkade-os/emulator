@@ -107,10 +107,10 @@
       #     migrationCooldown = "336h";              # two weeks
       #   };
       environments = {
-        dev = {
-          deployment = "ark/dev";
+        mutinynet = {
+          deployment = "ark/mutinynet";
           region = "eu-central-1";
-          fqdn = "mutinynet.arkade.sh";
+          fqdn = "emulator.mutinynet.enclave-dev.arkade.sh";
           acmeDirectory = "https://acme-v02.api.letsencrypt.org/directory";
           dev = true;
           migrationCooldown = "0s";
@@ -130,14 +130,14 @@
       # otherwise the live predecessor's PCR0, which the successor verifies before adopting
       # its state. Bump on every migration and record the generation.
       #
-      #   dev:
+      #   mutinynet:
       #     gen 1  genesis                                <- current
       #
       #   se7enz:
       #     gen 1  genesis                                <- current
       predecessors = {
-        dev    = "genesis";
-        se7enz = "genesis";
+        mutinynet = "genesis";
+        se7enz    = "genesis";
       };
 
       mkEif =
@@ -259,9 +259,9 @@
         # Nothing is called plain `eif`. The name carries the environment it is built for,
         # so an image cannot be mistaken for one built for somewhere else.
         #
-        #   nix build .#eif-dev
-        eif-dev    = mkEif environments.dev predecessors.dev;
-        eif-se7enz = mkEif environments.se7enz predecessors.se7enz;
+        #   nix build .#eif-mutinynet
+        eif-mutinynet = mkEif environments.mutinynet predecessors.mutinynet;
+        eif-se7enz    = mkEif environments.se7enz predecessors.se7enz;
 
         default = emulator;
       };
