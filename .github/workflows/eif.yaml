@@ -28,9 +28,9 @@ jobs:
   # ############################################################################
   build:
     # TEST PIN — PR #182 branch.
-    uses: ArkLabsHQ/enclave/.github/workflows/eif-build.yml@48c1a951ac616cbdc31dee53e6ad4aa6a530d690
+    uses: ArkLabsHQ/enclave/.github/workflows/eif-build.yml@9070d0e24a7ca328ccf3298b1d3a8d21137c8518
     with:
-      environments: '["dev","se7enz"]'
+      environments: '["mutinynet","se7enz"]'
       app_name: emulator
       version_flake_attr: emulator
       upload_images: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
@@ -46,12 +46,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - environment: dev
+          - environment: mutinynet
             bucket: ark-dev-enclave-images
             region: eu-central-1
             role_secret: AWS_EIF_PUBLISH_ROLE_ARN_DEV
     # TEST PIN — PR #182 branch.
-    uses: ArkLabsHQ/enclave/.github/workflows/eif-publish.yml@48c1a951ac616cbdc31dee53e6ad4aa6a530d690
+    uses: ArkLabsHQ/enclave/.github/workflows/eif-publish.yml@9070d0e24a7ca328ccf3298b1d3a8d21137c8518
     with:
       environment: ${{ matrix.environment }}
       app_name: emulator
