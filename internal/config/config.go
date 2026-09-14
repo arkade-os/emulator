@@ -8,11 +8,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/arkd/pkg/client-lib/client"
+	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client/grpc"
+	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer/grpc"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -178,6 +183,98 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 	return key, nil
 }
 
-func (c *Config) AppService(ctx context.Context, version string) (application.Service, error) {
-	return application.New(ctx, version, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits)
+// emulator.Service.Close closes its finalizer and indexer by type-asserting
+// interface{ Close() }, so a client-lib change to Close() error would silently
+// stop closing the arkd connections handed off below. Fail at compile time instead.
+var _ interface{ Close() } = client.Client(nil)
+var _ interface{ Close() } = indexer.Indexer(nil)
+
+var arkdConnectRetryConfig = retryConfig{
+	MinAttempts:  0,
+	InitialDelay: 1 * time.Second,
+	MaxDelay:     45 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2,
+}
+
+// versionedIndexer tags every indexer call with the emulator's x-sdk-version,
+// the way client-lib's grpc client does for arkd calls via its interceptor.
+type versionedIndexer struct {
+	indexer.Indexer
+	version string
+}
+
+func (v versionedIndexer) ctx(ctx context.Context) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "x-sdk-version", v.version)
+}
+
+func (v versionedIndexer) GetVtxos(ctx context.Context, opts ...indexer.GetVtxosOption) (*indexer.VtxosResponse, error) {
+	return v.Indexer.GetVtxos(v.ctx(ctx), opts...)
+}
+
+func (v versionedIndexer) GetCommitmentTx(ctx context.Context, txid string) (*indexer.CommitmentTx, error) {
+	return v.Indexer.GetCommitmentTx(v.ctx(ctx), txid)
+}
+
+func (c *Config) AppService(ctx context.Context, version string) (emulator.Service, error) {
+	clientVersion := "emulator/" + version
+
+	arkdClient, err := grpcclient.NewClient(c.ArkdURL, clientVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create arkd client: %w", err)
+	}
+	indexerClient, err := grpcindexer.NewClient(c.ArkdIndexerURL)
+	if err != nil {
+		arkdClient.Close()
+		return nil, fmt.Errorf("failed to create arkd indexer client: %w", err)
+	}
+	// Both hold open gRPC connections; close them unless they are handed off to
+	// a successfully constructed service (which then owns their lifecycle).
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			arkdClient.Close()
+			indexerClient.Close()
+		}
+	}()
+
+	var info *client.Info
+	// arkd may still be booting when the emulator starts, retry if it fails.
+	err = retryWithBackoff(
+		ctx, arkdConnectRetryConfig,
+		func() error {
+			var e error
+			info, e = arkdClient.GetInfo(ctx)
+			return e
+		},
+		func(attempt int, e error) {
+			log.WithField("attempt", attempt).Warnf("arkd not ready: %s", e)
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch arkd info: %w", err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("arkd info is required")
+	}
+	if info.SignerPubKey == "" {
+		return nil, fmt.Errorf("arkd info does not include signer pubkey")
+	}
+	pk, err := hex.DecodeString(info.SignerPubKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
+	}
+	arkdPubKey, err := btcec.ParsePubKey(pk)
+	if err != nil {
+		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
+	}
+	svc, err := emulator.New(
+		ctx, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, arkdPubKey,
+		arkdClient, versionedIndexer{indexerClient, clientVersion}, c.ComputeLimits,
+	)
+	if err != nil {
+		return nil, err
+	}
+	handedOff = true
+	return svc, nil
 }

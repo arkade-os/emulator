@@ -8,6 +8,8 @@ replace github.com/arkade-os/emulator/pkg/arkade => ./pkg/arkade
 
 replace github.com/arkade-os/emulator/pkg/client => ./pkg/client
 
+replace github.com/arkade-os/emulator/pkg/emulator => ./pkg/emulator
+
 replace github.com/arkade-os/emulator/api-spec => ./api-spec
 
 require (
@@ -18,6 +20,7 @@ require (
 	github.com/arkade-os/emulator/api-spec v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/emulator/pkg/arkade v0.0.0-20260616144513-96f9b06a5380
 	github.com/arkade-os/emulator/pkg/client v0.0.0-00010101000000-000000000000
+	github.com/arkade-os/emulator/pkg/emulator v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/go-sdk v0.11.0
 	github.com/btcsuite/btcd v0.24.3-0.20240921052913-67b8efd3ba53
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5

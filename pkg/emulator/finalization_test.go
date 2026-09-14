@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"bytes"
@@ -37,7 +37,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 	err := retryWithBackoff(ctx, commitmentTxRetryConfig,
 		func() error {
 			_, err := s.indexerClient.GetCommitmentTx(
-				withClientVersion(ctx, s.clientVersion), commitmentTxid,
+				ctx, commitmentTxid,
 			)
 			return err
 		}, nil,

@@ -1,4 +1,4 @@
-package handlers
+package grpchandler
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -21,30 +21,30 @@ const leakyDetail = "/opt/signer/keys/secret.db: deprecated key #3 rejected sigh
 // failingService returns an error carrying leakyDetail from every signing call.
 type failingService struct{}
 
-func (failingService) GetInfo(context.Context) (*application.Info, error) {
+func (failingService) GetInfo(context.Context) (*emulator.Info, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }
 
 func (failingService) SubmitTx(
-	context.Context, application.OffchainTx,
-) (*application.OffchainTx, error) {
+	context.Context, emulator.OffchainTx,
+) (*emulator.OffchainTx, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }
 
 func (failingService) SubmitIntent(
-	context.Context, application.Intent,
+	context.Context, emulator.Intent,
 ) (*psbt.Packet, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }
 
 func (failingService) SubmitFinalization(
-	context.Context, application.BatchFinalization,
-) (*application.SignedBatchFinalization, error) {
+	context.Context, emulator.BatchFinalization,
+) (*emulator.SignedBatchFinalization, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }
 
 func (failingService) SubmitOnchainTx(
-	context.Context, application.OnchainTx,
+	context.Context, emulator.OnchainTx,
 ) (*psbt.Packet, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }
