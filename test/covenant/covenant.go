@@ -46,6 +46,9 @@ type Params struct {
 	AssetID *asset.AssetId
 
 	Locktime arklib.AbsoluteLocktime
+
+	// Zero omits the backstop leaf: the tree is not fixed-shape.
+	ReclaimLocktime arklib.AbsoluteLocktime
 }
 
 func (p Params) Validate(vtxoMinAmount int64) error {
@@ -68,6 +71,12 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		// repayment to itself, collecting both sides of the trade. No signature
 		// check catches this, because each role's key is legitimately its own.
 		return fmt.Errorf("covenant: receiver, sender and operator keys must be distinct")
+	case p.ReclaimLocktime != 0 && p.ReclaimLocktime <= p.Locktime:
+		// Maturing first would let the operator reclaim from under a live claim.
+		return fmt.Errorf(
+			"covenant: reclaim locktime %d must be after locktime %d",
+			p.ReclaimLocktime, p.Locktime,
+		)
 	case p.Locktime == 0:
 		// A zero absolute locktime is always satisfied, which would make the
 		// recovery leaf spendable the moment the covenant is funded and collapse
@@ -247,11 +256,41 @@ func BuildRefund(p Params, vtxoMinAmount int64) ([]byte, error) {
 	return finish(b, p.AssetID != nil)
 }
 
-// Scripts are the three covenants a contract commits to.
+// BuildReclaim is the post-claim backstop: the operator recovers its carrier
+// sats, the receiver keeps the asset on a hosted receipt. Same split as
+// BuildRefund but paid to the receiver -- refunding post-claim would return the
+// asset to an already-paid sender.
+func BuildReclaim(p Params, vtxoMinAmount int64) ([]byte, error) {
+	topup := p.RefundTopup(vtxoMinAmount)
+	b := txscript.NewScriptBuilder().
+		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).AddInt64(0).AddOp(arkade.OP_EQUALVERIFY).
+		AddInt64(0).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
+		AddInt64(topup).AddOp(arkade.OP_EQUALVERIFY)
+
+	if err := pinOutput(b, 0, p.OperatorKey, topup, p.Dust); err != nil {
+		return nil, err
+	}
+
+	b.AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
+		AddInt64(p.Dust - topup).AddOp(arkade.OP_EQUALVERIFY)
+
+	if err := pinOutput(b, 1, p.ReceiverKey, p.Dust-topup, p.Dust); err != nil {
+		return nil, err
+	}
+
+	if p.AssetID != nil {
+		appendAssetLookup(b, 1, p.AssetID, true, true)
+		appendAssetLookup(b, 0, p.AssetID, false, true)
+		b.AddOp(arkade.OP_EQUAL)
+	}
+	return finish(b, p.AssetID != nil)
+}
+
 type Scripts struct {
 	Recycle  []byte
 	Purchase []byte
 	Refund   []byte
+	Reclaim  []byte
 }
 
 func Build(p Params, vtxoMinAmount int64) (Scripts, error) {
@@ -270,7 +309,13 @@ func Build(p Params, vtxoMinAmount int64) (Scripts, error) {
 	if err != nil {
 		return Scripts{}, err
 	}
-	return Scripts{Recycle: recycle, Purchase: purchase, Refund: refund}, nil
+	out := Scripts{Recycle: recycle, Purchase: purchase, Refund: refund}
+	if p.ReclaimLocktime != 0 {
+		if out.Reclaim, err = BuildReclaim(p, vtxoMinAmount); err != nil {
+			return Scripts{}, err
+		}
+	}
+	return out, nil
 }
 
 // VtxoScript assembles the four-leaf taptree. Every leaf but LeafRefundSender is
@@ -282,7 +327,7 @@ func VtxoScript(
 	tweak := func(b []byte) *btcec.PublicKey {
 		return arkade.ComputeArkadeScriptPublicKey(emulator, arkade.ArkadeScriptHash(b))
 	}
-	return script.TapscriptsVtxoScript{
+	v := script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
 			&script.MultisigClosure{PubKeys: []*btcec.PublicKey{server, tweak(s.Recycle)}},
 			&script.MultisigClosure{PubKeys: []*btcec.PublicKey{server, tweak(s.Purchase)}},
@@ -297,4 +342,14 @@ func VtxoScript(
 			},
 		},
 	}
+	if s.Reclaim != nil {
+		// Without the sender: unreachable by whoever was already paid.
+		v.Closures = append(v.Closures, &script.CLTVMultisigClosure{
+			MultisigClosure: script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{server, tweak(s.Reclaim)},
+			},
+			Locktime: p.ReclaimLocktime,
+		})
+	}
+	return v
 }

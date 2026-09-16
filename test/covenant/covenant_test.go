@@ -8,6 +8,7 @@ import (
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/test/covenant"
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -553,6 +554,13 @@ func TestParamsValidation(t *testing.T) {
 
 	// A zero absolute locktime is always satisfied, so the recovery leaf would be
 	// spendable the moment the covenant is funded.
+	t.Run("rejects_reclaim_locktime_not_after_locktime", func(t *testing.T) {
+		p := params(t, false)
+		p.ReclaimLocktime = p.Locktime
+		_, err := covenant.Build(p, minAmount)
+		require.ErrorContains(t, err, "must be after locktime")
+	})
+
 	t.Run("rejects_zero_locktime", func(t *testing.T) {
 		bad := p
 		bad.Locktime = 0
@@ -591,4 +599,77 @@ func TestParamsValidation(t *testing.T) {
 		partial.Topup = dust - 50
 		require.Equal(t, dust-50, partial.RefundTopup(minAmount))
 	})
+}
+
+// The last two subtests are the point: once the solver is paid, no leaf may
+// hand the asset back.
+func TestReclaim(t *testing.T) {
+	p := params(t, true)
+	p.ReclaimLocktime = p.Locktime + 100_000
+	s, err := covenant.Build(p, minAmount)
+	require.NoError(t, err)
+	require.NotNil(t, s.Reclaim)
+
+	topup := p.RefundTopup(minAmount)
+	valid := spend{
+		prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+		outputs: []*wire.TxOut{
+			{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+			{Value: dust - topup, PkScript: subDust(t, p.ReceiverKey)},
+		},
+		packet: packetOf(t, *p.AssetID,
+			map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+		),
+	}
+
+	t.Run("valid", func(t *testing.T) {
+		require.NoError(t, run(t, s.Reclaim, valid))
+	})
+
+	t.Run("reject_operator_above_its_carrier", func(t *testing.T) {
+		c := valid.clone()
+		c.outputs[0].Value = topup + 1
+		requireRejected(t, run(t, s.Reclaim, c))
+	})
+
+	t.Run("reject_receipt_diverted", func(t *testing.T) {
+		c := valid.clone()
+		c.outputs[1].PkScript = subDust(t, key(t, 7))
+		requireRejected(t, run(t, s.Reclaim, c))
+	})
+
+	// The scripts differ only in which key holds vout 1, so swapping them is
+	// not a compile error.
+	t.Run("reclaim_refuses_paying_the_sender", func(t *testing.T) {
+		c := valid.clone()
+		c.outputs[1].PkScript = subDust(t, p.SenderKey)
+		requireRejected(t, run(t, s.Reclaim, c))
+	})
+
+	t.Run("refund_refuses_paying_the_receiver", func(t *testing.T) {
+		requireRejected(t, run(t, s.Refund, valid))
+	})
+}
+
+// The backstop appears only when its locktime is set, never with the sender.
+func TestReclaimLeafAssembly(t *testing.T) {
+	server, emulator := key(t, 4), key(t, 5)
+
+	p := params(t, false)
+	s, err := covenant.Build(p, minAmount)
+	require.NoError(t, err)
+	require.Nil(t, s.Reclaim)
+	require.Len(t, covenant.VtxoScript(server, emulator, p.SenderKey, p, s).Closures, 4)
+
+	p.ReclaimLocktime = p.Locktime + 100_000
+	s, err = covenant.Build(p, minAmount)
+	require.NoError(t, err)
+
+	closures := covenant.VtxoScript(server, emulator, p.SenderKey, p, s).Closures
+	require.Len(t, closures, 5)
+
+	raw, err := closures[4].Script()
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), string(schnorr.SerializePubKey(p.SenderKey)),
+		"the post-claim leaf must not be reachable by the party already paid")
 }
