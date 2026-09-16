@@ -45,7 +45,7 @@ const (
 // cosigner verification.
 // Witness stack: [].
 //
-//	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIMEVERIFY          # within 1024 seconds of expiry
+//	OP_PUSHEXPIRY 1024 OP_SUB OP_CHECKTIME OP_VERIFY      # within 1024 seconds of expiry
 //	"type" OP_INSPECTINTENTMESSAGE OP_VERIFY "register" OP_EQUALVERIFY  # type == "register"
 //	"onchain_output_indexes" OP_INSPECTINTENTMESSAGE OP_VERIFY "[]" OP_EQUALVERIFY  # no onchain outputs
 //	"cosigners_public_keys.0" OP_INSPECTINTENTMESSAGE OP_VERIFY <pubkey> OP_EQUALVERIFY  # cosigner[0] == delegate key
@@ -100,7 +100,8 @@ func TestCovenantDelegate(t *testing.T) {
 		AddOp(arkade.OP_PUSHEXPIRY).
 		AddInt64(1024).
 		AddOp(arkade.OP_SUB).
-		AddOp(arkade.OP_CHECKTIMEVERIFY).
+		AddOp(arkade.OP_CHECKTIME).
+		AddOp(txscript.OP_VERIFY).
 		// Check intent message type == "register"
 		AddData([]byte("type")).
 		AddOp(arkade.OP_INSPECTINTENTMESSAGE).
