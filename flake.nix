@@ -9,8 +9,8 @@
 
     # master, not a branch ref.
     #
-    # TODO: Update this to a release tag.
-    enclave.url = "github:ArkLabsHQ/enclave/a666c4f890dd06acd7c586ec713444c2a22cfd07";
+    # TODO: Update this to match a release tag.
+    enclave.url = "github:ArkLabsHQ/enclave/3c33a40ef4a2a49297ab5df5163945fa9e50e544";
   };
 
   outputs =
@@ -60,7 +60,7 @@
         # Always go through `lib.fakeHash`. A stale hash whose vendor directory is already
         # in /nix/store is reused without a rebuild, and go then fails much later with
         # "inconsistent vendoring".
-        vendorHash = "sha256-sK4f/zVAH1Bj0T816cIHdIUbtdd5mbrGtlvgubbKJzA=";
+        vendorHash = "sha256-TD1XMnE4gZrbPWdudekHMDHee99jY/LJ1VRHevWqavw=";
 
         subPackages = [ "cmd" ];
         ldflags = [
