@@ -112,7 +112,7 @@
           region = "eu-central-1";
           fqdn = "emulator.mutinynet.enclave-dev.arkade.sh";
           acmeDirectory = "https://acme-v02.api.letsencrypt.org/directory";
-          dev = true;
+          dev = false;
           migrationCooldown = "0s";
         };
 
