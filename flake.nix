@@ -131,12 +131,13 @@
       # its state. Bump on every migration and record the generation.
       #
       #   mutinynet:
-      #     gen 1  genesis                                <- current
+      #     gen 1  genesis
+      #     gen 2  7ac5c58 <- current
       #
       #   se7enz:
       #     gen 1  genesis                                <- current
       predecessors = {
-        mutinynet = "genesis";
+        mutinynet = "7ac5c58b129cdf9ff1f9638c713378f53814c3ea0c7d82f36c1ecb8f06916ce4e58bc4d0a72e51e331ff1c036e2d0b38";
         se7enz    = "genesis";
       };
 
