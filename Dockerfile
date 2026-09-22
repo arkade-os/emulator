@@ -26,7 +26,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-X 'main.Version=${VERSION}'" -o ./bin/emulator ./cmd/emulator.go
 
 # Second image, running the executable
-FROM alpine:3.20
+FROM alpine:3.24
 
 RUN apk update && apk upgrade
 
