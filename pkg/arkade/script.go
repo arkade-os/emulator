@@ -39,6 +39,11 @@ func WithIntentMessage(raw string) ExecuteOption {
 	return func(engine *Engine) { engine.intentMessage = []byte(raw) }
 }
 
+// WithTunnelClaims shares one accumulator across a transaction's inputs.
+func WithTunnelClaims(claims *TunnelClaims) ExecuteOption {
+	return func(engine *Engine) { engine.tunnelClaims = claims }
+}
+
 func WithDebugCallback(callback func(*StepInfo, *Engine) error) ExecuteOption {
 	return func(engine *Engine) {
 		engine.stepCallback = func(step *StepInfo) error {

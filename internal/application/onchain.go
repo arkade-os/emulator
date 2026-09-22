@@ -37,6 +37,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	claims := arkade.NewTunnelClaims()
 
 	nSigned := 0
 
@@ -46,6 +47,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 		matchedSigner, script, err := resolveArkadeScriptSigner(s.signer, s.activeDeprecatedSigners(), ptx, entry)
 		if err != nil {
 			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(ptx.Inputs) > 1 {
+				claims.MarkPartial()
 				continue
 			}
 			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
@@ -65,6 +67,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithTunnelClaims(claims),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
@@ -79,6 +82,10 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 
 	if nSigned == 0 {
 		return nil, fmt.Errorf("failed to find any valid input/entry pairs")
+	}
+
+	if err := claims.Verify(ptx.UnsignedTx); err != nil {
+		return nil, fmt.Errorf("aggregated tunnel claims not satisfied: %w", err)
 	}
 
 	return ptx, nil
