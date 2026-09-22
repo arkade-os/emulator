@@ -49,12 +49,34 @@ type Params struct {
 
 	// Zero omits the backstop leaf: the tree is not fixed-shape.
 	ReclaimLocktime arklib.AbsoluteLocktime
+
+	// Who the refund and recovery leaves pay. Empty is RecoverySender;
+	// RecoveryReceiver is for a delivery already settled, where refunding the
+	// paid seller is the failure being prevented.
+	RecoveryRecipient string
+
+	// Forbids one claim leaf. Empty keeps both.
+	ClaimMode string
 }
+
+const (
+	RecoverySender   = "sender"
+	RecoveryReceiver = "receiver"
+
+	ClaimModeRecycle  = "recycle"
+	ClaimModePurchase = "purchase"
+)
 
 func (p Params) Validate(vtxoMinAmount int64) error {
 	switch {
 	case p.ReceiverKey == nil || p.SenderKey == nil || p.OperatorKey == nil:
 		return fmt.Errorf("covenant: receiver, sender and operator keys are required")
+	case p.RecoveryRecipient != "" && p.RecoveryRecipient != RecoverySender &&
+		p.RecoveryRecipient != RecoveryReceiver:
+		return fmt.Errorf("covenant: unknown recovery recipient %q", p.RecoveryRecipient)
+	case p.ClaimMode != "" && p.ClaimMode != ClaimModeRecycle &&
+		p.ClaimMode != ClaimModePurchase:
+		return fmt.Errorf("covenant: unknown claimMode %q", p.ClaimMode)
 	case p.Dust <= 0:
 		return fmt.Errorf("covenant: dust must be positive, got %d", p.Dust)
 	case vtxoMinAmount <= 0:
@@ -82,6 +104,11 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		// recovery leaf spendable the moment the covenant is funded and collapse
 		// the timeout the operator's exposure is bounded by.
 		return fmt.Errorf("covenant: locktime must be non-zero")
+	case p.RecoveryRecipient == RecoveryReceiver && p.AssetID != nil &&
+		p.RefundTopup(vtxoMinAmount) < vtxoMinAmount:
+		return fmt.Errorf(
+			"covenant: receiver recovery needs an asset and at least %d sats to host its receipt", vtxoMinAmount,
+		)
 	}
 	return nil
 }
@@ -95,6 +122,14 @@ func (p Params) RefundTopup(vtxoMinAmount int64) int64 {
 		return capped
 	}
 	return p.Topup
+}
+
+// UnrecoveredTopup is Topup - RefundTopup(vtxoMinAmount): the carrier principal
+// the refund leaves never return. A quote must reserve it before promising a
+// whole carrier back. Distinct from the receipt's own value (Dust-RefundTopup),
+// which stays non-zero even when this is zero.
+func (p Params) UnrecoveredTopup(vtxoMinAmount int64) int64 {
+	return p.Topup - p.RefundTopup(vtxoMinAmount)
 }
 
 // PayoutPkScript is the scriptPubKey a covenant-pinned payout must use: P2TR at
@@ -230,7 +265,12 @@ func BuildPurchase(p Params) ([]byte, error) {
 // receives a sub-dust receipt, acceptable because the sender demonstrably owns a
 // funded account and can merge it later; it would not be acceptable for the
 // receiver, which is why no claim leaf pays sub-dust.
+//
+// Delegates to BuildReclaim when RecoveryRecipient is RecoveryReceiver.
 func BuildRefund(p Params, vtxoMinAmount int64) ([]byte, error) {
+	if p.RecoveryRecipient == RecoveryReceiver {
+		return BuildReclaim(p, vtxoMinAmount)
+	}
 	topup := p.RefundTopup(vtxoMinAmount)
 	b := txscript.NewScriptBuilder().
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).AddInt64(0).AddOp(arkade.OP_EQUALVERIFY).
@@ -293,6 +333,14 @@ type Scripts struct {
 	Reclaim  []byte
 }
 
+// disableLeafScript is the payload whose emulator tweak makes a claim leaf
+// unspendable. A bare OP_FALSE cannot be a tapscript leaf -- arkd does not admit
+// that shape -- so the leaf keeps its multisig closure and only the co-signer
+// moves. The mode is committed in VtxoScript; Build returns the live programs.
+func disableLeafScript() []byte {
+	return []byte{arkade.OP_FALSE}
+}
+
 func Build(p Params, vtxoMinAmount int64) (Scripts, error) {
 	if err := p.Validate(vtxoMinAmount); err != nil {
 		return Scripts{}, err
@@ -327,10 +375,23 @@ func VtxoScript(
 	tweak := func(b []byte) *btcec.PublicKey {
 		return arkade.ComputeArkadeScriptPublicKey(emulator, arkade.ArkadeScriptHash(b))
 	}
+	// A forbidden claim leaf keeps its index and sibling positions.
+	claimKey := func(leaf int, live []byte) *btcec.PublicKey {
+		disabled := (p.ClaimMode == ClaimModeRecycle && leaf == LeafPurchase) ||
+			(p.ClaimMode == ClaimModePurchase && leaf == LeafRecycle)
+		if disabled {
+			return tweak(disableLeafScript())
+		}
+		return tweak(live)
+	}
 	v := script.TapscriptsVtxoScript{
 		Closures: []script.Closure{
-			&script.MultisigClosure{PubKeys: []*btcec.PublicKey{server, tweak(s.Recycle)}},
-			&script.MultisigClosure{PubKeys: []*btcec.PublicKey{server, tweak(s.Purchase)}},
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{server, claimKey(LeafRecycle, s.Recycle)},
+			},
+			&script.MultisigClosure{
+				PubKeys: []*btcec.PublicKey{server, claimKey(LeafPurchase, s.Purchase)},
+			},
 			&script.MultisigClosure{
 				PubKeys: []*btcec.PublicKey{server, sender, tweak(s.Refund)},
 			},

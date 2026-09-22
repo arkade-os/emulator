@@ -1,6 +1,7 @@
 package covenant_test
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
@@ -672,4 +673,354 @@ func TestReclaimLeafAssembly(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), string(schnorr.SerializePubKey(p.SenderKey)),
 		"the post-claim leaf must not be reachable by the party already paid")
+}
+
+// The emulator key is tweaked with this to make a claim leaf unreachable.
+func disabledLeafScript() []byte {
+	return []byte{arkade.OP_FALSE}
+}
+
+func tapleaf(t *testing.T, v script.TapscriptsVtxoScript, i int) []byte {
+	t.Helper()
+	raw, err := v.Closures[i].Script()
+	require.NoError(t, err)
+	return raw
+}
+
+func TestClaimMode(t *testing.T) {
+	p := params(t, true)
+
+	legacy, err := covenant.Build(p, minAmount)
+	require.NoError(t, err)
+
+	recycleOnly := p
+	recycleOnly.ClaimMode = "recycle"
+	recycle, err := covenant.Build(recycleOnly, minAmount)
+	require.NoError(t, err)
+
+	purchaseOnly := p
+	purchaseOnly.ClaimMode = "purchase"
+	purchase, err := covenant.Build(purchaseOnly, minAmount)
+	require.NoError(t, err)
+
+	// Funded covenants are pinned to these scripts, so absence must change nothing.
+	t.Run("absent_mode_keeps_legacy_programs", func(t *testing.T) {
+		for _, mode := range []covenant.Scripts{recycle, purchase} {
+			require.Equal(t, hex.EncodeToString(legacy.Recycle), hex.EncodeToString(mode.Recycle))
+			require.Equal(t, hex.EncodeToString(legacy.Purchase), hex.EncodeToString(mode.Purchase))
+			require.Equal(t, hex.EncodeToString(legacy.Refund), hex.EncodeToString(mode.Refund))
+		}
+	})
+
+	t.Run("empty_mode_is_legacy", func(t *testing.T) {
+		legacyMode := p
+		legacyMode.ClaimMode = ""
+		scripts, err := covenant.Build(legacyMode, minAmount)
+		require.NoError(t, err)
+		require.Equal(t, hex.EncodeToString(legacy.Recycle), hex.EncodeToString(scripts.Recycle))
+		require.Equal(t, hex.EncodeToString(legacy.Purchase), hex.EncodeToString(scripts.Purchase))
+		require.Equal(t, hex.EncodeToString(legacy.Refund), hex.EncodeToString(scripts.Refund))
+	})
+
+	t.Run("rejects_unknown_mode", func(t *testing.T) {
+		bad := p
+		bad.ClaimMode = "bogus"
+		_, err := covenant.Build(bad, minAmount)
+		require.ErrorContains(t, err, "claimMode")
+	})
+
+	// The mode has to reach the tree, not just the returned programs.
+	t.Run("mode_changes_the_address_but_not_the_leaf_indexes", func(t *testing.T) {
+		server, emulator := key(t, 4), key(t, 5)
+		legacyTree := covenant.VtxoScript(server, emulator, p.SenderKey, p, legacy)
+		recycleTree := covenant.VtxoScript(server, emulator, p.SenderKey, recycleOnly, recycle)
+		purchaseTree := covenant.VtxoScript(server, emulator, p.SenderKey, purchaseOnly, purchase)
+
+		require.Len(t, legacyTree.Closures, len(recycleTree.Closures))
+		require.Len(t, legacyTree.Closures, len(purchaseTree.Closures))
+
+		legacyKey, _, err := legacyTree.TapTree()
+		require.NoError(t, err)
+		recycleKey, _, err := recycleTree.TapTree()
+		require.NoError(t, err)
+		purchaseKey, _, err := purchaseTree.TapTree()
+		require.NoError(t, err)
+		require.False(t, legacyKey.IsEqual(recycleKey), "a committed mode must change the address")
+		require.False(t, legacyKey.IsEqual(purchaseKey), "a committed mode must change the address")
+		require.False(t, recycleKey.IsEqual(purchaseKey), "the two modes must differ")
+
+		for _, i := range []int{covenant.LeafRefundSender, covenant.LeafRecovery} {
+			require.Equal(t, tapleaf(t, legacyTree, i), tapleaf(t, recycleTree, i),
+				"leaf %d must be untouched by a claim mode", i)
+			require.Equal(t, tapleaf(t, legacyTree, i), tapleaf(t, purchaseTree, i),
+				"leaf %d must be untouched by a claim mode", i)
+		}
+		require.Equal(t, tapleaf(t, legacyTree, covenant.LeafRecycle),
+			tapleaf(t, recycleTree, covenant.LeafRecycle))
+		require.Equal(t, tapleaf(t, legacyTree, covenant.LeafPurchase),
+			tapleaf(t, purchaseTree, covenant.LeafPurchase))
+	})
+
+	// The forbidden closure must stay the two-key multisig shape arkd admits.
+	t.Run("disabled_closure_keeps_its_shape", func(t *testing.T) {
+		server, emulator := key(t, 4), key(t, 5)
+		tree := covenant.VtxoScript(server, emulator, p.SenderKey, recycleOnly, recycle)
+
+		raw := tapleaf(t, tree, covenant.LeafPurchase)
+		closure, err := script.DecodeClosure(raw)
+		require.NoError(t, err)
+		decoded, ok := closure.(*script.MultisigClosure)
+		require.True(t, ok, "disabled leaf must stay a multisig closure, got %T", closure)
+		require.Len(t, decoded.PubKeys, 2)
+		require.True(t, decoded.PubKeys[0].IsEqual(server))
+		require.True(t, decoded.PubKeys[1].IsEqual(
+			arkade.ComputeArkadeScriptPublicKey(emulator, arkade.ArkadeScriptHash(disabledLeafScript())),
+		), "the disabled leaf must carry the false-script tweak")
+	})
+
+	// Buildable, but the emulator refuses to run the false script.
+	t.Run("disabled_claim_script_is_unspendable", func(t *testing.T) {
+		receiverPk := p2tr(t, p.ReceiverKey)
+		valid := spend{
+			prevouts: []*wire.TxOut{
+				{Value: dust, PkScript: p2tr(t, key(t, 9))},
+				{Value: dust, PkScript: receiverPk},
+			},
+			outputs: []*wire.TxOut{
+				{Value: p.Topup, PkScript: p2tr(t, p.OperatorKey)},
+				{Value: dust, PkScript: receiverPk},
+			},
+			packet: packetOf(t, *p.AssetID,
+				map[uint16]uint64{0: 1, 1: 20},
+				map[uint16]uint64{1: 21},
+			),
+		}
+
+		require.NoError(t, run(t, recycle.Recycle, valid),
+			"the permitted claim path must still be satisfiable")
+		requireRejected(t, run(t, disabledLeafScript(), valid))
+	})
+}
+
+// receiverParams is the already-settled delivery variant.
+func receiverParams(t *testing.T, withAsset bool) covenant.Params {
+	t.Helper()
+	p := params(t, withAsset)
+	p.RecoveryRecipient = covenant.RecoveryReceiver
+	return p
+}
+
+func TestRecoveryRecipient(t *testing.T) {
+	t.Run("empty_and_sender_recipients_are_legacy", func(t *testing.T) {
+		p := params(t, true)
+		legacy, err := covenant.Build(p, minAmount)
+		require.NoError(t, err)
+
+		sender := p
+		sender.RecoveryRecipient = covenant.RecoverySender
+		senderScripts, err := covenant.Build(sender, minAmount)
+		require.NoError(t, err)
+		require.Equal(t, hex.EncodeToString(legacy.Refund), hex.EncodeToString(senderScripts.Refund))
+		require.Equal(t, hex.EncodeToString(legacy.Recycle), hex.EncodeToString(senderScripts.Recycle))
+		require.Equal(t, hex.EncodeToString(legacy.Purchase), hex.EncodeToString(senderScripts.Purchase))
+	})
+
+	// The receiver must outrank the sender on every recovery leaf.
+	t.Run("pays_the_receiver_on_every_recovery_leaf", func(t *testing.T) {
+		p := receiverParams(t, true)
+		s, err := covenant.Build(p, minAmount)
+		require.NoError(t, err)
+
+		topup := p.RefundTopup(minAmount)
+		valid := spend{
+			prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+			outputs: []*wire.TxOut{
+				{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+				{Value: dust - topup, PkScript: subDust(t, p.ReceiverKey)},
+			},
+			packet: packetOf(t, *p.AssetID,
+				map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+			),
+		}
+
+		require.NoError(t, run(t, s.Refund, valid), "refund must pay the receiver")
+
+		// Only vout 1 is rewritten, isolating the recipient key.
+		paying := func(k *btcec.PublicKey) spend {
+			c := valid.clone()
+			c.outputs[1].PkScript = subDust(t, k)
+			return c
+		}
+		// The signed refund leaf must never pay the seller.
+		requireRejected(t, run(t, s.Refund, paying(p.SenderKey)))
+		requireRejected(t, run(t, s.Refund, paying(p.OperatorKey)))
+	})
+
+	// The script, not the CLTV, must be what rejects a sender-shaped refund.
+	t.Run("old_sender_refund_rejects_under_both_recovery_scripts", func(t *testing.T) {
+		p := receiverParams(t, true)
+		p.ReclaimLocktime = p.Locktime + 100_000
+		s, err := covenant.Build(p, minAmount)
+		require.NoError(t, err)
+		require.NotNil(t, s.Reclaim)
+
+		topup := p.RefundTopup(minAmount)
+		senderShaped := spend{
+			prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+			outputs: []*wire.TxOut{
+				{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+				{Value: dust - topup, PkScript: subDust(t, p.SenderKey)},
+			},
+			packet: packetOf(t, *p.AssetID,
+				map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+			),
+		}
+
+		// The signed refund leaf and the CLTV recovery leaf share one program
+		// here, so a rejected sender payout covers both paths at once.
+		require.Equal(t, hex.EncodeToString(s.Refund), hex.EncodeToString(s.Reclaim),
+			"receiver recovery makes the refund and reclaim programs identical")
+		requireRejected(t, run(t, s.Refund, senderShaped))
+		requireRejected(t, run(t, s.Reclaim, senderShaped))
+	})
+
+	// The operator cannot take the receipt's host sat, and the receipt must
+	// carry the asset.
+	t.Run("rejects_wrong_operator_amount_and_missing_asset", func(t *testing.T) {
+		p := receiverParams(t, true)
+		s, err := covenant.Build(p, minAmount)
+		require.NoError(t, err)
+
+		topup := p.RefundTopup(minAmount)
+		valid := spend{
+			prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+			outputs: []*wire.TxOut{
+				{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+				{Value: dust - topup, PkScript: subDust(t, p.ReceiverKey)},
+			},
+			packet: packetOf(t, *p.AssetID,
+				map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+			),
+		}
+		require.NoError(t, run(t, s.Refund, valid))
+
+		t.Run("operator_above_its_carrier", func(t *testing.T) {
+			c := valid.clone()
+			c.outputs[0].Value = topup + 1
+			requireRejected(t, run(t, s.Refund, c))
+		})
+
+		t.Run("operator_key_wrong", func(t *testing.T) {
+			c := valid.clone()
+			c.outputs[0].PkScript = subDust(t, key(t, 7))
+			requireRejected(t, run(t, s.Refund, c))
+		})
+
+		t.Run("no_asset_packet", func(t *testing.T) {
+			c := valid.clone()
+			c.packet = nil
+			// The lookup cannot run without a packet, so the script aborts rather
+			// than evaluating false. Asserting that is the point: the asset clause
+			// must not be skippable.
+			err := run(t, s.Refund, c)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "no asset packet")
+		})
+
+		t.Run("foreign_asset_id", func(t *testing.T) {
+			c := valid.clone()
+			c.packet = packetOf(t, assetID(7),
+				map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+			)
+			requireRejected(t, run(t, s.Refund, c))
+		})
+	})
+
+	// Topup == Dust holds one VtxoMinAmount back for the receipt: 329 repaid.
+	t.Run("full_dust_topup_recovers_all_but_the_receipt", func(t *testing.T) {
+		p := receiverParams(t, true)
+		s, err := covenant.Build(p, minAmount)
+		require.NoError(t, err)
+
+		require.Equal(t, dust, p.Topup)
+		require.Equal(t, dust-minAmount, p.RefundTopup(minAmount))
+		require.Equal(t, minAmount, p.UnrecoveredTopup(minAmount))
+
+		topup := p.RefundTopup(minAmount)
+		paid := spend{
+			prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+			outputs: []*wire.TxOut{
+				{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+				{Value: minAmount, PkScript: subDust(t, p.ReceiverKey)},
+			},
+			packet: packetOf(t, *p.AssetID,
+				map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+			),
+		}
+		require.NoError(t, run(t, s.Refund, paid))
+
+		// Claiming all 330 would strand the hosted asset below arkd's minimum.
+		requireRejected(t, run(t, s.Refund, spend{
+			prevouts: paid.prevouts,
+			outputs: []*wire.TxOut{
+				{Value: dust, PkScript: subDust(t, p.OperatorKey)},
+				{Value: 0, PkScript: subDust(t, p.ReceiverKey)},
+			},
+			packet: paid.packet,
+		}))
+	})
+
+	// A partially funded carrier leaves nothing to hold back.
+	t.Run("partial_topup_recovers_whole", func(t *testing.T) {
+		p := receiverParams(t, true)
+		p.Topup = dust - 50
+		s, err := covenant.Build(p, minAmount)
+		require.NoError(t, err)
+
+		require.Equal(t, dust-50, p.RefundTopup(minAmount))
+		require.Zero(t, p.UnrecoveredTopup(minAmount), "the whole advance comes back")
+
+		topup := p.RefundTopup(minAmount)
+		valid := spend{
+			prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+			outputs: []*wire.TxOut{
+				{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+				{Value: dust - topup, PkScript: subDust(t, p.ReceiverKey)},
+			},
+			packet: packetOf(t, *p.AssetID,
+				map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+			),
+		}
+		require.NoError(t, run(t, s.Refund, valid))
+		require.Equal(t, dust-50, valid.outputs[0].Value, "no sat is held back")
+	})
+
+	// Repaid whole, yet the receipt still needs its own VtxoMinAmount: the
+	// shortfall and the receipt are separate numbers.
+	t.Run("precharged_loan_repays_whole_and_still_hosts_a_receipt", func(t *testing.T) {
+		p := receiverParams(t, true)
+		p.Topup = dust - minAmount
+		s, err := covenant.Build(p, minAmount)
+		require.NoError(t, err)
+
+		require.Zero(t, p.UnrecoveredTopup(minAmount))
+		require.Equal(t, minAmount, p.Dust-p.RefundTopup(minAmount))
+
+		topup := p.RefundTopup(minAmount)
+		require.Equal(t, dust-minAmount, topup)
+		valid := spend{
+			prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 9))}},
+			outputs: []*wire.TxOut{
+				{Value: topup, PkScript: subDust(t, p.OperatorKey)},
+				{Value: minAmount, PkScript: subDust(t, p.ReceiverKey)},
+			},
+			packet: packetOf(t, *p.AssetID,
+				map[uint16]uint64{0: 7}, map[uint16]uint64{1: 7},
+			),
+		}
+		require.NoError(t, run(t, s.Refund, valid))
+		require.Equal(t, topup, valid.outputs[0].Value, "the loan is repaid in full")
+		require.Equal(t, minAmount, valid.outputs[1].Value,
+			"the receipt is still hosted, though no principal was held back")
+	})
 }
