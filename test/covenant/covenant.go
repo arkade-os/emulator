@@ -104,10 +104,12 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		// recovery leaf spendable the moment the covenant is funded and collapse
 		// the timeout the operator's exposure is bounded by.
 		return fmt.Errorf("covenant: locktime must be non-zero")
-	case p.RecoveryRecipient == RecoveryReceiver && p.AssetID != nil &&
+	case p.RecoveryRecipient == RecoveryReceiver && p.AssetID == nil:
+		return fmt.Errorf("covenant: receiver recovery requires an asset id")
+	case p.RecoveryRecipient == RecoveryReceiver &&
 		p.RefundTopup(vtxoMinAmount) < vtxoMinAmount:
 		return fmt.Errorf(
-			"covenant: receiver recovery needs an asset and at least %d sats to host its receipt", vtxoMinAmount,
+			"covenant: receiver recovery needs at least %d sats to host its receipt", vtxoMinAmount,
 		)
 	}
 	return nil

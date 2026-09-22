@@ -589,6 +589,21 @@ func TestParamsValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects_receiver_recovery_without_an_asset", func(t *testing.T) {
+		btc := receiverParams(t, false)
+		_, err := covenant.Build(btc, minAmount)
+		require.ErrorContains(t, err, "requires an asset id")
+	})
+
+	t.Run("rejects_receiver_recovery_without_receipt_room", func(t *testing.T) {
+		// RefundTopup caps at Dust-vtxoMinAmount, so the held-back sat only drops
+		// under the minimum once the dust unit is worth less than two of them.
+		tight := receiverParams(t, true)
+		tight.Dust, tight.Topup = 3, 3
+		_, err := covenant.Build(tight, 2)
+		require.ErrorContains(t, err, "sats to host its receipt")
+	})
+
 	// RefundTopup only differs from Topup when the operator funded the whole
 	// dust unit; that single sat is the cost of an abandoned asset payment.
 	t.Run("refund_topup_reserves_one_min_amount_only_when_fully_funded", func(t *testing.T) {
