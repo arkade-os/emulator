@@ -281,7 +281,7 @@ const (
 	OP_REVERSEBYTES                  = 0xd9 // 217
 	OP_MODEXP                        = 0xda // 218
 	OP_PUSHEXPIRY                    = 0xdb // 219
-	OP_CHECKTIMEVERIFY               = 0xdc // 220
+	OP_CHECKTIME                     = 0xdc // 220
 	OP_UNKNOWN221                    = 0xdd // 221
 	OP_UNKNOWN222                    = 0xde // 222
 	OP_UNKNOWN223                    = 0xdf // 223
@@ -583,7 +583,7 @@ var opcodeArray = [256]opcode{
 	OP_REVERSEBYTES:                  {OP_REVERSEBYTES, "OP_REVERSEBYTES", 1, opcodeReverseBytes},
 	OP_MODEXP:                        {OP_MODEXP, "OP_MODEXP", 1, opcodeModexp},
 	OP_PUSHEXPIRY:                    {OP_PUSHEXPIRY, "OP_PUSHEXPIRY", 1, opcodePushExpiry},
-	OP_CHECKTIMEVERIFY:               {OP_CHECKTIMEVERIFY, "OP_CHECKTIMEVERIFY", 1, opcodeCheckTimeVerify},
+	OP_CHECKTIME:                     {OP_CHECKTIME, "OP_CHECKTIME", 1, opcodeCheckTime},
 	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
 	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
 	OP_UNKNOWN223:                    {OP_UNKNOWN223, "OP_UNKNOWN223", 1, opcodeInvalid},
@@ -979,10 +979,10 @@ func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeCheckTimeVerify checks that the Unix timestamp on top of the data
-// stack is not later than the emulator's current time.
-// Stack transformation: [... timestamp] -> [...]
-func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
+// opcodeCheckTime checks whether the Unix timestamp on top of the data stack
+// is not later than the emulator's current time.
+// Stack transformation: [... timestamp] -> [... bool]
+func opcodeCheckTime(_ *opcode, _ []byte, vm *Engine) error {
 	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
@@ -991,11 +991,7 @@ func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
 		return scriptError(txscript.ErrNegativeLockTime,
 			fmt.Sprintf("negative timestamp: %s", n.BigInt().Text(10)))
 	}
-	if n.Cmp(vm.currentTime) > 0 {
-		return scriptError(txscript.ErrUnsatisfiedLockTime,
-			fmt.Sprintf("timestamp is later than emulator time: %s > %s",
-				n.BigInt().Text(10), vm.currentTime.BigInt().Text(10)))
-	}
+	vm.dstack.PushBool(n.Cmp(vm.currentTime) <= 0)
 	return nil
 }
 
