@@ -106,6 +106,7 @@ type Engine struct {
 	prevOutFetcher ArkPrevOutFetcher
 	assetPacket    asset.Packet
 	emulatorPacket EmulatorPacket
+	tunnelClaims   *TunnelClaims
 	expiry         *int64
 	currentTime    BigNum
 	intentMessage  []byte

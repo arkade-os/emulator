@@ -49,6 +49,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	finalizerAcc := newFinalizerAccumulator(s.arkdPubKey)
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	claims := arkade.NewTunnelClaims()
 
 	var nSigned = 0
 	for _, entry := range packet {
@@ -57,6 +58,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		if err != nil {
 			// there may be input/entry pairs attributed to a different signer
 			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) && len(arkPtx.Inputs) > 1 {
+				claims.MarkPartial()
 				continue
 			}
 			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
@@ -88,6 +90,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
 			arkade.WithExpiry(expiry),
+			arkade.WithTunnelClaims(claims),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
@@ -115,6 +118,10 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 
 	if nSigned == 0 {
 		return nil, fmt.Errorf("failed to find any valid input/entry pairs")
+	}
+
+	if err := claims.Verify(arkPtx.UnsignedTx); err != nil {
+		return nil, fmt.Errorf("aggregated tunnel claims not satisfied: %w", err)
 	}
 
 	signedCheckpointTxs := tx.Checkpoints
