@@ -27,7 +27,7 @@ var update = flag.Bool("update", false, "rewrite the committed fixtures")
 // can tell which reference the bytes came from. Bump it deliberately with -update
 // when the covenant semantics change; deriving it from the environment instead
 // would make the no-update assertion fail wherever that environment is absent.
-const referenceRevision = "78e2d959376da016b9fd6e70993ef9a0112a60d2"
+const referenceRevision = "7e071515cd1bfb35154448f6ad88a63bef3793a1"
 
 type jsonParams struct {
 	ReceiverKey       string  `json:"receiverKey"`
