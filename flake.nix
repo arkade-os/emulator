@@ -7,10 +7,10 @@
     # build would fail there.
     nixpkgs.url = "github:NixOS/nixpkgs/4651bb1e93b161a60975279b6ca8381de59d9a9c";
 
-    # master, not a branch ref.
+    # Tip of `inherit_secret`, the first revision with ENCLAVE_INHERIT_SECRETS_CONFIG.
     #
-    # TODO: Update this to match a release tag.
-    enclave.url = "github:ArkLabsHQ/enclave/3c33a40ef4a2a49297ab5df5163945fa9e50e544";
+    # TODO: Back to master once that branch is merged, then to a release tag.
+    enclave.url = "github:ArkLabsHQ/enclave/67e5a971ec2c9f61e7bc219fb5ad51cb8740493b";
   };
 
   outputs =
@@ -105,6 +105,21 @@
       #     dev               = false;               # ten-year Object Lock, locked key
       #     # Omit to take the posture default of 24h.
       #     migrationCooldown = "336h";              # two weeks
+      #     deprecatedKeys    = null;
+      #   };
+      #
+      # deprecatedKeys: signing keys from before this deployment, honoured until
+      # `cutoff` so VTXOs still on one of them can be moved. null to inherit none.
+      # Both fields are measured into PCR0.
+      #
+      #   deprecatedKeys = {
+      #     # Compressed secp256k1 pubkeys. The operator puts the matching private
+      #     # keys, comma-separated hex with no spaces, in the SecureString
+      #     # /<deployment>/emulator/inherit/emulator-deprecated-keys; a mismatch
+      #     # fails the boot.
+      #     pubkeys = [ "02…" ];
+      #     # RFC 3339. Old-key VTXOs are refused from this instant.
+      #     cutoff = "2027-01-01T00:00:00Z";
       #   };
       environments = {
         mutinynet = {
@@ -114,6 +129,7 @@
           acmeDirectory = "https://acme-v02.api.letsencrypt.org/directory";
           dev = false;
           migrationCooldown = "0s";
+          deprecatedKeys = null;
         };
 
         se7enz = {
@@ -123,6 +139,7 @@
           acmeDirectory = "https://acme-v02.api.letsencrypt.org/directory";
           dev = true;
           migrationCooldown = "0s";
+          deprecatedKeys = null;
         };
       };
 
@@ -250,6 +267,24 @@
             # week for the same hostname set, and 5 failed validations per hour. A genesis
             # needing several attempts can exhaust them.
             ENCLAVE_ACME_DIRECTORY = env.acmeDirectory;
+          }
+          // lib.optionalAttrs (env.deprecatedKeys != null) {
+            # --- Inherited secrets --------------------------------------------------
+            # In nonOverridableEnv. The runtime pins the SSM value to `pubkeys`, and
+            # at `cutoff` relaunches the emulator without the variable.
+            ENCLAVE_INHERIT_SECRETS_CONFIG = builtins.toJSON [
+              {
+                name = "emulator-deprecated-keys";
+                env_var = "EMULATOR_DEPRECATED_KEYS";
+                type = "publicKey";
+                value = env.deprecatedKeys.pubkeys;
+                cutoff = env.deprecatedKeys.cutoff;
+              }
+            ];
+
+            # Same instant for the emulator's own check, so signing stops at the
+            # cutoff rather than at the runtime's next 30s poll.
+            EMULATOR_DEPRECATED_KEYS_VALID_UNTIL = env.deprecatedKeys.cutoff;
           };
         };
     in
