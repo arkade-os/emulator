@@ -1,6 +1,7 @@
 package covenant_test
 
 import (
+	"bytes"
 	"encoding/hex"
 	"testing"
 
@@ -76,17 +77,68 @@ func (s spend) clone() spend {
 	out := spend{
 		prevouts: make([]*wire.TxOut, len(s.prevouts)),
 		outputs:  make([]*wire.TxOut, len(s.outputs)),
-		packet:   s.packet,
+		packet:   clonePacket(s.packet),
 	}
 	for i, p := range s.prevouts {
 		cp := *p
+		cp.PkScript = bytes.Clone(p.PkScript)
 		out.prevouts[i] = &cp
 	}
 	for i, o := range s.outputs {
 		cp := *o
+		cp.PkScript = bytes.Clone(o.PkScript)
 		out.outputs[i] = &cp
 	}
 	return out
+}
+
+// A codec round trip rather than a field-by-field copy, so a pointer or slice
+// ark-lib later adds to AssetGroup cannot end up shared. Test packets come from
+// asset.NewPacket, which already validated them, so neither step can fail.
+func clonePacket(p asset.Packet) asset.Packet {
+	if p == nil {
+		return nil
+	}
+	raw, err := p.Serialize()
+	if err != nil {
+		panic(err)
+	}
+	out, err := asset.NewPacketFromBytes(raw)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+func TestSpendCloneIsDeep(t *testing.T) {
+	orig := spend{
+		prevouts: []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 1))}},
+		outputs:  []*wire.TxOut{{Value: dust, PkScript: p2tr(t, key(t, 2))}},
+		packet: packetOf(t, assetID(0),
+			map[uint16]uint64{0: 7}, map[uint16]uint64{0: 7},
+		),
+	}
+	before, err := orig.packet.Serialize()
+	require.NoError(t, err)
+	prevScript := bytes.Clone(orig.prevouts[0].PkScript)
+	outScript := bytes.Clone(orig.outputs[0].PkScript)
+
+	c := orig.clone()
+	cloned, err := c.packet.Serialize()
+	require.NoError(t, err)
+	require.Equal(t, before, cloned)
+
+	c.prevouts[0].PkScript[2] ^= 0xff
+	c.outputs[0].PkScript[2] ^= 0xff
+	c.packet[0].AssetId.Index = 9
+	c.packet[0].Inputs[0].Amount = 1
+	c.packet[0].Outputs[0].Amount = 1
+
+	after, err := orig.packet.Serialize()
+	require.NoError(t, err)
+	require.Equal(t, before, after, "mutating a clone's packet changed the original")
+	require.Equal(t, prevScript, orig.prevouts[0].PkScript)
+	require.Equal(t, outScript, orig.outputs[0].PkScript)
 }
 
 // run executes the covenant as input 0 of a synthetic transaction.
