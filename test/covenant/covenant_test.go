@@ -562,6 +562,27 @@ func TestParamsValidation(t *testing.T) {
 		require.ErrorContains(t, err, "must be after locktime")
 	})
 
+	t.Run("rejects_mixed_type_locktimes", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			set  func(*covenant.Params)
+		}{
+			{"height_then_timestamp", func(q *covenant.Params) {
+				q.Locktime, q.ReclaimLocktime = 800_000, 500_000_001
+			}},
+			{"timestamp_then_height", func(q *covenant.Params) {
+				q.Locktime, q.ReclaimLocktime = 500_000_000, 900_000
+			}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				bad := p
+				tc.set(&bad)
+				_, err := covenant.Build(bad, minAmount)
+				require.ErrorContains(t, err, "both be heights or both be timestamps")
+			})
+		}
+	})
+
 	t.Run("rejects_zero_locktime", func(t *testing.T) {
 		bad := p
 		bad.Locktime = 0

@@ -93,6 +93,12 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		// repayment to itself, collecting both sides of the trade. No signature
 		// check catches this, because each role's key is legitimately its own.
 		return fmt.Errorf("covenant: receiver, sender and operator keys must be distinct")
+	case p.ReclaimLocktime != 0 && p.ReclaimLocktime.IsSeconds() != p.Locktime.IsSeconds():
+		// Heights and timestamps do not order against each other.
+		return fmt.Errorf(
+			"covenant: reclaim locktime %d and locktime %d must both be heights or both be timestamps",
+			p.ReclaimLocktime, p.Locktime,
+		)
 	case p.ReclaimLocktime != 0 && p.ReclaimLocktime <= p.Locktime:
 		// Maturing first would let the operator reclaim from under a live claim.
 		return fmt.Errorf(
