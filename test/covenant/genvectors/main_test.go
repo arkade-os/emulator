@@ -27,20 +27,22 @@ var update = flag.Bool("update", false, "rewrite the committed fixtures")
 // can tell which reference the bytes came from. Bump it deliberately with -update
 // when the covenant semantics change; deriving it from the environment instead
 // would make the no-update assertion fail wherever that environment is absent.
-const referenceRevision = "7e071515cd1bfb35154448f6ad88a63bef3793a1"
+const referenceRevision = "d4771c80982e77a55a6f8863155f45cec1dd12e5"
 
 type jsonParams struct {
-	ReceiverKey       string  `json:"receiverKey"`
-	SenderKey         string  `json:"senderKey"`
-	OperatorKey       string  `json:"operatorKey"`
-	Dust              int64   `json:"dust"`
-	Topup             int64   `json:"topup"`
-	AssetTxid         *string `json:"assetTxid"`
-	AssetIndex        *uint16 `json:"assetIndex"`
-	Locktime          uint32  `json:"locktime"`
-	ReclaimLocktime   uint32  `json:"reclaimLocktime,omitempty"`
-	RecoveryRecipient string  `json:"recoveryRecipient,omitempty"`
-	ClaimMode         string  `json:"claimMode,omitempty"`
+	ReceiverKey          string  `json:"receiverKey"`
+	SenderKey            string  `json:"senderKey"`
+	OperatorKey          string  `json:"operatorKey"`
+	Dust                 int64   `json:"dust"`
+	Topup                int64   `json:"topup"`
+	AssetTxid            *string `json:"assetTxid"`
+	AssetIndex           *uint16 `json:"assetIndex"`
+	Locktime             uint32  `json:"locktime"`
+	ReclaimLocktime      uint32  `json:"reclaimLocktime,omitempty"`
+	RecoveryRecipient    string  `json:"recoveryRecipient,omitempty"`
+	ClaimMode            string  `json:"claimMode,omitempty"`
+	ReceiverFareCurrency string  `json:"receiverFareCurrency,omitempty"`
+	ReceiverFareUnits    int64   `json:"receiverFareUnits,omitempty"`
 }
 
 type vector struct {
@@ -107,6 +109,10 @@ func spec(name string, p covenant.Params, min int64) (vector, error) {
 		RecoveryRecipient: p.RecoveryRecipient,
 		ClaimMode:         p.ClaimMode,
 	}
+	if p.ReceiverFare != nil {
+		v.Params.ReceiverFareCurrency = p.ReceiverFare.Currency
+		v.Params.ReceiverFareUnits = p.ReceiverFare.Units
+	}
 	if p.AssetID != nil {
 		txid := hex.EncodeToString(p.AssetID.Txid[:])
 		idx := p.AssetID.Index
@@ -151,6 +157,15 @@ func build() (document, error) {
 	purchaseOnly := base(true)
 	purchaseOnly.ClaimMode = covenant.ClaimModePurchase
 
+	receiverPaid := func(fare *covenant.ReceiverFare) covenant.Params {
+		p := base(true)
+		p.ClaimMode = covenant.ClaimModeRecycle
+		p.RecoveryRecipient = covenant.RecoveryReceiver
+		p.ReclaimLocktime = p.Locktime + 100_000
+		p.ReceiverFare = fare
+		return p
+	}
+
 	cases := []struct {
 		name   string
 		params covenant.Params
@@ -162,6 +177,9 @@ func build() (document, error) {
 		{"receiver-receipt-topup329", receiverExact, 1},
 		{"claim-mode-recycle", recycleOnly, 1},
 		{"claim-mode-purchase", purchaseOnly, 1},
+		{"receiver-paid-sats-fare", receiverPaid(&covenant.ReceiverFare{Currency: "sats", Units: 7}), 1},
+		{"receiver-paid-asset-fare", receiverPaid(&covenant.ReceiverFare{Currency: "asset", Units: 9}), 1},
+		{"receiver-paid-zero-fare", receiverPaid(&covenant.ReceiverFare{Currency: "sats", Units: 0}), 1},
 	}
 
 	doc := document{Reference: referenceRevision}
