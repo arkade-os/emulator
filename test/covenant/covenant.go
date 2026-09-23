@@ -25,6 +25,8 @@ const (
 	LeafPurchase
 	LeafRefundSender
 	LeafRecovery
+	// Present only when ReclaimLocktime is set.
+	LeafReclaim
 )
 
 // Params are the values committed at lockup. Together they determine the

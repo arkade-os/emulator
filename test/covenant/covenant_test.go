@@ -755,9 +755,9 @@ func TestReclaimLeafAssembly(t *testing.T) {
 	require.NoError(t, err)
 
 	closures := covenant.VtxoScript(server, emulator, p.SenderKey, p, s).Closures
-	require.Len(t, closures, 5)
+	require.Len(t, closures, covenant.LeafReclaim+1)
 
-	raw, err := closures[4].Script()
+	raw, err := closures[covenant.LeafReclaim].Script()
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), string(schnorr.SerializePubKey(p.SenderKey)),
 		"the post-claim leaf must not be reachable by the party already paid")

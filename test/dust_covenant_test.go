@@ -62,6 +62,12 @@ func newDustContract(
 	}
 }
 
+type paidOutput struct {
+	key   *btcec.PublicKey
+	value int64
+	units uint64
+}
+
 func (c dustContract) input(t *testing.T, prevTx *wire.MsgTx, leaf int) offchain.VtxoInput {
 	t.Helper()
 	return vtxoInputFromScriptOutput(t, prevTx, 0, c.vtxo, tapscriptAt(t, c.vtxo, leaf))
@@ -398,6 +404,36 @@ func TestDustCovenant(t *testing.T) {
 		return err
 	}
 
+	// requirePaid reads tx's outputs back from arkd rather than from tx itself.
+	// arkd reports every output's script as P2TR of its key, sub-dust included.
+	requirePaid := func(t *testing.T, tx *wire.MsgTx, id asset.AssetId, want ...paidOutput) {
+		t.Helper()
+		vouts := make([]uint32, len(want))
+		outpoints := make([]types.Outpoint, len(want))
+		for i := range want {
+			vouts[i] = uint32(i)
+			outpoints[i] = types.Outpoint{Txid: tx.TxID(), VOut: uint32(i)}
+		}
+		awaitSpendable(t, tx, vouts...)
+
+		res, err := indexerSvc.GetVtxos(ctx, indexer.WithOutpoints(outpoints))
+		require.NoError(t, err)
+		require.Len(t, res.Vtxos, len(want))
+		for _, v := range res.Vtxos {
+			w := want[v.VOut]
+			pk, err := script.P2TRScript(w.key)
+			require.NoError(t, err)
+			require.Equal(t, hex.EncodeToString(pk), v.Script, "vout %d recipient", v.VOut)
+			require.Equal(t, uint64(w.value), v.Amount, "vout %d value", v.VOut)
+			var units uint64
+			for _, a := range v.Assets {
+				require.Equal(t, id.String(), a.AssetId, "vout %d asset id", v.VOut)
+				units += a.Amount
+			}
+			require.Equal(t, w.units, units, "vout %d asset units", v.VOut)
+		}
+	}
+
 	t.Run("purchase", func(t *testing.T) {
 		const units = uint64(100)
 
@@ -595,6 +631,89 @@ func TestDustCovenant(t *testing.T) {
 		_, _, _, err = grpcSender.SubmitTx(ctx, b64(t, tx), encodeCheckpoints(t, cps))
 		require.ErrorContains(t, err, "FORFEIT_CLOSURE_LOCKED")
 		require.Error(t, submitToEmulator(t, tx, cps))
+	})
+
+	// The vector-backed receiver configuration, spent through the backstop leaf.
+	t.Run("reclaim/pays_operator_and_receiver", func(t *testing.T) {
+		const units = uint64(7)
+
+		mintTx, assetID := mint(t, units)
+
+		p := baseParams()
+		p.AssetID = &assetID
+		p.RecoveryRecipient = covenant.RecoveryReceiver
+		p.ReclaimLocktime = p.Locktime + 1
+		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
+		require.Len(t, c.vtxo.Closures, covenant.LeafReclaim+1)
+
+		lockTx := lockup(t, mintTx, c, units, 0)
+		topup := p.RefundTopup(dustCovenantVtxoMinAmount)
+
+		tx, cps, err := offchain.BuildTxs(
+			[]offchain.VtxoInput{c.input(t, lockTx, covenant.LeafReclaim)},
+			[]*wire.TxOut{
+				{Value: topup, PkScript: c.payout(t, operatorKey, topup)},
+				{Value: dust - topup, PkScript: c.payout(t, receiverKey, dust-topup)},
+			},
+			checkpointScript,
+		)
+		require.NoError(t, err)
+		addAssetPacketToTx(t, tx, createTransferAssetPacket(
+			t, mintTx.TxHash(), 0, 0, 1, units,
+		))
+		addEmulatorPacket(t, tx, []arkade.EmulatorEntry{{Vin: 0, Script: c.scripts.Reclaim}})
+
+		require.NoError(t, executeArkadeScripts(t, tx, cps, emulatorPubKey))
+		require.NoError(t, submitToEmulator(t, tx, cps))
+		requirePaid(t, tx.UnsignedTx, assetID,
+			paidOutput{operatorKey, topup, 0},
+			paidOutput{receiverKey, dust - topup, units},
+		)
+	})
+
+	// Same input and leaf twice, differing only in who vout 1 pays: the sender is
+	// refused, then the receiver is paid.
+	t.Run("recovery/receiver_recipient", func(t *testing.T) {
+		const units = uint64(7)
+
+		mintTx, assetID := mint(t, units)
+
+		p := baseParams()
+		p.AssetID = &assetID
+		p.RecoveryRecipient = covenant.RecoveryReceiver
+		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
+
+		lockTx := lockup(t, mintTx, c, units, 0)
+		topup := p.RefundTopup(dustCovenantVtxoMinAmount)
+
+		recoverTo := func(to *btcec.PublicKey) (*psbt.Packet, []*psbt.Packet) {
+			tx, cps, err := offchain.BuildTxs(
+				[]offchain.VtxoInput{c.input(t, lockTx, covenant.LeafRecovery)},
+				[]*wire.TxOut{
+					{Value: topup, PkScript: c.payout(t, operatorKey, topup)},
+					{Value: dust - topup, PkScript: c.payout(t, to, dust-topup)},
+				},
+				checkpointScript,
+			)
+			require.NoError(t, err)
+			addAssetPacketToTx(t, tx, createTransferAssetPacket(
+				t, mintTx.TxHash(), 0, 0, 1, units,
+			))
+			addEmulatorPacket(t, tx, []arkade.EmulatorEntry{{Vin: 0, Script: c.scripts.Refund}})
+			return tx, cps
+		}
+
+		toSender, toSenderCps := recoverTo(senderKey)
+		require.Error(t, executeArkadeScripts(t, toSender, toSenderCps, emulatorPubKey))
+		require.Error(t, submitToEmulator(t, toSender, toSenderCps))
+
+		tx, cps := recoverTo(receiverKey)
+		require.NoError(t, executeArkadeScripts(t, tx, cps, emulatorPubKey))
+		require.NoError(t, submitToEmulator(t, tx, cps))
+		requirePaid(t, tx.UnsignedTx, assetID,
+			paidOutput{operatorKey, topup, 0},
+			paidOutput{receiverKey, dust - topup, units},
+		)
 	})
 
 	t.Run("bitcoin_variant/recycle_50_sats", func(t *testing.T) {
