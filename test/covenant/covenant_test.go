@@ -26,6 +26,10 @@ import (
 const (
 	dust      = int64(330)
 	minAmount = int64(1)
+
+	// deliveredUnits is the asset amount the covenant holds at claim in the
+	// receiver-fare tests.
+	deliveredUnits = int64(20)
 )
 
 type prevOutFetcher struct {
@@ -1161,4 +1165,109 @@ func TestReceiverFareValidation(t *testing.T) {
 		p.ReceiverFare = &covenant.ReceiverFare{Currency: "token", Units: 7}
 		require.ErrorContains(t, p.Validate(minAmount), "receiver fare currency")
 	})
+}
+
+// recycleCase is a Recycle-leaf spend named by the amounts a fare test varies,
+// distinct from spend (prevouts/outputs/packet) so scenario values are never
+// confused with wire-level fields.
+type recycleCase struct {
+	receiverCoin  int64
+	operatorSats  int64
+	receiverSats  int64
+	operatorUnits int64
+	receiverUnits int64
+}
+
+// spendRecycle builds and runs the two-input Recycle spend a fare test case
+// describes, so each test case states amounts rather than repeating the
+// prevout/output/packet assembly.
+func spendRecycle(t *testing.T, p covenant.Params, c recycleCase) error {
+	t.Helper()
+	s, err := covenant.Build(p, minAmount)
+	require.NoError(t, err)
+
+	receiverPk := p2tr(t, p.ReceiverKey)
+	operatorScript, err := covenant.PayoutPkScript(p.OperatorKey, c.operatorSats, p.Dust)
+	require.NoError(t, err)
+
+	return run(t, s.Recycle, spend{
+		prevouts: []*wire.TxOut{
+			{Value: p.Dust, PkScript: p2tr(t, key(t, 9))},
+			{Value: c.receiverCoin, PkScript: receiverPk},
+		},
+		outputs: []*wire.TxOut{
+			{Value: c.operatorSats, PkScript: operatorScript},
+			{Value: c.receiverSats, PkScript: receiverPk},
+		},
+		packet: packetOf(t, *p.AssetID,
+			map[uint16]uint64{0: uint64(deliveredUnits)},
+			map[uint16]uint64{0: uint64(c.operatorUnits), 1: uint64(c.receiverUnits)},
+		),
+	})
+}
+
+func TestRecycleReceiverFare(t *testing.T) {
+	t.Run("sats fare pays the operator dust plus the fare", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 7}
+		require.NoError(t, spendRecycle(t, p, recycleCase{
+			receiverCoin: 1000, operatorSats: 337, receiverSats: 993,
+			operatorUnits: 0, receiverUnits: deliveredUnits,
+		}))
+	})
+	t.Run("sats fare refuses an operator paid only the dust", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 7}
+		require.Error(t, spendRecycle(t, p, recycleCase{
+			receiverCoin: 1000, operatorSats: 330, receiverSats: 1000,
+			operatorUnits: 0, receiverUnits: deliveredUnits,
+		}))
+	})
+	t.Run("asset fare moves units to the operator output", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "asset", Units: 9}
+		require.NoError(t, spendRecycle(t, p, recycleCase{
+			receiverCoin: 1000, operatorSats: 330, receiverSats: 1000,
+			operatorUnits: 9, receiverUnits: deliveredUnits - 9,
+		}))
+	})
+	t.Run("asset fare refuses a receiver keeping the whole delivery", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "asset", Units: 9}
+		require.Error(t, spendRecycle(t, p, recycleCase{
+			receiverCoin: 1000, operatorSats: 330, receiverSats: 1000,
+			operatorUnits: 0, receiverUnits: deliveredUnits,
+		}))
+	})
+	t.Run("a zero fare builds the same leaf as no fare", func(t *testing.T) {
+		p := receiverPaid(t)
+		bare, err := covenant.BuildRecycle(p)
+		require.NoError(t, err)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 0}
+		zero, err := covenant.BuildRecycle(p)
+		require.NoError(t, err)
+		require.Equal(t, bare, zero)
+	})
+}
+
+// Mode 1: an unclaimed delivery reclaims exactly as it does today, so a fare must
+// leave every leaf but Recycle byte-identical.
+func TestReceiverFareLeavesOtherLeavesAlone(t *testing.T) {
+	for _, fare := range []covenant.ReceiverFare{
+		{Currency: "sats", Units: 7}, {Currency: "asset", Units: 9},
+	} {
+		bare := receiverPaid(t)
+		bare.ReclaimLocktime = bare.Locktime + 1
+		with := bare
+		with.ReceiverFare = &fare
+
+		bareScripts, err := covenant.Build(bare, minAmount)
+		require.NoError(t, err)
+		withScripts, err := covenant.Build(with, minAmount)
+		require.NoError(t, err)
+		require.Equal(t, hex.EncodeToString(bareScripts.Purchase), hex.EncodeToString(withScripts.Purchase))
+		require.Equal(t, hex.EncodeToString(bareScripts.Refund), hex.EncodeToString(withScripts.Refund))
+		require.Equal(t, hex.EncodeToString(bareScripts.Reclaim), hex.EncodeToString(withScripts.Reclaim))
+		require.NotEqual(t, hex.EncodeToString(bareScripts.Recycle), hex.EncodeToString(withScripts.Recycle))
+	}
 }

@@ -239,6 +239,16 @@ func finish(b *txscript.ScriptBuilder, hasAsset bool) ([]byte, error) {
 // Output value is enforced as a sum over both inputs rather than as a constant,
 // so the receiver's prior balance is irrelevant.
 func BuildRecycle(p Params) ([]byte, error) {
+	operatorSats := p.Topup
+	assetFare := int64(0)
+	if f := p.ReceiverFare; f != nil {
+		if f.Currency == "sats" {
+			operatorSats += f.Units
+		} else {
+			assetFare = f.Units
+		}
+	}
+
 	b := txscript.NewScriptBuilder().
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).AddInt64(0).AddOp(arkade.OP_EQUALVERIFY).
 		AddOp(arkade.OP_INSPECTNUMINPUTS).AddInt64(2).AddOp(arkade.OP_EQUALVERIFY).
@@ -246,9 +256,9 @@ func BuildRecycle(p Params) ([]byte, error) {
 		AddOp(arkade.OP_1).AddOp(arkade.OP_EQUALVERIFY).
 		AddData(schnorr.SerializePubKey(p.ReceiverKey)).AddOp(arkade.OP_EQUALVERIFY).
 		AddInt64(0).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddInt64(p.Topup).AddOp(arkade.OP_EQUALVERIFY)
+		AddInt64(operatorSats).AddOp(arkade.OP_EQUALVERIFY)
 
-	if err := pinOutput(b, 0, p.OperatorKey, p.Topup, p.Dust); err != nil {
+	if err := pinOutput(b, 0, p.OperatorKey, operatorSats, p.Dust); err != nil {
 		return nil, err
 	}
 
@@ -258,14 +268,22 @@ func BuildRecycle(p Params) ([]byte, error) {
 		AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
 		AddInt64(0).AddOp(arkade.OP_INSPECTINPUTVALUE).
 		AddInt64(1).AddOp(arkade.OP_INSPECTINPUTVALUE).AddOp(arkade.OP_ADD).
-		AddInt64(p.Topup).AddOp(arkade.OP_SUB).
+		AddInt64(operatorSats).AddOp(arkade.OP_SUB).
 		AddOp(arkade.OP_EQUALVERIFY)
 
 	if p.AssetID != nil {
+		if assetFare > 0 {
+			appendAssetLookup(b, 0, p.AssetID, true, true)
+			b.AddInt64(assetFare).AddOp(arkade.OP_EQUALVERIFY)
+		}
 		appendAssetLookup(b, 1, p.AssetID, true, true)
 		appendAssetLookup(b, 0, p.AssetID, false, true)
 		appendAssetLookup(b, 1, p.AssetID, false, false)
-		b.AddOp(arkade.OP_ADD).AddOp(arkade.OP_EQUAL)
+		b.AddOp(arkade.OP_ADD)
+		if assetFare > 0 {
+			b.AddInt64(assetFare).AddOp(arkade.OP_SUB)
+		}
+		b.AddOp(arkade.OP_EQUAL)
 	}
 	return finish(b, p.AssetID != nil)
 }
