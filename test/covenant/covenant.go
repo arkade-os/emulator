@@ -65,6 +65,7 @@ const (
 	RecoverySender   = "sender"
 	RecoveryReceiver = "receiver"
 
+	// A claim mode names the one claim leaf left live; the other is disabled.
 	ClaimModeRecycle  = "recycle"
 	ClaimModePurchase = "purchase"
 )
