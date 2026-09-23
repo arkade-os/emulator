@@ -59,6 +59,16 @@ type Params struct {
 
 	// Forbids one claim leaf. Empty keeps both.
 	ClaimMode string
+
+	ReceiverFare *ReceiverFare
+}
+
+// ReceiverFare is what the receiver owes the operator at claim, when the operator
+// funded the whole dust. Currency "asset" always means Params.AssetID: a second
+// asset id here would be a substitution nothing else in the leaf could check.
+type ReceiverFare struct {
+	Currency string
+	Units    int64
 }
 
 const (
@@ -113,6 +123,19 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		// recovery leaf spendable the moment the covenant is funded and collapse
 		// the timeout the operator's exposure is bounded by.
 		return fmt.Errorf("covenant: locktime must be non-zero")
+	case p.ReceiverFare != nil && p.ReceiverFare.Currency != "sats" &&
+		p.ReceiverFare.Currency != "asset":
+		return fmt.Errorf("covenant: receiver fare currency %q is unknown", p.ReceiverFare.Currency)
+	case p.ReceiverFare != nil && p.AssetID == nil:
+		return fmt.Errorf("covenant: receiver fare requires an asset id")
+	case p.ReceiverFare != nil && p.Topup != p.Dust:
+		return fmt.Errorf("covenant: receiver fare requires the operator to fund the whole dust")
+	case p.ReceiverFare != nil && p.ClaimMode != ClaimModeRecycle:
+		return fmt.Errorf("covenant: receiver fare is only defined for a recycle claim")
+	case p.ReceiverFare != nil && p.RecoveryRecipient != RecoveryReceiver:
+		return fmt.Errorf("covenant: receiver fare requires receiver-owned recovery")
+	case p.ReceiverFare != nil && p.ReceiverFare.Units < 0:
+		return fmt.Errorf("covenant: receiver fare units must not be negative")
 	case p.RecoveryRecipient == RecoveryReceiver && p.AssetID == nil:
 		return fmt.Errorf("covenant: receiver recovery requires an asset id")
 	case p.RecoveryRecipient == RecoveryReceiver &&

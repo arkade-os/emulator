@@ -1112,3 +1112,53 @@ func TestRecoveryRecipient(t *testing.T) {
 			"the receipt is still hosted, though no principal was held back")
 	})
 }
+
+func receiverPaid(t *testing.T) covenant.Params {
+	t.Helper()
+	p := receiverParams(t, true)
+	p.Topup = p.Dust
+	p.ClaimMode = covenant.ClaimModeRecycle
+	return p
+}
+
+func TestReceiverFareValidation(t *testing.T) {
+	t.Run("accepts a sats fare and an asset fare", func(t *testing.T) {
+		for _, c := range []string{"sats", "asset"} {
+			p := receiverPaid(t)
+			p.ReceiverFare = &covenant.ReceiverFare{Currency: c, Units: 7}
+			require.NoError(t, p.Validate(minAmount))
+		}
+	})
+	t.Run("refuses a partial topup", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.Topup = p.Dust - 1
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 7}
+		require.ErrorContains(t, p.Validate(minAmount),
+			"receiver fare requires the operator to fund the whole dust")
+	})
+	t.Run("refuses a fare with no asset id, before the recovery check", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.AssetID = nil
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 7}
+		require.ErrorContains(t, p.Validate(minAmount), "receiver fare requires an asset id")
+	})
+	t.Run("refuses a purchase claim mode", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ClaimMode = covenant.ClaimModePurchase
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 7}
+		require.ErrorContains(t, p.Validate(minAmount), "only defined for a recycle")
+	})
+	t.Run("refuses sender recovery", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.RecoveryRecipient = covenant.RecoverySender
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 7}
+		require.ErrorContains(t, p.Validate(minAmount), "receiver-owned recovery")
+	})
+	t.Run("refuses a negative fare and an unknown currency", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: -1}
+		require.ErrorContains(t, p.Validate(minAmount), "receiver fare units must not be negative")
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "token", Units: 7}
+		require.ErrorContains(t, p.Validate(minAmount), "receiver fare currency")
+	})
+}
