@@ -558,7 +558,7 @@ func TestDustCovenant(t *testing.T) {
 	})
 
 	// The covenant does not read the locktime; the CLTV closure does. Only a live
-	// emulator can reject this, which is why it has no counterpart in the
+	// arkd can reject this, which is why it has no counterpart in the
 	// stack-free covenant tests.
 	t.Run("recovery/rejected_before_locktime", func(t *testing.T) {
 		const units = uint64(7)
@@ -567,6 +567,7 @@ func TestDustCovenant(t *testing.T) {
 
 		p := baseParams()
 		p.AssetID = &assetID
+		p.Locktime = arklib.AbsoluteLocktime(time.Now().Add(24 * time.Hour).Unix())
 		c := newDustContract(t, server, emulatorPubKey, senderPubKey, p)
 
 		lockTx := lockup(t, mintTx, c, units, 0)
@@ -581,7 +582,6 @@ func TestDustCovenant(t *testing.T) {
 			checkpointScript,
 		)
 		require.NoError(t, err)
-		tx.UnsignedTx.LockTime = uint32(p.Locktime) - 1
 		addAssetPacketToTx(t, tx, createTransferAssetPacket(
 			t, mintTx.TxHash(), 0, 0, 1, units,
 		))
@@ -591,6 +591,9 @@ func TestDustCovenant(t *testing.T) {
 		// meaningful: it isolates the failure to the CLTV closure rather than
 		// letting the test pass for any unrelated reason.
 		require.NoError(t, executeArkadeScripts(t, tx, cps, emulatorPubKey))
+		// The emulator masks arkd's error; arkd checks the locktime before signatures.
+		_, _, _, err = grpcSender.SubmitTx(ctx, b64(t, tx), encodeCheckpoints(t, cps))
+		require.ErrorContains(t, err, "FORFEIT_CLOSURE_LOCKED")
 		require.Error(t, submitToEmulator(t, tx, cps))
 	})
 
