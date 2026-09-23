@@ -280,20 +280,11 @@ func TestRecycle(t *testing.T) {
 
 	// Topup == Dust, so the operator payout sits at the dust floor and pins P2TR.
 	valid := func(priorUnits uint64) spend {
-		return spend{
-			prevouts: []*wire.TxOut{
-				{Value: dust, PkScript: p2tr(t, key(t, 9))},
-				{Value: dust, PkScript: receiverPk},
-			},
-			outputs: []*wire.TxOut{
-				{Value: p.Topup, PkScript: p2tr(t, p.OperatorKey)},
-				{Value: dust, PkScript: receiverPk},
-			},
-			packet: packetOf(t, *p.AssetID,
-				map[uint16]uint64{0: 1, 1: priorUnits},
-				map[uint16]uint64{1: 1 + priorUnits},
-			),
-		}
+		return buildRecycleSpend(t, p, recycleCase{
+			receiverCoin: dust, operatorSats: p.Topup, receiverSats: dust,
+			covenantUnits: 1, priorUnits: int64(priorUnits),
+			receiverUnits: 1 + int64(priorUnits),
+		})
 	}
 
 	t.Run("receiver_holds_prior_balance", func(t *testing.T) {
@@ -872,21 +863,10 @@ func TestClaimMode(t *testing.T) {
 
 	// Buildable, but the emulator refuses to run the false script.
 	t.Run("disabled_claim_script_is_unspendable", func(t *testing.T) {
-		receiverPk := p2tr(t, p.ReceiverKey)
-		valid := spend{
-			prevouts: []*wire.TxOut{
-				{Value: dust, PkScript: p2tr(t, key(t, 9))},
-				{Value: dust, PkScript: receiverPk},
-			},
-			outputs: []*wire.TxOut{
-				{Value: p.Topup, PkScript: p2tr(t, p.OperatorKey)},
-				{Value: dust, PkScript: receiverPk},
-			},
-			packet: packetOf(t, *p.AssetID,
-				map[uint16]uint64{0: 1, 1: 20},
-				map[uint16]uint64{1: 21},
-			),
-		}
+		valid := buildRecycleSpend(t, p, recycleCase{
+			receiverCoin: dust, operatorSats: p.Topup, receiverSats: dust,
+			covenantUnits: 1, priorUnits: 20, receiverUnits: 21,
+		})
 
 		require.NoError(t, run(t, recycle.Recycle, valid),
 			"the permitted claim path must still be satisfiable")
@@ -1171,26 +1151,32 @@ func TestReceiverFareValidation(t *testing.T) {
 // distinct from spend (prevouts/outputs/packet) so scenario values are never
 // confused with wire-level fields.
 type recycleCase struct {
-	receiverCoin  int64
-	operatorSats  int64
-	receiverSats  int64
+	receiverCoin int64
+	operatorSats int64
+	receiverSats int64
+
+	// covenantUnits zero defaults to deliveredUnits.
+	covenantUnits int64
+	priorUnits    int64
+
 	operatorUnits int64
 	receiverUnits int64
 }
 
-// spendRecycle builds and runs the two-input Recycle spend a fare test case
-// describes, so each test case states amounts rather than repeating the
-// prevout/output/packet assembly.
-func spendRecycle(t *testing.T, p covenant.Params, c recycleCase) error {
+// buildRecycleSpend is the one place the Recycle spend is assembled; every
+// caller below routes through it.
+func buildRecycleSpend(t *testing.T, p covenant.Params, c recycleCase) spend {
 	t.Helper()
-	s, err := covenant.Build(p, minAmount)
-	require.NoError(t, err)
-
 	receiverPk := p2tr(t, p.ReceiverKey)
 	operatorScript, err := covenant.PayoutPkScript(p.OperatorKey, c.operatorSats, p.Dust)
 	require.NoError(t, err)
 
-	return run(t, s.Recycle, spend{
+	covenantUnits := c.covenantUnits
+	if covenantUnits == 0 {
+		covenantUnits = deliveredUnits
+	}
+
+	return spend{
 		prevouts: []*wire.TxOut{
 			{Value: p.Dust, PkScript: p2tr(t, key(t, 9))},
 			{Value: c.receiverCoin, PkScript: receiverPk},
@@ -1200,10 +1186,17 @@ func spendRecycle(t *testing.T, p covenant.Params, c recycleCase) error {
 			{Value: c.receiverSats, PkScript: receiverPk},
 		},
 		packet: packetOf(t, *p.AssetID,
-			map[uint16]uint64{0: uint64(deliveredUnits)},
+			map[uint16]uint64{0: uint64(covenantUnits), 1: uint64(c.priorUnits)},
 			map[uint16]uint64{0: uint64(c.operatorUnits), 1: uint64(c.receiverUnits)},
 		),
-	})
+	}
+}
+
+func spendRecycle(t *testing.T, p covenant.Params, c recycleCase) error {
+	t.Helper()
+	s, err := covenant.Build(p, minAmount)
+	require.NoError(t, err)
+	return run(t, s.Recycle, buildRecycleSpend(t, p, c))
 }
 
 func TestRecycleReceiverFare(t *testing.T) {
@@ -1218,7 +1211,7 @@ func TestRecycleReceiverFare(t *testing.T) {
 	t.Run("sats fare refuses an operator paid only the dust", func(t *testing.T) {
 		p := receiverPaid(t)
 		p.ReceiverFare = &covenant.ReceiverFare{Currency: "sats", Units: 7}
-		require.Error(t, spendRecycle(t, p, recycleCase{
+		requireRejected(t, spendRecycle(t, p, recycleCase{
 			receiverCoin: 1000, operatorSats: 330, receiverSats: 1000,
 			operatorUnits: 0, receiverUnits: deliveredUnits,
 		}))
@@ -1234,7 +1227,7 @@ func TestRecycleReceiverFare(t *testing.T) {
 	t.Run("asset fare refuses a receiver keeping the whole delivery", func(t *testing.T) {
 		p := receiverPaid(t)
 		p.ReceiverFare = &covenant.ReceiverFare{Currency: "asset", Units: 9}
-		require.Error(t, spendRecycle(t, p, recycleCase{
+		requireRejected(t, spendRecycle(t, p, recycleCase{
 			receiverCoin: 1000, operatorSats: 330, receiverSats: 1000,
 			operatorUnits: 0, receiverUnits: deliveredUnits,
 		}))
