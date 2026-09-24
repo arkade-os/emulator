@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"bytes"
@@ -135,7 +135,7 @@ func (s *service) expiryForScript(
 	}
 
 	response, err := s.indexerClient.GetVtxos(
-		withClientVersion(ctx, s.clientVersion),
+		ctx,
 		indexer.WithOutpoints([]types.Outpoint{{Txid: txid, VOut: vout}}),
 	)
 	if err != nil {

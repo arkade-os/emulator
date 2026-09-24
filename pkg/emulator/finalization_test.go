@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"context"
@@ -614,8 +614,12 @@ func (f *forfeitFixture) randomP2TRScript(t *testing.T) []byte {
 // other call panics on the nil embedded interface.
 type mockIndexerClient struct {
 	indexer.Indexer
-	err error
+	err        error
+	closeCalls int
 }
+
+// Close shadows the embedded nil Indexer's.
+func (m *mockIndexerClient) Close() { m.closeCalls++ }
 
 func (m *mockIndexerClient) GetCommitmentTx(
 	context.Context, string,

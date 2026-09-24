@@ -10,6 +10,7 @@ import (
 
 	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcec/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -178,6 +179,9 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 	return key, nil
 }
 
-func (c *Config) AppService(ctx context.Context, version string) (application.Service, error) {
-	return application.New(ctx, version, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits)
+func (c *Config) AppService(ctx context.Context, version string) (emulator.Service, error) {
+	return application.New(
+		ctx, version, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil,
+		c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits,
+	)
 }
