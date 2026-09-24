@@ -1,4 +1,4 @@
-package grpchandler
+package handlers
 
 import (
 	"testing"

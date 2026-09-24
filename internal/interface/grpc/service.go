@@ -13,7 +13,6 @@ import (
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
 	"github.com/arkade-os/emulator/internal/interface/grpc/interceptors"
 	"github.com/arkade-os/emulator/pkg/emulator"
-	grpchandler "github.com/arkade-os/emulator/pkg/emulator/grpchandler"
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -148,7 +147,7 @@ func (s *service) newServer() error {
 		return err
 	}
 	s.appSvc = appSvc
-	appHandler := grpchandler.New(s.version, appSvc)
+	appHandler := handlers.New(s.version, appSvc)
 	emulatorv1.RegisterEmulatorServiceServer(grpcServer, appHandler)
 
 	healthHandler := handlers.NewHealthHandler()
