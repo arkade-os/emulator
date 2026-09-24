@@ -11,15 +11,15 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -356,7 +356,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 			require.ErrorContains(t, err, "missing taproot leaf script")
 		})
 		t.Run("input whose prevout is not taproot is rejected", func(t *testing.T) {
-			// VerifyTapscriptSigs skips non-taproot prevouts without erroring
+			// ark-lib rejects a taproot leaf script over a non-taproot prevout
 			setup := newCheckpoint(t,
 				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
 				arkdSigner.PubKey(),
@@ -365,7 +365,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 				Value: 2_000, PkScript: []byte{txscript.OP_TRUE},
 			}
 			err := verifyNonArkdCheckpointSignatures([]*psbt.Packet{setup.packet}, setup.arkdPubKey)
-			require.ErrorContains(t, err, "signatures were not verified")
+			require.ErrorContains(t, err, "non-taproot prevout")
 		})
 		t.Run("wrong parity bit in control block", func(t *testing.T) {
 			setup := newCheckpoint(t,
@@ -737,7 +737,7 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 }
 
 type testIndexer struct {
-	indexer.Indexer
+	clientlib.Indexer
 	closeCalls int
 }
 

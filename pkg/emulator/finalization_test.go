@@ -12,14 +12,14 @@ import (
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -613,7 +613,7 @@ func (f *forfeitFixture) randomP2TRScript(t *testing.T) []byte {
 // mockIndexerClient confirms every commitment tx unless err is set; any
 // other call panics on the nil embedded interface.
 type mockIndexerClient struct {
-	indexer.Indexer
+	clientlib.Indexer
 	err        error
 	closeCalls int
 }
@@ -623,11 +623,11 @@ func (m *mockIndexerClient) Close() { m.closeCalls++ }
 
 func (m *mockIndexerClient) GetCommitmentTx(
 	context.Context, string,
-) (*indexer.CommitmentTx, error) {
+) (*clientlib.CommitmentTx, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return &indexer.CommitmentTx{}, nil
+	return &clientlib.CommitmentTx{}, nil
 }
 
 func finalizationTapLeaf(

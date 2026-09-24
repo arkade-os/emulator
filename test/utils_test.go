@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"math/big"
 	"slices"
 	"strings"
@@ -21,23 +22,18 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/client"
-	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
-	"github.com/arkade-os/arkd/pkg/client-lib/identity"
-	singlekeywallet "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey"
-	inmemorystore "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey/store/inmemory"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	clientwallet "github.com/arkade-os/arkd/pkg/client-wallet"
+	singlekeywallet "github.com/arkade-os/arkd/pkg/client-wallet/identity"
+	inmemorystore "github.com/arkade-os/arkd/pkg/client-wallet/identity/store/inmemory"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	arksdk "github.com/arkade-os/go-sdk"
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -47,12 +43,12 @@ import (
 type delegateBatchEventsHandler struct {
 	intentId       string
 	intent         emulatorclient.Intent
-	vtxosToForfeit []types.VtxoWithTapTree
+	vtxosToForfeit []clientlib.Vtxo
 	signerSession  tree.SignerSession
 	emulatorClient emulatorclient.TransportClient
-	wallet         identity.Identity
-	client         client.Client
-	explorer       explorer.Explorer
+	wallet         clientlib.Identity
+	client         clientlib.Client
+	explorer       clientlib.Explorer
 
 	forfeitAddress string
 
@@ -61,7 +57,7 @@ type delegateBatchEventsHandler struct {
 }
 
 func (h *delegateBatchEventsHandler) OnBatchStarted(
-	ctx context.Context, event client.BatchStartedEvent,
+	ctx context.Context, event clientlib.BatchStartedEvent,
 ) (bool, time.Duration, error) {
 	buf := sha256.Sum256([]byte(h.intentId))
 	hashedIntentId := hex.EncodeToString(buf[:])
@@ -81,13 +77,13 @@ func (h *delegateBatchEventsHandler) OnBatchStarted(
 }
 
 func (h *delegateBatchEventsHandler) OnBatchFinalized(
-	_ context.Context, event client.BatchFinalizedEvent,
+	_ context.Context, event clientlib.BatchFinalizedEvent,
 ) error {
 	return nil
 }
 
 func (h *delegateBatchEventsHandler) OnBatchFailed(
-	_ context.Context, event client.BatchFailedEvent,
+	_ context.Context, event clientlib.BatchFailedEvent,
 ) error {
 	if event.Id == h.cacheBatchId {
 		return fmt.Errorf("batch failed: %s", event.Reason)
@@ -95,16 +91,16 @@ func (h *delegateBatchEventsHandler) OnBatchFailed(
 	return nil
 }
 
-func (h *delegateBatchEventsHandler) OnTreeTxEvent(context.Context, client.TreeTxEvent) error {
+func (h *delegateBatchEventsHandler) OnTreeTxEvent(context.Context, clientlib.TreeTxEvent) error {
 	return nil
 }
 
-func (h *delegateBatchEventsHandler) OnTreeSignatureEvent(context.Context, client.TreeSignatureEvent) error {
+func (h *delegateBatchEventsHandler) OnTreeSignatureEvent(context.Context, clientlib.TreeSignatureEvent) error {
 	return nil
 }
 
 func (h *delegateBatchEventsHandler) OnTreeSigningStarted(
-	ctx context.Context, event client.TreeSigningStartedEvent, vtxoTree *tree.TxTree,
+	ctx context.Context, event clientlib.TreeSigningStartedEvent, vtxoTree *tree.TxTree,
 ) (bool, error) {
 	myPubkey := h.signerSession.GetPublicKey()
 	if !slices.Contains(event.CosignersPubkeys, myPubkey) {
@@ -168,14 +164,14 @@ func (h *delegateBatchEventsHandler) OnTreeSigningStarted(
 	return false, nil
 }
 
-func (h *delegateBatchEventsHandler) OnTreeNonces(context.Context, client.TreeNoncesEvent) (
+func (h *delegateBatchEventsHandler) OnTreeNonces(context.Context, clientlib.TreeNoncesEvent) (
 	bool, error,
 ) {
 	return false, nil
 }
 
 func (h *delegateBatchEventsHandler) OnTreeNoncesAggregated(
-	ctx context.Context, event client.TreeNoncesAggregatedEvent,
+	ctx context.Context, event clientlib.TreeNoncesAggregatedEvent,
 ) (bool, error) {
 	h.signerSession.SetAggregatedNonces(event.Nonces)
 
@@ -194,7 +190,7 @@ func (h *delegateBatchEventsHandler) OnTreeNoncesAggregated(
 }
 
 func (h *delegateBatchEventsHandler) OnBatchFinalization(
-	ctx context.Context, event client.BatchFinalizationEvent,
+	ctx context.Context, event clientlib.BatchFinalizationEvent,
 	vtxoTree, connectorTree *tree.TxTree,
 ) ([]string, error) {
 	if len(h.vtxosToForfeit) <= 0 {
@@ -225,14 +221,14 @@ func (h *delegateBatchEventsHandler) OnBatchFinalization(
 	return signedForfeits, h.client.SubmitSignedForfeitTxs(ctx, signedForfeits, signedCommitmentTx)
 }
 
-func (h *delegateBatchEventsHandler) OnStreamStarted(_ context.Context, _ client.StreamStartedEvent) error {
+func (h *delegateBatchEventsHandler) OnStreamStarted(_ context.Context, _ clientlib.StreamStartedEvent) error {
 	return nil
 }
 
 func (h *delegateBatchEventsHandler) createAndSignForfeits(
-	ctx context.Context, vtxosToSign []types.VtxoWithTapTree, connectorsLeaves []*psbt.Packet,
+	ctx context.Context, vtxosToSign []clientlib.Vtxo, connectorsLeaves []*psbt.Packet,
 ) ([]string, error) {
-	parsedForfeitAddr, err := btcutil.DecodeAddress(h.forfeitAddress, nil)
+	parsedForfeitAddr, err := address.DecodeAddress(h.forfeitAddress, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -360,11 +356,11 @@ func (h *delegateBatchEventsHandler) createAndSignForfeits(
 
 type boardingBatchEventsHandler struct {
 	*delegateBatchEventsHandler
-	boardingVtxo types.VtxoWithTapTree
+	boardingVtxo clientlib.Vtxo
 }
 
 func (h *boardingBatchEventsHandler) OnBatchFinalization(
-	ctx context.Context, event client.BatchFinalizationEvent,
+	ctx context.Context, event clientlib.BatchFinalizationEvent,
 	vtxoTree, connectorTree *tree.TxTree,
 ) ([]string, error) {
 	commitmentPtx, err := psbt.NewFromRawBytes(strings.NewReader(event.Tx), true)
@@ -448,7 +444,7 @@ func getBatchExpiryLocktime(expiry uint32) arklib.RelativeLocktime {
 }
 
 // setupWallet creates and unlocks a new wallet
-func setupWallet(t *testing.T, ctx context.Context) (identity.Identity, *btcec.PrivateKey, *btcec.PublicKey) {
+func setupWallet(t *testing.T, ctx context.Context) (clientlib.Identity, *btcec.PrivateKey, *btcec.PublicKey) {
 	privKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
@@ -458,7 +454,7 @@ func setupWallet(t *testing.T, ctx context.Context) (identity.Identity, *btcec.P
 	wallet, err := singlekeywallet.NewIdentity(walletStore)
 	require.NoError(t, err)
 
-	_, err = wallet.Create(ctx, chaincfg.RegressionNetParams, password, hex.EncodeToString(privKey.Serialize()))
+	_, err = wallet.Create(ctx, arklib.BitcoinRegTest, password, hex.EncodeToString(privKey.Serialize()))
 	require.NoError(t, err)
 
 	_, err = wallet.Unlock(ctx, password)
@@ -469,7 +465,21 @@ func setupWallet(t *testing.T, ctx context.Context) (identity.Identity, *btcec.P
 
 // fundAndSettleAlice funds alice's account via boarding and settles
 // sends 1$
-func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.Wallet, amount int64) *arklib.Address {
+// getEventStreamTopics mirrors the helper client-lib dropped in the client-wallet split.
+func getEventStreamTopics(
+	spentOutpoints []clientlib.Outpoint, signerSessions []tree.SignerSession,
+) []string {
+	topics := make([]string, 0, len(spentOutpoints)+len(signerSessions))
+	for _, outpoint := range spentOutpoints {
+		topics = append(topics, outpoint.String())
+	}
+	for _, signer := range signerSessions {
+		topics = append(topics, signer.GetPublicKey())
+	}
+	return topics
+}
+
+func fundAndSettleAlice(t *testing.T, ctx context.Context, alice clientwallet.Wallet, amount int64) *arklib.Address {
 	offchainAddr, boardingAddress := receive(t, alice)
 
 	aliceAddr, err := arklib.DecodeAddressV0(offchainAddr)
@@ -482,7 +492,8 @@ func fundAndSettleAlice(t *testing.T, ctx context.Context, alice arksdk.Wallet, 
 
 	require.Eventually(t, func() bool {
 		balance, err := alice.Balance(ctx)
-		return err == nil && balance.OnchainBalance.Total > 0
+		return err == nil &&
+			(balance.OnchainBalance.SpendableAmount > 0 || len(balance.OnchainBalance.LockedAmount) > 0)
 	}, 30*time.Second, 500*time.Millisecond, "boarding utxo not detected by wallet")
 
 	_, err = alice.Settle(ctx)
@@ -509,8 +520,8 @@ func encodeCheckpoints(t *testing.T, checkpoints []*psbt.Packet) []string {
 func buildWalletFundedTx(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.Wallet,
-	indexerSvc indexer.Indexer,
+	alice clientwallet.Wallet,
+	indexerSvc clientlib.Indexer,
 	alicePubKey *btcec.PublicKey,
 	serverSigner *btcec.PublicKey,
 	unilateralExitDelay uint32,
@@ -537,10 +548,10 @@ func buildWalletFundedTx(
 
 	fundingPkScript, err := script.P2TRScript(fundingTapKey)
 	require.NoError(t, err)
-	spendableVtxos, _, err := alice.ListVtxos(ctx, arksdk.WithSpendableOnly())
+	spendableVtxos, _, err := alice.ListVtxos(ctx)
 	require.NoError(t, err)
 
-	var fundingVtxo types.Vtxo
+	var fundingVtxo clientlib.Vtxo
 	for _, vtxo := range spendableVtxos {
 		if vtxo.Script == hex.EncodeToString(fundingPkScript) {
 			fundingVtxo = vtxo
@@ -597,8 +608,8 @@ func submitWithArkd(
 	ctx context.Context,
 	candidateTx *psbt.Packet,
 	checkpoints []*psbt.Packet,
-	walletSvc identity.Identity,
-	grpcClient client.Client,
+	walletSvc clientlib.Identity,
+	grpcClient clientlib.Client,
 ) {
 	t.Helper()
 
@@ -627,7 +638,7 @@ func submitWithArkd(
 // given vouts BEFORE the tx is submitted, and returns a wait function.
 func watchForPreconfirmedVtxos(
 	t *testing.T,
-	indexerSvc indexer.Indexer,
+	indexerSvc clientlib.Indexer,
 	candidateTx *psbt.Packet,
 	vouts ...uint32,
 ) func() {
@@ -657,7 +668,7 @@ func watchForPreconfirmedVtxos(
 		}()
 
 		txid := candidateTx.UnsignedTx.TxID()
-		got := make(map[uint32]types.Vtxo, len(vouts))
+		got := make(map[uint32]clientlib.Vtxo, len(vouts))
 
 		timeout := time.After(10 * time.Second)
 		for len(got) < len(vouts) {
@@ -879,12 +890,12 @@ func (c *prevArkTxEmulatorClient) SubmitIntent(
 }
 
 type recordingIndexer struct {
-	indexer.Indexer
+	clientlib.Indexer
 }
 
 func (i *recordingIndexer) GetVirtualTxs(
-	ctx context.Context, txids []string, opts ...indexer.PageOption,
-) (*indexer.VirtualTxsResponse, error) {
+	ctx context.Context, txids []string, opts ...clientlib.PageOption,
+) (*clientlib.VirtualTxsResponse, error) {
 	response, err := i.Indexer.GetVirtualTxs(ctx, txids, opts...)
 	if err != nil {
 		return nil, err
@@ -1330,11 +1341,9 @@ func randomP2TRScript(t *testing.T) []byte {
 }
 
 // receive returns a fresh offchain and boarding address for the wallet.
-func receive(t *testing.T, w arksdk.Wallet) (offchainAddr, boardingAddr string) {
+func receive(t *testing.T, w clientwallet.Wallet) (offchainAddr, boardingAddr string) {
 	t.Helper()
-	offchainAddr, err := w.NewOffchainAddress(t.Context())
+	_, offchain, boarding, err := w.Receive(t.Context())
 	require.NoError(t, err)
-	boardingAddr, err = w.NewBoardingAddress(t.Context())
-	require.NoError(t, err)
-	return offchainAddr, boardingAddr
+	return offchain.Address, boarding.Address
 }

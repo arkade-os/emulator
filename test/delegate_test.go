@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	batchsessionhandler "github.com/arkade-os/arkd/pkg/client-lib/batch-session/handler"
 	"strings"
 	"testing"
 	"time"
@@ -14,17 +16,14 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
-	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	clientwallet "github.com/arkade-os/arkd/pkg/client-wallet"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -293,22 +292,20 @@ func TestCovenantDelegate(t *testing.T) {
 	intentId, err := grpcAlice.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := types.VtxoWithTapTree{
-		Vtxo: types.Vtxo{
-			Outpoint: types.Outpoint{
-				Txid: delegateInput.Outpoint.Hash.String(),
-				VOut: delegateInput.Outpoint.Index,
-			},
-			Script: hex.EncodeToString(delegateTapscript),
-			Amount: uint64(delegateAmount),
+	vtxo := clientlib.Vtxo{
+		Outpoint: clientlib.Outpoint{
+			Txid: delegateInput.Outpoint.Hash.String(),
+			VOut: delegateInput.Outpoint.Index,
 		},
+		Script:     hex.EncodeToString(delegateTapscript),
+		Amount:     uint64(delegateAmount),
 		Tapscripts: delegateRevealedTapscripts,
 	}
 
 	handler := &delegateBatchEventsHandler{
 		intentId:       intentId,
 		intent:         signedIntent,
-		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
+		vtxosToForfeit: []clientlib.Vtxo{vtxo},
 		signerSession:  signerSession,
 		emulatorClient: emulatorClient,
 		wallet:         aliceWallet,
@@ -316,8 +313,8 @@ func TestCovenantDelegate(t *testing.T) {
 		explorer:       explorerSvc,
 	}
 
-	topics := clientlib.GetEventStreamTopics(
-		[]types.Outpoint{vtxo.Outpoint},
+	topics := getEventStreamTopics(
+		[]clientlib.Outpoint{vtxo.Outpoint},
 		[]tree.SignerSession{signerSession},
 	)
 	eventStream, stop, err := grpcAlice.GetEventStream(ctx, topics)
@@ -325,7 +322,7 @@ func TestCovenantDelegate(t *testing.T) {
 	t.Cleanup(stop)
 
 	capturing := &capturingBatchEventsHandler{delegateBatchEventsHandler: handler}
-	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, capturing)
+	commitmentTxid, _, _, _, _, err := batchsessionhandler.JoinBatchSession(ctx, eventStream, capturing)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 	require.NotNil(t, capturing.vtxoTree)
@@ -335,7 +332,7 @@ func TestCovenantDelegate(t *testing.T) {
 
 	// refreshed VTXO is a batch leaf (not preconfirmed)
 	require.Eventually(t, func() bool {
-		resp, err := indexerSvc.GetVtxos(ctx, indexer.WithOutpoints([]types.Outpoint{refreshedOutpoint}))
+		resp, err := indexerSvc.GetVtxos(ctx, clientlib.WithOutpoints([]clientlib.Outpoint{refreshedOutpoint}))
 		if err != nil || resp == nil || len(resp.Vtxos) != 1 {
 			return false
 		}
@@ -374,8 +371,8 @@ func enforceSelfSend(t *testing.T) []byte {
 func fundDelegate(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.Wallet,
-	indexerSvc indexer.Indexer,
+	alice clientwallet.Wallet,
+	indexerSvc clientlib.Indexer,
 	serverSigner *btcec.PublicKey,
 	delegateVtxoScript script.TapscriptsVtxoScript,
 	amount int64,
@@ -393,10 +390,11 @@ func fundDelegate(
 	addrStr, err := addr.EncodeV0()
 	require.NoError(t, err)
 
-	fundingTxid, err := alice.SendOffChain(ctx, []types.Receiver{
+	fundingTxidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{
 		{To: addrStr, Amount: uint64(amount)},
 	})
 	require.NoError(t, err)
+	fundingTxid := fundingTxidRes.Txid
 	require.NotEmpty(t, fundingTxid)
 
 	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingTxid})
@@ -419,13 +417,13 @@ func fundDelegate(
 // the given pkScript and value.
 func findLeafOutpoint(
 	t *testing.T, vtxoTree *tree.TxTree, pkScript []byte, value int64,
-) types.Outpoint {
+) clientlib.Outpoint {
 	t.Helper()
 
 	for _, leaf := range vtxoTree.Leaves() {
 		for vout, out := range leaf.UnsignedTx.TxOut {
 			if out.Value == value && bytes.Equal(out.PkScript, pkScript) {
-				return types.Outpoint{
+				return clientlib.Outpoint{
 					Txid: leaf.UnsignedTx.TxID(),
 					VOut: uint32(vout),
 				}
@@ -434,5 +432,5 @@ func findLeafOutpoint(
 	}
 
 	require.FailNow(t, "leaf output not found")
-	return types.Outpoint{}
+	return clientlib.Outpoint{}
 }

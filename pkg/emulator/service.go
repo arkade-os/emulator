@@ -9,16 +9,16 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/psbt/v2"
 )
 
 // Indexer is the subset of the arkd indexer client used by Service.
 type Indexer interface {
-	GetVtxos(ctx context.Context, opts ...indexer.GetVtxosOption) (*indexer.VtxosResponse, error)
-	GetCommitmentTx(ctx context.Context, txid string) (*indexer.CommitmentTx, error)
+	GetVtxos(ctx context.Context, opts ...clientlib.GetVtxosOption) (*clientlib.VtxosResponse, error)
+	GetCommitmentTx(ctx context.Context, txid string) (*clientlib.CommitmentTx, error)
 }
 
 type Info struct {

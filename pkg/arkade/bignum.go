@@ -9,7 +9,7 @@ import (
 	"math/big"
 	"slices"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 )
 
 // maxBigNumLen is the largest permitted byte-length of a minimally-encoded

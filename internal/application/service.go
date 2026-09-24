@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/arkade-os/arkd/pkg/client-lib/client"
-	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client/grpc"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer/grpc"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client"
+	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -57,7 +56,7 @@ func New(
 		}
 	}()
 
-	var info *client.Info
+	var info *clientlib.Info
 	// arkd may still be booting when the emulator starts, retry if it fails.
 	err = retryWithBackoff(
 		ctx, arkdConnectRetryConfig,
@@ -111,7 +110,7 @@ func (s *service) Close() {
 
 // versionedIndexer adds the x-sdk-version header to indexer calls.
 type versionedIndexer struct {
-	indexer.Indexer
+	clientlib.Indexer
 	version string
 }
 
@@ -119,10 +118,10 @@ func (v versionedIndexer) ctx(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "x-sdk-version", v.version)
 }
 
-func (v versionedIndexer) GetVtxos(ctx context.Context, opts ...indexer.GetVtxosOption) (*indexer.VtxosResponse, error) {
+func (v versionedIndexer) GetVtxos(ctx context.Context, opts ...clientlib.GetVtxosOption) (*clientlib.VtxosResponse, error) {
 	return v.Indexer.GetVtxos(v.ctx(ctx), opts...)
 }
 
-func (v versionedIndexer) GetCommitmentTx(ctx context.Context, txid string) (*indexer.CommitmentTx, error) {
+func (v versionedIndexer) GetCommitmentTx(ctx context.Context, txid string) (*clientlib.CommitmentTx, error) {
 	return v.Indexer.GetCommitmentTx(v.ctx(ctx), txid)
 }
