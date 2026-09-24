@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
@@ -99,7 +98,6 @@ func (s *service) activeDeprecatedSigners() []signer {
 
 // New builds a signing Service. It owns indexerClient and closes it on Close.
 func New(
-	_ context.Context,
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
 	arkdPubKey *btcec.PublicKey, indexerClient Indexer,
 	computeLimits arkade.ComputeLimits,
@@ -112,7 +110,7 @@ func New(
 		return nil, fmt.Errorf("arkd public key is required")
 	}
 
-	if indexerClient == nil || isNil(indexerClient) {
+	if indexerClient == nil {
 		return nil, fmt.Errorf("arkd indexer is required")
 	}
 
@@ -151,15 +149,4 @@ func (s *service) GetInfo(ctx context.Context) (*Info, error) {
 		SignerPublicKey:            s.publicKey,
 		DeprecatedSignerPublicKeys: append([]string(nil), s.deprecatedPublicKeys...),
 	}, nil
-}
-
-func isNil(v any) bool {
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map,
-		reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
-		return rv.IsNil()
-	default:
-		return false
-	}
 }

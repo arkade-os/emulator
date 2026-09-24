@@ -144,11 +144,7 @@ func isFinalizerRole(arkPtx *psbt.Packet, sigsBefore []int, signerPubKeys []*btc
 			if err != nil {
 				return false, fmt.Errorf("failed to read arkade script: %w vin=%d", err, entry.Vin)
 			}
-			input := arkPtx.Inputs[entry.Vin]
-			added := input.TaprootScriptSpendSig
-			if int(entry.Vin) < len(sigsBefore) {
-				added = added[min(sigsBefore[entry.Vin], len(added)):]
-			}
+			added := arkPtx.Inputs[entry.Vin].TaprootScriptSpendSig[sigsBefore[entry.Vin]:]
 			if signedBy(added, arkadeScript.PubKey()) {
 				if err := acc.checkScript(entry.Vin, arkadeScript); err != nil {
 					return false, err

@@ -89,47 +89,19 @@ func New(
 	}
 
 	lib, err := emulator.New(
-		ctx, secretKey, deprecatedKeys, deprecatedKeysValidUntil, arkdPubKey,
+		secretKey, deprecatedKeys, deprecatedKeysValidUntil, arkdPubKey,
 		versionedIndexer{indexerClient, clientVersion}, computeLimits,
 	)
 	if err != nil {
 		return nil, err
 	}
-	svc, err := newService(lib, arkd, arkdPubKey)
-	if err != nil {
-		// lib owns the indexer
-		handedOff = true
-		lib.Close()
-		arkd.Close()
-		return nil, err
-	}
 	handedOff = true
-	return svc, nil
-}
 
-func newService(lib emulator.Service, arkd arkdClient, arkdPubKey *btcec.PublicKey) (*service, error) {
-	info, err := lib.GetInfo(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to read signer info: %w", err)
+	signerPubKeys := []*btcec.PublicKey{secretKey.PubKey()}
+	for _, k := range deprecatedKeys {
+		signerPubKeys = append(signerPubKeys, k.PubKey())
 	}
-	signerPubKeys := make([]*btcec.PublicKey, 0, 1+len(info.DeprecatedSignerPublicKeys))
-	for _, k := range append([]string{info.SignerPublicKey}, info.DeprecatedSignerPublicKeys...) {
-		raw, err := hex.DecodeString(k)
-		if err != nil {
-			return nil, fmt.Errorf("invalid signer pubkey %q: %w", k, err)
-		}
-		pubKey, err := btcec.ParsePubKey(raw)
-		if err != nil {
-			return nil, fmt.Errorf("invalid signer pubkey %q: %w", k, err)
-		}
-		signerPubKeys = append(signerPubKeys, pubKey)
-	}
-	return &service{
-		Service:       lib,
-		arkd:          arkd,
-		arkdPubKey:    arkdPubKey,
-		signerPubKeys: signerPubKeys,
-	}, nil
+	return &service{Service: lib, arkd: arkd, arkdPubKey: arkdPubKey, signerPubKeys: signerPubKeys}, nil
 }
 
 func (s *service) Close() {

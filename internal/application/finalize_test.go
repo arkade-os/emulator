@@ -639,11 +639,10 @@ func TestClose(t *testing.T) {
 	arkdKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	idx := &testIndexer{}
-	lib, err := emulator.New(t.Context(), signerKey, nil, nil, arkdKey.PubKey(), idx, arkade.DefaultComputeLimits())
+	lib, err := emulator.New(signerKey, nil, nil, arkdKey.PubKey(), idx, arkade.DefaultComputeLimits())
 	require.NoError(t, err)
 	arkd := &fakeArkd{}
-	svc, err := newService(lib, arkd, arkdKey.PubKey())
-	require.NoError(t, err)
+	svc := &service{Service: lib, arkd: arkd}
 
 	svc.Close()
 	require.Equal(t, 1, idx.closeCalls)
@@ -718,14 +717,18 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevArkTx))
 
 	lib, err := emulator.New(
-		t.Context(), emulatorKey, nil, nil, arkdKey.PubKey(), &testIndexer{},
+		emulatorKey, nil, nil, arkdKey.PubKey(), &testIndexer{},
 		arkade.DefaultComputeLimits(),
 	)
 	require.NoError(t, err)
 
 	arkd := &fakeArkd{}
-	svc, err := newService(lib, arkd, arkdKey.PubKey())
-	require.NoError(t, err)
+	svc := &service{
+		Service:       lib,
+		arkd:          arkd,
+		arkdPubKey:    arkdKey.PubKey(),
+		signerPubKeys: []*btcec.PublicKey{emulatorKey.PubKey()},
+	}
 
 	return svc, emulator.OffchainTx{
 		ArkTx:       arkPtx,
