@@ -1,8 +1,6 @@
 // Package emulator executes ArkadeScript on offchain and onchain Ark
-// transactions and signs the resulting inputs. A Service signs autonomously;
-// the arkd round-trip that submits and finalizes a signed tx is supplied by an
-// injectable Finalizer, which may be nil for signing-only use. Build one with
-// New.
+// transactions and signs the resulting inputs. It never submits or finalizes
+// anything on arkd: that is the caller's job. Build a Service with New.
 package emulator
 
 import (
@@ -19,13 +17,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil/psbt"
 )
-
-// Finalizer is the subset of the client-lib Client used for the finalizer
-// role in SubmitTx. It is satisfied structurally by client-lib's grpc client.
-type Finalizer interface {
-	SubmitTx(ctx context.Context, signedArkTx string, checkpointTxs []string) (arkTxid, finalArkTx string, signedCheckpointTxs []string, err error)
-	FinalizeTx(ctx context.Context, arkTxid string, finalCheckpointTxs []string) error
-}
 
 // Indexer is the subset of the client-lib Indexer the Service queries: vtxo
 // expiry for OP_PUSHEXPIRY scripts and commitment tx existence before signing a
@@ -75,11 +66,6 @@ type OnchainTx struct {
 
 type Service interface {
 	GetInfo(context.Context) (*Info, error)
-	// SubmitTx signs the given tx in place: the returned OffchainTx aliases the
-	// caller's ArkTx and checkpoint packets, except the ark tx when a Finalizer
-	// replaces it with arkd's finalized one. The in-place signatures persist even
-	// when SubmitTx returns an error and are appended rather than replaced, so an
-	// OffchainTx must not be reused or re-submitted across calls.
 	SubmitTx(context.Context, OffchainTx) (*OffchainTx, error)
 	SubmitIntent(context.Context, Intent) (*psbt.Packet, error)
 	SubmitFinalization(context.Context, BatchFinalization) (*SignedBatchFinalization, error)
@@ -93,7 +79,6 @@ type service struct {
 	deprecatedKeysValidUntil *time.Time
 	publicKey                string
 	deprecatedPublicKeys     []string
-	finalizer                Finalizer
 	indexerClient            Indexer
 	arkdPubKey               *btcec.PublicKey
 	computeLimits            arkade.ComputeLimits
@@ -116,44 +101,19 @@ func (s *service) activeDeprecatedSigners() []signer {
 	return s.deprecatedSigners
 }
 
-// isTypedNil reports whether v is a non-nil interface holding a nil value of a
-// nilable kind. Such a value passes a `!= nil` check but is almost always a
-// caller bug, and panics on any method that dereferences the receiver.
-func isTypedNil(v any) bool {
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map,
-		reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
-		return rv.IsNil()
-	default:
-		return false
-	}
-}
+
 
 // New builds a signing Service. secretKey is the current arkade-signing key and
 // arkdPubKey is the arkd signer key. Both are required. deprecatedKeys may be
 // nil; deprecatedKeysValidUntil optionally bounds how long they keep signing
 // authority (see activeDeprecatedSigners).
-//
-// finalizer may be nil: with a nil finalizer the Service runs signing-only, so
-// SubmitTx signs and returns without any arkd round-trip. Pass a non-nil
-// Finalizer (e.g. client-lib's grpc client) to also submit and finalize on arkd.
-//
-// indexerClient is required: signing depends on it for OP_PUSHEXPIRY vtxo
-// expiry and for the commitment tx check gating SubmitFinalization.
-//
-// The Service owns finalizer and indexerClient: Close closes each one that has
-// a Close method with no results, so do not pass a client whose lifecycle you
-// manage elsewhere. A typed nil (e.g. a nil *grpcClient wrapped in the
-// interface) is rejected here rather than left to panic on its nil receiver.
-//
-// The context is currently unused; it is accepted for forward compatibility.
-// Note the standalone emulator's arkd-connect retry lives in
-// internal/config/retry.go, not here.
+// The Service owns indexerClient: Close closes it when it has a Close method
+// with no results, so do not pass a client whose lifecycle you manage
+// elsewhere.
 func New(
 	_ context.Context,
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
-	arkdPubKey *btcec.PublicKey, finalizer Finalizer, indexerClient Indexer,
+	arkdPubKey *btcec.PublicKey, indexerClient Indexer,
 	computeLimits arkade.ComputeLimits,
 ) (Service, error) {
 	if secretKey == nil {
@@ -164,11 +124,7 @@ func New(
 		return nil, fmt.Errorf("arkd public key is required")
 	}
 
-	if isTypedNil(finalizer) {
-		return nil, fmt.Errorf("finalizer is a typed nil, pass an untyped nil for signing-only mode")
-	}
-
-	if indexerClient == nil || isTypedNil(indexerClient) {
+	if indexerClient == nil || isNil(indexerClient) {
 		return nil, fmt.Errorf("arkd indexer is required")
 	}
 
@@ -189,7 +145,6 @@ func New(
 		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
 		publicKey:                publicKey,
 		deprecatedPublicKeys:     deprecatedPublicKeys,
-		finalizer:                finalizer,
 		indexerClient:            indexerClient,
 		arkdPubKey:               arkdPubKey,
 		computeLimits:            computeLimits,
@@ -197,12 +152,10 @@ func New(
 }
 
 func (s *service) Close() {
-	// client-lib's clients expose Close() with no return value, so they do not
+	// client-lib's indexer exposes Close() with no return value, so it does not
 	// satisfy io.Closer; assert the actual signature instead.
-	for _, c := range []any{s.finalizer, s.indexerClient} {
-		if closer, ok := c.(interface{ Close() }); ok {
-			closer.Close()
-		}
+	if closer, ok := s.indexerClient.(interface{ Close() }); ok {
+		closer.Close()
 	}
 }
 
@@ -211,4 +164,15 @@ func (s *service) GetInfo(ctx context.Context) (*Info, error) {
 		SignerPublicKey:            s.publicKey,
 		DeprecatedSignerPublicKeys: append([]string(nil), s.deprecatedPublicKeys...),
 	}, nil
+}
+
+func isNil(v any) bool {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map,
+		reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
