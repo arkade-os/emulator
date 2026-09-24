@@ -30,9 +30,6 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 	if finalization.CommitmentTx == nil {
 		return nil, fmt.Errorf("commitment tx is required")
 	}
-	if s.indexerClient == nil {
-		return nil, fmt.Errorf("arkd indexer client is not configured")
-	}
 	commitmentTxid := finalization.CommitmentTx.UnsignedTx.TxID()
 	err := retryWithBackoff(ctx, commitmentTxRetryConfig,
 		func() error {

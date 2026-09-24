@@ -18,7 +18,7 @@ func TestNew(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("nil signer key", func(t *testing.T) {
-		_, err := New(context.Background(), nil, nil, nil, arkdKey.PubKey(), nil, nil, arkade.ComputeLimits{})
+		_, err := New(context.Background(), nil, nil, nil, arkdKey.PubKey(), nil, &mockIndexerClient{}, arkade.ComputeLimits{})
 		require.ErrorContains(t, err, "current signer key is required")
 	})
 
@@ -27,8 +27,16 @@ func TestNew(t *testing.T) {
 		require.ErrorContains(t, err, "arkd public key is required")
 	})
 
+	t.Run("nil or typed nil indexer", func(t *testing.T) {
+		var typedNil *mockIndexerClient
+		for _, idx := range []Indexer{nil, typedNil} {
+			_, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), nil, idx, arkade.ComputeLimits{})
+			require.ErrorContains(t, err, "arkd indexer is required")
+		}
+	})
+
 	t.Run("signing-only (nil finalizer)", func(t *testing.T) {
-		svc, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), nil, nil, arkade.ComputeLimits{})
+		svc, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), nil, &mockIndexerClient{}, arkade.ComputeLimits{})
 		require.NoError(t, err)
 		require.NotNil(t, svc)
 		// Close must be a no-op, not a panic, when the finalizer is nil.
@@ -40,7 +48,7 @@ func TestNew(t *testing.T) {
 		// `!= nil` check, so New must reject it rather than let SubmitTx or
 		// Close panic on the nil receiver later.
 		var typedNil *countingFinalizer
-		svc, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), typedNil, nil, arkade.ComputeLimits{})
+		svc, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), typedNil, &mockIndexerClient{}, arkade.ComputeLimits{})
 		require.ErrorContains(t, err, "typed nil")
 		require.Nil(t, svc)
 	})
@@ -49,7 +57,7 @@ func TestNew(t *testing.T) {
 		// the guard must not reject a live finalizer, and the Service owns it:
 		// Close forwards to the finalizer's own Close.
 		fin := &countingFinalizer{}
-		svc, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), fin, nil, arkade.ComputeLimits{})
+		svc, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), fin, &mockIndexerClient{}, arkade.ComputeLimits{})
 		require.NoError(t, err)
 		require.NotNil(t, svc)
 
@@ -68,7 +76,7 @@ func TestGetInfo(t *testing.T) {
 
 	svc, err := New(
 		context.Background(), signerKey, []*btcec.PrivateKey{deprecatedKey}, nil,
-		arkdKey.PubKey(), nil, nil, arkade.ComputeLimits{},
+		arkdKey.PubKey(), nil, &mockIndexerClient{}, arkade.ComputeLimits{},
 	)
 	require.NoError(t, err)
 

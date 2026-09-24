@@ -139,8 +139,8 @@ func isTypedNil(v any) bool {
 // SubmitTx signs and returns without any arkd round-trip. Pass a non-nil
 // Finalizer (e.g. client-lib's grpc client) to also submit and finalize on arkd.
 //
-// indexerClient may be nil, but SubmitIntent on an OP_PUSHEXPIRY script and
-// SubmitFinalization then fail, since both need arkd's indexer.
+// indexerClient is required: signing depends on it for OP_PUSHEXPIRY vtxo
+// expiry and for the commitment tx check gating SubmitFinalization.
 //
 // The Service owns finalizer and indexerClient: Close closes each one that has
 // a Close method with no results, so do not pass a client whose lifecycle you
@@ -168,8 +168,8 @@ func New(
 		return nil, fmt.Errorf("finalizer is a typed nil, pass an untyped nil for signing-only mode")
 	}
 
-	if isTypedNil(indexerClient) {
-		return nil, fmt.Errorf("indexer is a typed nil, pass an untyped nil to run without one")
+	if indexerClient == nil || isTypedNil(indexerClient) {
+		return nil, fmt.Errorf("arkd indexer is required")
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())

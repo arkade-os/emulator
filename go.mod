@@ -17,8 +17,8 @@ require (
 	github.com/arkade-os/arkd/pkg/client-lib v0.0.0-20260707112601-db93f3d63dab
 	github.com/arkade-os/arkd/pkg/errors v0.0.0-20260617121018-268d19d9641c
 	github.com/arkade-os/arkd/pkg/macaroons v0.7.1-0.20260216152434-74a173c67a37
-	github.com/arkade-os/emulator/api-spec v0.0.0-00010101000000-000000000000
-	github.com/arkade-os/emulator/pkg/arkade v0.0.0-20260616144513-96f9b06a5380
+	github.com/arkade-os/emulator/api-spec v0.0.0-20260923130525-1c9e71118ed3
+	github.com/arkade-os/emulator/pkg/arkade v0.0.0-20260923130525-1c9e71118ed3
 	github.com/arkade-os/emulator/pkg/client v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/emulator/pkg/emulator v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/go-sdk v0.11.0
