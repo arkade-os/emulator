@@ -6,8 +6,8 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 

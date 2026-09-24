@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 )
 
 // asBool gets the boolean value of the byte array.

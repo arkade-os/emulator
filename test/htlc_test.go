@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"strings"
 	"testing"
 
@@ -10,15 +11,13 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	clientwallet "github.com/arkade-os/arkd/pkg/client-wallet"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	arksdk "github.com/arkade-os/go-sdk"
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -208,7 +207,7 @@ func TestCovenantHTLC(t *testing.T) {
 
 			preimageCondition, err := txscript.NewScriptBuilder().
 				AddOp(txscript.OP_HASH160).
-				AddData(btcutil.Hash160(preimage)).
+				AddData(address.Hash160(preimage)).
 				AddOp(txscript.OP_EQUAL).
 				Script()
 			require.NoError(t, err)
@@ -411,8 +410,8 @@ func randomP2TR(t *testing.T) []byte {
 func fund(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.Wallet,
-	indexerSvc indexer.Indexer,
+	alice clientwallet.Wallet,
+	indexerSvc clientlib.Indexer,
 	serverSigner *btcec.PublicKey,
 	htlcVtxoScript script.TapscriptsVtxoScript,
 	contractAmount int64,
@@ -430,10 +429,11 @@ func fund(
 	htlcAddrStr, err := htlcAddr.EncodeV0()
 	require.NoError(t, err)
 
-	fundingTxid, err := alice.SendOffChain(ctx, []types.Receiver{
+	fundingTxidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{
 		{To: htlcAddrStr, Amount: uint64(contractAmount)},
 	})
 	require.NoError(t, err)
+	fundingTxid := fundingTxidRes.Txid
 	require.NotEmpty(t, fundingTxid)
 
 	fundingTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{fundingTxid})

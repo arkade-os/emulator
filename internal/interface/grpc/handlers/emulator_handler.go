@@ -7,7 +7,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/pkg/emulator"
-	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/psbt/v2"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

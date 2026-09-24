@@ -9,9 +9,9 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	scriptlib "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // fuzzWorldParams is decoded from fuzz bytes to drive the shape of a generated

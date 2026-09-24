@@ -9,8 +9,8 @@ import (
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
 )
 
 func parsePsbt(b64 string) (*psbt.Packet, error) {

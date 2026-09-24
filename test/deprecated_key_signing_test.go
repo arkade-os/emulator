@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	batchsessionhandler "github.com/arkade-os/arkd/pkg/client-lib/batch-session/handler"
 	"strings"
 	"testing"
 	"time"
@@ -14,18 +16,16 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
-	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 )
@@ -102,8 +102,9 @@ func runSubmitTxWithDeprecatedKey(
 	contractAddressStr, err := contractAddress.EncodeV0()
 	require.NoError(t, err)
 
-	txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: contractAddressStr, Amount: 10_000}})
+	txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: contractAddressStr, Amount: 10_000}})
 	require.NoError(t, err)
+	txid := txidRes.Txid
 	fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 	require.NoError(t, err)
 	redeemPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTx.Txs[0]), true)
@@ -244,32 +245,30 @@ func runSubmitIntentFinalizationWithDeprecatedKey(
 	intentID, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := types.VtxoWithTapTree{
-		Vtxo: types.Vtxo{
-			Outpoint: types.Outpoint{
-				Txid: delegateInput.Outpoint.Hash.String(),
-				VOut: delegateInput.Outpoint.Index,
-			},
-			Script: hex.EncodeToString(delegateTapscript),
-			Amount: uint64(delegateAmount),
+	vtxo := clientlib.Vtxo{
+		Outpoint: clientlib.Outpoint{
+			Txid: delegateInput.Outpoint.Hash.String(),
+			VOut: delegateInput.Outpoint.Index,
 		},
+		Script:     hex.EncodeToString(delegateTapscript),
+		Amount:     uint64(delegateAmount),
 		Tapscripts: delegateRevealedTapscripts,
 	}
 	batchHandler := &delegateBatchEventsHandler{
 		intentId:       intentID,
 		intent:         signedIntent,
-		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
+		vtxosToForfeit: []clientlib.Vtxo{vtxo},
 		signerSession:  signerSession,
 		emulatorClient: emulatorClient,
 		wallet:         aliceWallet,
 		client:         grpcClient,
 		explorer:       explorerSvc,
 	}
-	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{signerSession})
+	topics := getEventStreamTopics([]clientlib.Outpoint{vtxo.Outpoint}, []tree.SignerSession{signerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(stop)
-	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(
+	commitmentTxid, _, _, _, _, err := batchsessionhandler.JoinBatchSession(
 		ctx, eventStream, &capturingBatchEventsHandler{delegateBatchEventsHandler: batchHandler},
 	)
 	require.NoError(t, err)
@@ -319,7 +318,7 @@ func runSubmitOnchainWithDeprecatedKey(
 	merkleProof, err := vtxoTapTree.GetTaprootMerkleProof(txscript.NewBaseTapLeaf(arkadeTapscript).TapHash())
 	require.NoError(t, err)
 
-	tapAddr, err := btcutil.NewAddressTaproot(schnorr.SerializePubKey(vtxoTapKey), getRegtestParams(t))
+	tapAddr, err := address.NewAddressTaproot(schnorr.SerializePubKey(vtxoTapKey), getRegtestParams(t))
 	require.NoError(t, err)
 	_, err = runCommand("nigiri", "faucet", tapAddr.EncodeAddress(), "0.01")
 	require.NoError(t, err)

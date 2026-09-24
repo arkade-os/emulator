@@ -2,18 +2,18 @@ package test
 
 import (
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"strings"
 	"testing"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 )
@@ -107,14 +107,15 @@ func TestRecursivePolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	// fund 2 policy VTXOs in order to test multi-input rejection
-	fundingTxid, err := alice.SendOffChain(
+	fundingTxidRes, err := alice.SendOffChain(
 		ctx,
-		[]types.Receiver{
+		[]clientlib.Receiver{
 			{To: policyAddrStr, Amount: uint64(policyAmount)},
 			{To: policyAddrStr, Amount: uint64(policyAmount)},
 		},
 	)
 	require.NoError(t, err)
+	fundingTxid := fundingTxidRes.Txid
 	require.NotEmpty(t, fundingTxid)
 
 	indexerSvc := setupIndexer(t)
