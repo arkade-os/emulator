@@ -1232,6 +1232,22 @@ func TestRecycleReceiverFare(t *testing.T) {
 			operatorUnits: 0, receiverUnits: deliveredUnits,
 		}))
 	})
+	t.Run("asset fare equal to the delivery refuses a receiver with no prior units", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "asset", Units: 9}
+		requireRejected(t, spendRecycle(t, p, recycleCase{
+			receiverCoin: 1000, operatorSats: 330, receiverSats: 1000,
+			covenantUnits: 9, operatorUnits: 9, receiverUnits: 0,
+		}))
+	})
+	t.Run("asset fare equal to the delivery passes with the receiver's prior units", func(t *testing.T) {
+		p := receiverPaid(t)
+		p.ReceiverFare = &covenant.ReceiverFare{Currency: "asset", Units: 9}
+		require.NoError(t, spendRecycle(t, p, recycleCase{
+			receiverCoin: 1000, operatorSats: 330, receiverSats: 1000,
+			covenantUnits: 9, priorUnits: 5, operatorUnits: 9, receiverUnits: 5,
+		}))
+	})
 	t.Run("a zero fare builds the same leaf as no fare", func(t *testing.T) {
 		p := receiverPaid(t)
 		bare, err := covenant.BuildRecycle(p)
