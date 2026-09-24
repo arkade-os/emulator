@@ -36,7 +36,6 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("indexer is accepted and owned", func(t *testing.T) {
-		// the Service owns its indexer: Close forwards to the indexer's Close.
 		idx := &mockIndexerClient{}
 		svc, err := New(context.Background(), signerKey, nil, nil, arkdKey.PubKey(), idx, arkade.ComputeLimits{})
 		require.NoError(t, err)

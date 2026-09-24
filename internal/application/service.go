@@ -1,7 +1,4 @@
-// Package application is the standalone emulator's app layer. It wraps the
-// signing-only pkg/emulator Service with everything that talks to arkd: the
-// client connections, and the submit/finalize round-trip the emulator performs
-// when it is the last non-arkd signer of an offchain tx.
+// Package application wraps the pkg/emulator signer with arkd submit/finalize.
 package application
 
 import (
@@ -21,16 +18,12 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// arkdClient is the subset of client-lib's client used to submit and finalize
-// an offchain tx on arkd.
 type arkdClient interface {
 	SubmitTx(ctx context.Context, signedArkTx string, checkpointTxs []string) (arkTxid, finalArkTx string, signedCheckpointTxs []string, err error)
 	FinalizeTx(ctx context.Context, arkTxid string, finalCheckpointTxs []string) error
 	Close()
 }
 
-// service adds arkd submit/finalize on top of the signing-only library
-// Service. Every method but SubmitTx and Close passes straight through.
 type service struct {
 	emulator.Service
 	arkd          arkdClient
@@ -38,8 +31,7 @@ type service struct {
 	signerPubKeys []*btcec.PublicKey
 }
 
-// New connects to arkd, waits for it to be ready, and builds the emulator
-// service: the pkg/emulator signer wrapped with arkd finalization.
+// New connects to arkd and builds the emulator service.
 func New(
 	ctx context.Context, version string,
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
@@ -56,8 +48,7 @@ func New(
 		arkd.Close()
 		return nil, fmt.Errorf("failed to create arkd indexer client: %w", err)
 	}
-	// Both hold open gRPC connections; close them unless they are handed off to
-	// a successfully constructed service (which then owns their lifecycle).
+	// close both clients unless the service takes ownership
 	handedOff := false
 	defer func() {
 		if !handedOff {
@@ -106,7 +97,7 @@ func New(
 	}
 	svc, err := newService(lib, arkd, arkdPubKey)
 	if err != nil {
-		// lib owns the indexer now; close it through lib, and arkd directly.
+		// lib owns the indexer
 		handedOff = true
 		lib.Close()
 		arkd.Close()
@@ -116,8 +107,6 @@ func New(
 	return svc, nil
 }
 
-// newService wraps lib, reading the emulator's signer pubkeys (current first,
-// then deprecated) from lib.GetInfo for the finalizer role check.
 func newService(lib emulator.Service, arkd arkdClient, arkdPubKey *btcec.PublicKey) (*service, error) {
 	info, err := lib.GetInfo(context.Background())
 	if err != nil {
@@ -148,8 +137,7 @@ func (s *service) Close() {
 	s.arkd.Close()
 }
 
-// versionedIndexer tags every indexer call with the emulator's x-sdk-version,
-// the way client-lib's grpc client does for arkd calls via its interceptor.
+// versionedIndexer adds the x-sdk-version header to indexer calls.
 type versionedIndexer struct {
 	indexer.Indexer
 	version string

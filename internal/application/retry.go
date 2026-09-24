@@ -7,15 +7,8 @@ import (
 	"time"
 )
 
-// retryConfig/retryWithBackoff are a deliberate copy of the unexported helper
-// in pkg/emulator (tx.go). That package is a separate module shipped as a
-// library, so exporting its retry helper would make generic backoff plumbing
-// part of the library's public API. The two are behavior-identical by design:
-// any fix to retryWithBackoff or applyJitter here must land in
-// pkg/emulator/tx.go too.
+// Copy of pkg/emulator's private retry helper; keep the two in sync.
 
-// arkdConnectRetryConfig retries the startup GetInfo while arkd may still be
-// booting. MinAttempts 0 lets a cancelled ctx stop it right away.
 var arkdConnectRetryConfig = retryConfig{
 	MinAttempts:  0,
 	InitialDelay: 1 * time.Second,
@@ -36,9 +29,6 @@ var finalizeRetryConfig = retryConfig{
 	Jitter:       0.2, // + or - 20% randomness
 }
 
-// retryConfig tunes retryWithBackoff: how many attempts ignore ctx
-// cancellation, the initial/maximum delay, the growth multiplier, and the
-// jitter fraction.
 type retryConfig struct {
 	MinAttempts  int
 	MaxAttempts  int
@@ -49,9 +39,8 @@ type retryConfig struct {
 	Jitter       float64
 }
 
-// retryWithBackoff runs op until it succeeds, backing off between attempts with
-// jitter. The first cfg.MinAttempts run regardless of ctx; after that a
-// cancelled ctx aborts the loop. onErr, if set, is called after each failure.
+// retryWithBackoff retries op with jittered backoff; the first MinAttempts
+// ignore ctx cancellation.
 func retryWithBackoff(
 	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
 ) error {
@@ -73,7 +62,7 @@ func retryWithBackoff(
 		}
 
 		delay := applyJitter(backoffDelay, cfg.Jitter)
-		// scale in float64: time.Duration(cfg.Multiplier) truncates 1.5 to 1
+		// float math: time.Duration(1.5) would truncate to 1
 		backoffDelay = min(cfg.MaxDelay, time.Duration(float64(backoffDelay)*cfg.Multiplier))
 
 		if cfg.MaxElapsed > 0 && !time.Now().Add(delay).Before(deadline) {

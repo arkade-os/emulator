@@ -618,7 +618,7 @@ type mockIndexerClient struct {
 	closeCalls int
 }
 
-// Close shadows the embedded nil Indexer's, so Service.Close does not panic.
+// Close shadows the embedded nil Indexer's.
 func (m *mockIndexerClient) Close() { m.closeCalls++ }
 
 func (m *mockIndexerClient) GetCommitmentTx(

@@ -1,6 +1,4 @@
-// Package emulator executes ArkadeScript on offchain and onchain Ark
-// transactions and signs the resulting inputs. It never submits or finalizes
-// anything on arkd: that is the caller's job. Build a Service with New.
+// Package emulator executes ArkadeScript and signs Ark transactions.
 package emulator
 
 import (
@@ -18,9 +16,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil/psbt"
 )
 
-// Indexer is the subset of the client-lib Indexer the Service queries: vtxo
-// expiry for OP_PUSHEXPIRY scripts and commitment tx existence before signing a
-// batch finalization. It is satisfied structurally by client-lib's grpc indexer.
+// Indexer is the subset of the arkd indexer client used by Service.
 type Indexer interface {
 	GetVtxos(ctx context.Context, opts ...indexer.GetVtxosOption) (*indexer.VtxosResponse, error)
 	GetCommitmentTx(ctx context.Context, txid string) (*indexer.CommitmentTx, error)
@@ -92,8 +88,8 @@ type service struct {
 // honored for both fresh signing (resolveArkadeScriptSigner) and
 // finalization (getSignedInputAssociations) alike: a VTXO whose covenant
 // still names a deprecated key must be spent before the cutover, or it can no
-// longer be finalized by this emulator. A nil cutoff preserves the unbounded
-// behavior.
+// longer be finalized by this emulator. A nil cutoff (the default, unset via
+// config) preserves today's unbounded behavior.
 func (s *service) activeDeprecatedSigners() []signer {
 	if s.deprecatedKeysValidUntil != nil && time.Now().After(*s.deprecatedKeysValidUntil) {
 		return nil
@@ -101,15 +97,7 @@ func (s *service) activeDeprecatedSigners() []signer {
 	return s.deprecatedSigners
 }
 
-
-
-// New builds a signing Service. secretKey is the current arkade-signing key and
-// arkdPubKey is the arkd signer key. Both are required. deprecatedKeys may be
-// nil; deprecatedKeysValidUntil optionally bounds how long they keep signing
-// authority (see activeDeprecatedSigners).
-// The Service owns indexerClient: Close closes it when it has a Close method
-// with no results, so do not pass a client whose lifecycle you manage
-// elsewhere.
+// New builds a signing Service. It owns indexerClient and closes it on Close.
 func New(
 	_ context.Context,
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
@@ -152,8 +140,7 @@ func New(
 }
 
 func (s *service) Close() {
-	// client-lib's indexer exposes Close() with no return value, so it does not
-	// satisfy io.Closer; assert the actual signature instead.
+	// client-lib's Close() returns nothing, so it is not an io.Closer.
 	if closer, ok := s.indexerClient.(interface{ Close() }); ok {
 		closer.Close()
 	}

@@ -340,9 +340,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 			require.ErrorContains(t, err, "missing taproot leaf script")
 		})
 		t.Run("input with more than one taproot leaf script is rejected", func(t *testing.T) {
-			// script.VerifyTapscriptSigs skips an input carrying != 1 leaf script,
-			// so a duplicated entry would otherwise pass a checkpoint missing a
-			// non-arkd signature.
+			// VerifyTapscriptSigs skips inputs without exactly one leaf script
 			setup := newCheckpoint(t,
 				aliceSigner.PubKey(),
 				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
@@ -358,9 +356,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 			require.ErrorContains(t, err, "missing taproot leaf script")
 		})
 		t.Run("input whose prevout is not taproot is rejected", func(t *testing.T) {
-			// script.VerifyTapscriptSigs skips a non-taproot prevout without
-			// erroring, so this checkpoint carries one leaf script and no signature
-			// at all yet would pass on a bare nil-error check.
+			// VerifyTapscriptSigs skips non-taproot prevouts without erroring
 			setup := newCheckpoint(t,
 				arkade.ComputeArkadeScriptPublicKey(thisSigner.PubKey(), arkade.ArkadeScriptHash(arkadeScriptBytes)),
 				arkdSigner.PubKey(),
@@ -421,8 +417,6 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 	})
 }
 
-// TestIsFinalizerRole proves the role is derived from the signed tx and only
-// counts inputs the library actually signed with our tweaked key.
 func TestIsFinalizerRole(t *testing.T) {
 	t.Run("last non-arkd signer", func(t *testing.T) {
 		svc, tx, _ := newTestService(t, true)
@@ -445,8 +439,6 @@ func TestIsFinalizerRole(t *testing.T) {
 	})
 
 	t.Run("unsigned input not counted", func(t *testing.T) {
-		// the closure names us last, but the library did not sign the input
-		// (e.g. a deprecated key past its cutoff): no role without a signature.
 		svc, tx, _ := newTestService(t, true)
 
 		ok, err := isFinalizerRole(tx.ArkTx, []int{0}, svc.signerPubKeys, svc.arkdPubKey)
@@ -455,9 +447,6 @@ func TestIsFinalizerRole(t *testing.T) {
 	})
 
 	t.Run("signature present before the call not counted", func(t *testing.T) {
-		// a requester can attach a stale or fake signature for our tweaked key
-		// (e.g. a deprecated key past its cutoff, which the library skips): only
-		// signatures the library added during this call say anything about our role.
 		svc, tx, _ := newTestService(t, true)
 		in := &tx.ArkTx.Inputs[0]
 		tweaked, err := arkade.ReadArkadeScript(tx.ArkTx, svc.signerPubKeys[0], arkade.EmulatorEntry{Vin: 0, Script: []byte{txscript.OP_TRUE}})
@@ -475,7 +464,6 @@ func TestIsFinalizerRole(t *testing.T) {
 
 func TestSubmitTx(t *testing.T) {
 	t.Run("not finalizer", func(t *testing.T) {
-		// another signer follows us: return the library's signed tx, never touch arkd.
 		svc, tx, arkd := newTestService(t, false)
 
 		out, err := svc.SubmitTx(t.Context(), tx)
@@ -487,12 +475,9 @@ func TestSubmitTx(t *testing.T) {
 	})
 
 	t.Run("finalizer", func(t *testing.T) {
-		// verifies the non-arkd checkpoint signatures, submits to arkd, merges
-		// arkd's checkpoint signature, finalizes, and returns arkd's final ark tx.
 		svc, tx, arkd := newTestService(t, true)
 
-		// arkd "returns" a different ark tx (distinct txid) so we can prove
-		// SubmitTx returns arkd's finalized tx rather than the input.
+		// distinct txid, to tell arkd's final tx from the input
 		finalArkMsg := wire.NewMsgTx(2)
 		finalArkMsg.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xfe}, Index: 3}})
 		finalArkMsg.AddTxOut(&wire.TxOut{Value: 1234, PkScript: []byte{txscript.OP_TRUE}})
@@ -501,8 +486,7 @@ func TestSubmitTx(t *testing.T) {
 		finalArkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: []byte{txscript.OP_TRUE}}
 		arkd.finalArkTx = encodePacket(t, finalArkPtx)
 
-		// arkd "returns" each checkpoint (matching txid) carrying an extra,
-		// distinct signature, so we can prove the merge appends arkd's sig.
+		// arkd's checkpoints carry an extra signature to detect the merge
 		arkdSig := &psbt.TaprootScriptSpendSig{
 			XOnlyPubKey: bytes.Repeat([]byte{0xab}, 32),
 			LeafHash:    bytes.Repeat([]byte{0xcd}, 32),
@@ -520,19 +504,15 @@ func TestSubmitTx(t *testing.T) {
 		out, err := svc.SubmitTx(t.Context(), tx)
 		require.NoError(t, err)
 
-		// arkd was driven exactly once for submit and once for finalize.
 		require.Equal(t, 1, arkd.submitCalls)
 		require.Equal(t, 1, arkd.finalizeCalls)
 
-		// SubmitTx returns arkd's finalized ark tx, not the input.
 		require.Equal(t, finalArkMsg.TxHash(), out.ArkTx.UnsignedTx.TxHash())
 
-		// the merged checkpoint carries both the emulator's and arkd's signatures.
 		mergedSigs := out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig
 		require.GreaterOrEqual(t, len(mergedSigs), 2)
 		require.True(t, hasSignature(mergedSigs, arkdSig.Signature), "arkd signature must be merged in")
 
-		// submit carries no arkd signature, finalize must carry it.
 		require.Len(t, arkd.submitCheckpoints, len(tx.Checkpoints))
 		submitted, err := psbt.NewFromRawBytes(strings.NewReader(arkd.submitCheckpoints[0]), true)
 		require.NoError(t, err)
@@ -557,13 +537,10 @@ func TestSubmitTx(t *testing.T) {
 		require.Nil(t, out)
 		require.Equal(t, 1, arkd.submitCalls)
 		require.Zero(t, arkd.finalizeCalls)
-		// the emulator's own signature was never merged with an arkd one.
 		require.Len(t, tx.Checkpoints[0].Inputs[0].TaprootScriptSpendSig, 1)
 	})
 
 	t.Run("arkd returns unknown checkpoint txid", func(t *testing.T) {
-		// a response whose checkpoint txids do not cover ours must be an error,
-		// not a nil deref on the map miss.
 		svc, tx, arkd := newTestService(t, true)
 
 		otherTx := wire.NewMsgTx(2)
@@ -600,9 +577,7 @@ func TestSubmitTx(t *testing.T) {
 	t.Run("verifies checkpoint signatures before submitting", func(t *testing.T) {
 		svc, tx, arkd := newTestService(t, true)
 
-		// a garbage signature for the tweaked emulator key (first push of the
-		// multisig leaf) survives checkpoint validation and signing, but not
-		// the signature verification that follows
+		// garbage signature for the tweaked emulator key
 		in := &tx.Checkpoints[0].Inputs[0]
 		leaf := in.TaprootLeafScript[0]
 		leafHash := txscript.NewTapLeaf(leaf.LeafVersion, leaf.Script).TapHash()
@@ -659,7 +634,6 @@ func TestRetryFinalize(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	// Close closes the library (and through it the indexer) and the arkd client.
 	signerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	arkdKey, err := btcec.NewPrivateKey()
@@ -676,10 +650,8 @@ func TestClose(t *testing.T) {
 	require.Equal(t, 1, arkd.closeCalls)
 }
 
-// newTestService builds the library signer through emulator.New, wraps it,
-// and returns a fully-formed OffchainTx. lastSigner puts the emulator's tweaked
-// key right before arkd in the closure (finalizer role); otherwise alice
-// follows it. The arkade script is OP_TRUE so it always executes.
+// newTestService returns a service and an OP_TRUE OffchainTx. lastSigner makes
+// the emulator the last non-arkd signer; otherwise alice follows it.
 func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainTx, *fakeArkd) {
 	t.Helper()
 
@@ -717,12 +689,10 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	vtxoPkScript, err := arkscript.P2TRScript(vtxoTapKey)
 	require.NoError(t, err)
 
-	// prevout ark tx holding the vtxo output we spend
 	prevArkTx := wire.NewMsgTx(2)
 	prevArkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xaa}, Index: 0}})
 	prevArkTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
 
-	// checkpoint tx spending output 0 of prevArkTx
 	checkpointTx := wire.NewMsgTx(2)
 	checkpointTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevArkTx.TxHash(), Index: 0}})
 	checkpointTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
@@ -732,7 +702,6 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	checkpointPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: vtxoPkScript}
 	checkpointPtx.Inputs[0].TaprootLeafScript = leafScript
 
-	// ark tx spending the checkpoint output, carrying the emulator packet
 	arkTx := wire.NewMsgTx(2)
 	arkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: checkpointPtx.UnsignedTx.TxHash(), Index: 0}})
 	arkTx.AddTxOut(&wire.TxOut{Value: 4_800, PkScript: vtxoPkScript})
@@ -764,7 +733,6 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	}, arkd
 }
 
-// testIndexer satisfies emulator.Indexer; OP_TRUE scripts never query it.
 type testIndexer struct {
 	indexer.Indexer
 	closeCalls int
@@ -772,14 +740,11 @@ type testIndexer struct {
 
 func (i *testIndexer) Close() { i.closeCalls++ }
 
-// fakeArkd records its calls and returns caller-configured responses.
 type fakeArkd struct {
-	// SubmitTx responses
 	finalArkTx      string
 	arkdCheckpoints []string
 	submitErr       error
-	// FinalizeTx responses, consumed in order; nil once exhausted
-	finalizeErrs []error
+	finalizeErrs    []error
 
 	submitCalls       int
 	submitCheckpoints []string

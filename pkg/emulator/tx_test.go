@@ -293,26 +293,19 @@ type submitTxHarness struct {
 	checkpoint *psbt.Packet
 }
 
-// TestSubmitTx proves SubmitTx executes and signs, then hands the signed tx
-// back unchanged in shape: the library never contacts arkd, even when the
-// emulator is the last non-arkd signer.
 func TestSubmitTx(t *testing.T) {
 	svc, arkTxInput := newTestSigningService(t)
 
 	out, err := svc.SubmitTx(context.Background(), arkTxInput)
 	require.NoError(t, err)
 
-	// returns the input ark tx (signed), not a finalized tx from arkd.
 	require.Equal(t, arkTxInput.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
-	// the emulator signed both the ark tx input and the checkpoint input.
 	require.NotEmpty(t, out.ArkTx.Inputs[0].TaprootScriptSpendSig)
-	// no arkd signature is merged: exactly the emulator's own.
 	require.Len(t, out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig, 1)
 }
 
-// newTestSigningService constructs a service and a fully-formed OffchainTx
-// where the emulator is the last non-arkd signer. The arkade script is OP_TRUE
-// so it always executes.
+// newTestSigningService returns a service and an OP_TRUE OffchainTx where the
+// emulator is the last non-arkd signer.
 func newTestSigningService(t *testing.T) (*service, OffchainTx) {
 	t.Helper()
 
@@ -324,7 +317,6 @@ func newTestSigningService(t *testing.T) (*service, OffchainTx) {
 	arkadeScriptBytes := []byte{txscript.OP_TRUE}
 	scriptHash := arkade.ArkadeScriptHash(arkadeScriptBytes)
 
-	// The closure has the emulator's tweaked key as the last signer before arkd.
 	tweakedEmulatorPub := arkade.ComputeArkadeScriptPublicKey(emulatorKey.PubKey(), scriptHash)
 	closure := arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{tweakedEmulatorPub, arkdKey.PubKey()}}
 
@@ -524,7 +516,6 @@ func taprootLeaf(t *testing.T, pubkeys ...*btcec.PublicKey) (*psbt.TaprootTapLea
 	}, pkScript
 }
 
-// tweakedAliceArkd makes alice, not the emulator, the last non-arkd signer.
 func tweakedAliceArkd(tweaked, alice, arkd *btcec.PublicKey) []*btcec.PublicKey {
 	return []*btcec.PublicKey{tweaked, alice, arkd}
 }

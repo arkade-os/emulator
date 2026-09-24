@@ -17,11 +17,7 @@ import (
 
 // SubmitTx aims to execute arkade scripts on offchain ark transactions
 // execution of the script runs only on ark tx, if valid, the associated checkpoint tx
-//
-// tx is signed in place: the returned OffchainTx aliases the caller's ArkTx and
-// checkpoint packets, so an OffchainTx must not be reused across calls. The in-place signing persists when
-// SubmitTx returns an error, so a failed OffchainTx must not be re-submitted:
-// signatures are appended, not replaced.
+// tx is signed in place, even on error: do not reuse it across calls.
 func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, error) {
 	arkPtx := tx.ArkTx
 
@@ -225,13 +221,7 @@ func validateTaprootLeaf(input psbt.PInput, expectedLeaf txscript.TapLeaf) error
 	return nil
 }
 
-// internal/application/retry.go keeps a private copy of retryConfig/retryWithBackoff
-// so this library need not export them. The two are behavior-identical by
-// design: any fix to retryWithBackoff/applyJitter here must land there too.
-
-// retryConfig tunes retryWithBackoff: how many attempts ignore ctx
-// cancellation, the initial/maximum delay, the growth multiplier, and the
-// jitter fraction.
+// Keep the retry helper in sync with internal/application/retry.go.
 type retryConfig struct {
 	MinAttempts  int
 	MaxAttempts  int
@@ -242,9 +232,8 @@ type retryConfig struct {
 	Jitter       float64
 }
 
-// retryWithBackoff runs op until it succeeds, backing off between attempts with
-// jitter. The first cfg.MinAttempts run regardless of ctx; after that a
-// cancelled ctx aborts the loop. onErr, if set, is called after each failure.
+// retryWithBackoff retries op with jittered backoff; the first MinAttempts
+// ignore ctx cancellation.
 func retryWithBackoff(
 	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
 ) error {
@@ -266,7 +255,7 @@ func retryWithBackoff(
 		}
 
 		delay := applyJitter(backoffDelay, cfg.Jitter)
-		// scale in float64: time.Duration(cfg.Multiplier) truncates 1.5 to 1
+		// float math: time.Duration(1.5) would truncate to 1
 		backoffDelay = min(cfg.MaxDelay, time.Duration(float64(backoffDelay)*cfg.Multiplier))
 
 		if cfg.MaxElapsed > 0 && !time.Now().Add(delay).Before(deadline) {

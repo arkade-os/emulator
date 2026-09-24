@@ -20,9 +20,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// SubmitTx signs tx through the library, then, when the emulator is the last
-// non-arkd signer, submits it to arkd and finalizes it so the funds cannot be
-// left locked in a half-signed tx. Otherwise it returns the signed tx as is.
+// SubmitTx signs tx and, if the emulator is the last non-arkd signer, submits
+// and finalizes it on arkd.
 func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulator.OffchainTx, error) {
 	var sigsBefore []int
 	if tx.ArkTx != nil {
@@ -86,8 +85,7 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 	finalEncodedCheckpoints := make([]string, 0, len(signed.Checkpoints))
 	logCheckpoints := make(map[string]any)
 	for i, checkpoint := range signed.Checkpoints {
-		// do not trust arkd's returned set to cover ours: a missing or
-		// malformed entry must be an error, not a panic.
+		// arkd's response may not cover our checkpoints
 		txid := checkpoint.UnsignedTx.TxID()
 		arkdCheckpoint, ok := arkdCheckpointPSBTs[txid]
 		if !ok {
@@ -162,7 +160,6 @@ func isFinalizerRole(arkPtx *psbt.Packet, sigsBefore []int, signerPubKeys []*btc
 	return acc.isFinalizer()
 }
 
-// signedBy reports whether sigs holds a tapscript signature from pubKey.
 func signedBy(sigs []*psbt.TaprootScriptSpendSig, pubKey *btcec.PublicKey) bool {
 	xOnly := schnorr.SerializePubKey(pubKey)
 	for _, sig := range sigs {
@@ -247,8 +244,7 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 		if len(ptx.Inputs) == 0 || len(ptx.UnsignedTx.TxIn) == 0 {
 			return fmt.Errorf("checkpoint %d: missing input 0", checkpointIndex)
 		}
-		// script.VerifyTapscriptSigs silently skips inputs that do not carry
-		// exactly one taproot leaf script, so we must assert that count here.
+		// VerifyTapscriptSigs silently skips inputs without exactly one leaf script
 		if len(ptx.Inputs[0].TaprootLeafScript) != 1 {
 			return fmt.Errorf(
 				"checkpoint %d input 0: missing taproot leaf script (want exactly 1, got %d)",
@@ -259,10 +255,7 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 		if err != nil {
 			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
 		}
-		// script.VerifyTapscriptSigs also skips an input whose prevout is not a
-		// taproot output and one carrying a note closure, both without erroring, so
-		// a nil error alone does not mean input 0 was checked. Require it in the
-		// verified set instead.
+		// it also skips non-taproot and note inputs without erroring
 		verified, err := script.VerifyTapscriptSigs(
 			ptx, prevoutFetcher, script.WithSkipPublicKeys(arkdPubKey),
 		)
@@ -278,8 +271,7 @@ func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *b
 	return nil
 }
 
-// computePrevoutFetcher builds a prevout fetcher from ptx's witness utxos. A
-// copy of pkg/emulator's unexported helper.
+// computePrevoutFetcher is a copy of pkg/emulator's private helper.
 func computePrevoutFetcher(ptx *psbt.Packet) (txscript.PrevOutputFetcher, error) {
 	prevouts := make(map[wire.OutPoint]*wire.TxOut)
 
