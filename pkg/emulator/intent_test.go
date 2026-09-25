@@ -1,7 +1,6 @@
 package emulator
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -11,7 +10,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chainhash/v2"
@@ -170,7 +168,7 @@ func TestSubmitIntentRejectsOnchainOutputsBeforeSigning(t *testing.T) {
 		Message: &intent.RegisterMessage{
 			OnchainOutputIndexes: []int{0},
 		},
-	})
+	}, OffchainData{})
 
 	require.ErrorContains(t, err, "onchain outputs are not supported")
 	require.Nil(t, signed)
@@ -250,39 +248,30 @@ func submitTestIntent(
 	return svc.SubmitIntent(t.Context(), Intent{
 		Proof:   intent.Proof{Packet: *ptx},
 		Message: message,
-	})
+	}, OffchainData{})
 }
 
-func TestExpiryForScriptOnlyQueriesIndexerForPushExpiry(t *testing.T) {
-	calls := 0
-	svc := &service{indexerClient: expiryIndexer{calls: &calls}}
-	txid := chainhash.Hash{}.String()
+func TestExpiryForScriptOnlyNeedsExpiryForPushExpiry(t *testing.T) {
+	outpoint := wire.OutPoint{}
 
 	pushedOpcode, err := txscript.NewScriptBuilder().
 		AddData([]byte{arkade.OP_PUSHEXPIRY}).Script()
 	require.NoError(t, err)
 
 	for _, script := range [][]byte{{txscript.OP_TRUE}, pushedOpcode} {
-		_, err := svc.expiryForScript(t.Context(), script, txid, 0)
+		_, err := expiryForScript(script, outpoint, nil)
 		require.NoError(t, err)
 	}
-	require.Zero(t, calls)
 
-	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
-	require.ErrorContains(t, err, "not found")
-	require.Equal(t, 1, calls)
-
-	svc.indexerClient = expiryIndexer{vtxos: []clientlib.Vtxo{{
-		Outpoint:  clientlib.Outpoint{Txid: chainhash.Hash{1}.String()},
-		ExpiresAt: time.Now().Add(time.Minute),
-	}}}
-	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	_, err = expiryForScript([]byte{arkade.OP_PUSHEXPIRY}, outpoint, nil)
 	require.ErrorContains(t, err, "not found")
 
-	svc.indexerClient = expiryIndexer{vtxos: []clientlib.Vtxo{{
-		Outpoint: clientlib.Outpoint{Txid: txid},
-	}}}
-	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
+	_, err = expiryForScript([]byte{arkade.OP_PUSHEXPIRY}, outpoint,
+		map[wire.OutPoint]int64{{Hash: chainhash.Hash{1}}: time.Now().Unix()})
+	require.ErrorContains(t, err, "not found")
+
+	_, err = expiryForScript([]byte{arkade.OP_PUSHEXPIRY}, outpoint,
+		map[wire.OutPoint]int64{outpoint: 0})
 	require.ErrorContains(t, err, "has no expiry")
 }
 
@@ -304,16 +293,14 @@ func TestSubmitIntentPushExpiry(t *testing.T) {
 	message, encoded := testRegisterMessage(t)
 	bindIntentProofToMessage(t, ptx, encoded)
 
-	svc := &service{
-		signer: signer{signerKey},
-		indexerClient: expiryIndexer{vtxos: []clientlib.Vtxo{{
-			Outpoint:  clientlib.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
-			ExpiresAt: expiresAt,
-		}}},
-	}
-	signed, err := svc.SubmitIntent(t.Context(), Intent{
-		Proof:   intent.Proof{Packet: *ptx},
-		Message: message,
+	request := Intent{Proof: intent.Proof{Packet: *ptx}, Message: message}
+	outpoints, err := request.RequiredVtxos()
+	require.NoError(t, err)
+	require.Equal(t, []wire.OutPoint{outpoint}, outpoints)
+
+	svc := &service{signer: signer{signerKey}}
+	signed, err := svc.SubmitIntent(t.Context(), request, OffchainData{
+		VtxoExpiries: map[wire.OutPoint]int64{outpoint: expiresAt.Unix()},
 	})
 
 	require.NoError(t, err)
@@ -440,19 +427,4 @@ func newIntentProof(
 	ptx.Outputs = append(ptx.Outputs, psbt.POutput{})
 
 	return ptx
-}
-
-type expiryIndexer struct {
-	clientlib.Indexer
-	calls *int
-	vtxos []clientlib.Vtxo
-}
-
-func (e expiryIndexer) GetVtxos(
-	context.Context, ...clientlib.GetVtxosOption,
-) (*clientlib.VtxosResponse, error) {
-	if e.calls != nil {
-		(*e.calls)++
-	}
-	return &clientlib.VtxosResponse{Vtxos: e.vtxos}, nil
 }
