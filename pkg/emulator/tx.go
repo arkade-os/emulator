@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
-	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
@@ -18,7 +16,7 @@ import (
 // SubmitTx aims to execute arkade scripts on offchain ark transactions
 // execution of the script runs only on ark tx, if valid, the associated checkpoint tx
 // tx is signed in place, even on error: do not reuse it across calls.
-func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, error) {
+func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData) (*OffchainTx, error) {
 	arkPtx := tx.ArkTx
 
 	indexedCheckpoints, err := indexCheckpoints(arkPtx, tx.Checkpoints)
@@ -65,10 +63,10 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		if prevArkTx == nil {
 			return nil, fmt.Errorf("prevout ark tx not found for input %d", inputIndex)
 		}
-		expiry, err := s.expiryForScript(
-			ctx, script.Script(), prevArkTx.TxHash().String(),
-			prevOutFetcher.prevOutIdxs[arkOutpoint],
-		)
+		vtxoOutpoint := wire.OutPoint{
+			Hash: prevArkTx.TxHash(), Index: prevOutFetcher.prevOutIdxs[arkOutpoint],
+		}
+		expiry, err := expiryForScript(script.Script(), vtxoOutpoint, data.VtxoExpiries)
 		if err != nil {
 			return nil, err
 		}
@@ -110,6 +108,34 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		ArkTx:       arkPtx,
 		Checkpoints: tx.Checkpoints,
 	}, nil
+}
+
+// RequiredVtxos returns the spent vtxos SubmitTx needs in OffchainData:
+// those spent by inputs whose arkade script uses OP_PUSHEXPIRY.
+func (t OffchainTx) RequiredVtxos() ([]wire.OutPoint, error) {
+	if t.ArkTx == nil {
+		return nil, fmt.Errorf("missing ark transaction")
+	}
+	vins, err := pushExpiryVins(t.ArkTx.UnsignedTx)
+	if err != nil || len(vins) == 0 {
+		return nil, err
+	}
+	prevOutFetcher, err := prevOutFetcherForArkTx(t.ArkTx, t.Checkpoints)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
+	}
+	outpoints := make([]wire.OutPoint, 0, len(vins))
+	for _, vin := range vins {
+		arkOutpoint := t.ArkTx.UnsignedTx.TxIn[vin].PreviousOutPoint
+		prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
+		if prevArkTx == nil {
+			return nil, fmt.Errorf("prevout ark tx not found for input %d", vin)
+		}
+		outpoints = append(outpoints, wire.OutPoint{
+			Hash: prevArkTx.TxHash(), Index: prevOutFetcher.prevOutIdxs[arkOutpoint],
+		})
+	}
+	return outpoints, nil
 }
 
 func indexCheckpoints(arkPtx *psbt.Packet, checkpoints []*psbt.Packet) (map[string]*psbt.Packet, error) {
@@ -219,74 +245,4 @@ func validateTaprootLeaf(input psbt.PInput, expectedLeaf txscript.TapLeaf) error
 	}
 
 	return nil
-}
-
-// Keep the retry helper in sync with internal/application/retry.go.
-type retryConfig struct {
-	MinAttempts  int
-	MaxAttempts  int
-	MaxElapsed   time.Duration
-	InitialDelay time.Duration
-	MaxDelay     time.Duration
-	Multiplier   float64
-	Jitter       float64
-}
-
-// retryWithBackoff retries op with jittered backoff; the first MinAttempts
-// ignore ctx cancellation.
-func retryWithBackoff(
-	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
-) error {
-	backoffDelay := cfg.InitialDelay
-	deadline := time.Now().Add(cfg.MaxElapsed)
-	for attempt := 1; ; attempt++ {
-		err := op()
-		if err == nil {
-			return nil
-		}
-		if onErr != nil {
-			onErr(attempt, err)
-		}
-
-		// absolute bounds, independent of the caller supplied context, so the
-		// loop always returns even when ctx has no deadline
-		if cfg.MaxAttempts > 0 && attempt >= cfg.MaxAttempts {
-			return fmt.Errorf("retry exhausted after attempt %d: %w", attempt, err)
-		}
-
-		delay := applyJitter(backoffDelay, cfg.Jitter)
-		// float math: time.Duration(1.5) would truncate to 1
-		backoffDelay = min(cfg.MaxDelay, time.Duration(float64(backoffDelay)*cfg.Multiplier))
-
-		if cfg.MaxElapsed > 0 && !time.Now().Add(delay).Before(deadline) {
-			return fmt.Errorf("retry budget exhausted after attempt %d: %w", attempt, err)
-		}
-
-		// try a minimum number of times before respecting ctx.Done
-		if attempt < cfg.MinAttempts {
-			time.Sleep(delay)
-			continue
-		}
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("retry cancelled after attempt %d: %w", attempt, ctx.Err())
-		case <-time.After(delay):
-		}
-	}
-}
-
-// applyJitter adds ±jitter randomness to a duration.
-// with jitter = 0.2, d get + or - 20%
-func applyJitter(d time.Duration, jitter float64) time.Duration {
-	if jitter <= 0 {
-		return d
-	}
-	if jitter >= 1.0 {
-		jitter = 0.999
-	}
-
-	randomFactor := 2.0*rand.Float64() - 1.0 // [-1, +1] factor
-	jitterFactor := 1.0 + jitter*randomFactor
-	return time.Duration(float64(d) * jitterFactor)
 }

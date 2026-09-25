@@ -18,28 +18,13 @@ func TestNew(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("nil signer key", func(t *testing.T) {
-		_, err := New(nil, nil, nil, arkdKey.PubKey(), &mockIndexerClient{}, arkade.ComputeLimits{})
+		_, err := New(nil, nil, nil, arkdKey.PubKey(), arkade.ComputeLimits{})
 		require.ErrorContains(t, err, "current signer key is required")
 	})
 
 	t.Run("nil arkd pubkey", func(t *testing.T) {
-		_, err := New(signerKey, nil, nil, nil, nil, arkade.ComputeLimits{})
+		_, err := New(signerKey, nil, nil, nil, arkade.ComputeLimits{})
 		require.ErrorContains(t, err, "arkd public key is required")
-	})
-
-	t.Run("nil indexer", func(t *testing.T) {
-		_, err := New(signerKey, nil, nil, arkdKey.PubKey(), nil, arkade.ComputeLimits{})
-		require.ErrorContains(t, err, "arkd indexer is required")
-	})
-
-	t.Run("indexer is accepted and owned", func(t *testing.T) {
-		idx := &mockIndexerClient{}
-		svc, err := New(signerKey, nil, nil, arkdKey.PubKey(), idx, arkade.ComputeLimits{})
-		require.NoError(t, err)
-		require.NotNil(t, svc)
-
-		svc.Close()
-		require.Equal(t, 1, idx.closeCalls)
 	})
 }
 
@@ -53,7 +38,7 @@ func TestGetInfo(t *testing.T) {
 
 	svc, err := New(
 		signerKey, []*btcec.PrivateKey{deprecatedKey}, nil,
-		arkdKey.PubKey(), &mockIndexerClient{}, arkade.ComputeLimits{},
+		arkdKey.PubKey(), arkade.ComputeLimits{},
 	)
 	require.NoError(t, err)
 

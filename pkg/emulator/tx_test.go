@@ -2,9 +2,7 @@ package emulator
 
 import (
 	"context"
-	"fmt"
 	"testing"
-	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
@@ -231,60 +229,6 @@ func TestSubmitTxBindsCheckpointToArkInput(t *testing.T) {
 	})
 }
 
-// TestRetryWithBackoffIsBounded proves the retry loop terminates on its own
-// budget even when the caller supplies a context that never expires.
-func TestRetryWithBackoffIsBounded(t *testing.T) {
-	cfg := retryConfig{
-		MinAttempts:  10,
-		MaxAttempts:  4,
-		MaxElapsed:   time.Second,
-		InitialDelay: time.Millisecond,
-		MaxDelay:     time.Millisecond,
-		Multiplier:   1,
-	}
-
-	attempts := 0
-	done := make(chan error, 1)
-	go func() {
-		done <- retryWithBackoff(
-			context.Background(),
-			cfg,
-			func() error { attempts++; return errAlwaysFails },
-			nil,
-		)
-	}()
-
-	select {
-	case err := <-done:
-		require.Error(t, err)
-		require.Equal(t, 4, attempts)
-	case <-time.After(10 * time.Second):
-		t.Fatal("retryWithBackoff did not return without a context deadline")
-	}
-}
-
-func TestRetryWithBackoffExhaustsElapsedBudget(t *testing.T) {
-	cfg := retryConfig{
-		MaxAttempts:  0, // disabled: only the elapsed budget may fire
-		MaxElapsed:   time.Millisecond,
-		InitialDelay: 50 * time.Millisecond,
-		MaxDelay:     50 * time.Millisecond,
-		Multiplier:   1,
-		Jitter:       0, // deterministic delay
-	}
-
-	attempts := 0
-	err := retryWithBackoff(
-		context.Background(),
-		cfg,
-		func() error { attempts++; return errAlwaysFails },
-		nil,
-	)
-
-	require.ErrorContains(t, err, "retry budget exhausted after attempt 1")
-	require.Equal(t, 1, attempts)
-}
-
 // submitTxHarness builds a complete, self consistent ark tx + checkpoint pair
 // so that individual bindings can be broken one at a time.
 type submitTxHarness struct {
@@ -296,7 +240,7 @@ type submitTxHarness struct {
 func TestSubmitTx(t *testing.T) {
 	svc, arkTxInput := newTestSigningService(t)
 
-	out, err := svc.SubmitTx(context.Background(), arkTxInput)
+	out, err := svc.SubmitTx(context.Background(), arkTxInput, OffchainData{})
 	require.NoError(t, err)
 
 	require.Equal(t, arkTxInput.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
@@ -484,7 +428,7 @@ func (h *submitTxHarness) submit(t *testing.T) (*OffchainTx, error) {
 	return h.svc.SubmitTx(t.Context(), OffchainTx{
 		ArkTx:       h.arkPtx,
 		Checkpoints: []*psbt.Packet{h.checkpoint},
-	})
+	}, OffchainData{})
 }
 
 // taprootLeaf builds a single closure vtxo script and returns everything needed
@@ -536,5 +480,3 @@ func encodePacket(t *testing.T, ptx *psbt.Packet) string {
 
 	return encoded
 }
-
-var errAlwaysFails = fmt.Errorf("always fails")

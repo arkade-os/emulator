@@ -6,6 +6,7 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
+	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/psbt/v2"
 	log "github.com/sirupsen/logrus"
@@ -22,10 +23,10 @@ const internalErrMsg = "internal error"
 
 type handler struct {
 	version string
-	svc     emulator.Service
+	svc     application.Service
 }
 
-func New(version string, service emulator.Service) *handler {
+func New(version string, service application.Service) *handler {
 	return &handler{version: version, svc: service}
 }
 

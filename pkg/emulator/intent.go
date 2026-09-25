@@ -8,15 +8,17 @@ import (
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	log "github.com/sirupsen/logrus"
 )
 
 // SubmitIntent aims to execute arkade scripts on unsigned intent proof
 // it must be used before registration of the intent
-func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet, error) {
+func (s *service) SubmitIntent(
+	ctx context.Context, intent Intent, data OffchainData,
+) (*psbt.Packet, error) {
 	if err := validateMessage(intent.Message); err != nil {
 		return nil, fmt.Errorf("invalid message: %w", err)
 	}
@@ -68,9 +70,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 		}
 
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-		expiry, err := s.expiryForScript(
-			ctx, script.Script(), outpoint.Hash.String(), outpoint.Index,
-		)
+		expiry, err := expiryForScript(script.Script(), outpoint, data.VtxoExpiries)
 		if err != nil {
 			return nil, err
 		}
@@ -118,41 +118,76 @@ func (s *service) SubmitIntent(ctx context.Context, intent Intent) (*psbt.Packet
 	return ptx, nil
 }
 
-func (s *service) expiryForScript(
-	ctx context.Context, script []byte, txid string, vout uint32,
-) (int64, error) {
-	tokenizer := arkade.MakeScriptTokenizer(0, script)
-	needsExpiry := false
-	for tokenizer.Next() {
-		needsExpiry = needsExpiry || tokenizer.Opcode() == arkade.OP_PUSHEXPIRY
-	}
-	if err := tokenizer.Err(); err != nil {
-		return 0, err
-	}
-	if !needsExpiry {
-		return 0, nil
-	}
-
-	response, err := s.indexerClient.GetVtxos(
-		ctx,
-		clientlib.WithOutpoints([]clientlib.Outpoint{{Txid: txid, VOut: vout}}),
-	)
+// RequiredVtxos returns the spent vtxos SubmitIntent needs in OffchainData:
+// those spent by inputs whose arkade script uses OP_PUSHEXPIRY.
+func (i Intent) RequiredVtxos() ([]wire.OutPoint, error) {
+	ptx := &i.Proof.Packet
+	vins, err := pushExpiryVins(ptx.UnsignedTx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	if response != nil {
-		for _, vtxo := range response.Vtxos {
-			if vtxo.Txid != txid || vtxo.VOut != vout {
-				continue
-			}
-			expiresAt := vtxo.ExpiresAt.Unix()
-			if expiresAt <= 0 {
-				return 0, fmt.Errorf("vtxo %s:%d has no expiry", txid, vout)
-			}
-			return expiresAt, nil
+	outpoints := make([]wire.OutPoint, 0, len(vins))
+	for _, vin := range vins {
+		// input 0 is the message input, it reuses input 1's script
+		if vin == 0 {
+			continue
+		}
+		outpoints = append(outpoints, ptx.UnsignedTx.TxIn[vin].PreviousOutPoint)
+	}
+	return outpoints, nil
+}
+
+// pushExpiryVins returns the input indexes whose emulator packet script uses
+// OP_PUSHEXPIRY.
+func pushExpiryVins(tx *wire.MsgTx) ([]int, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("missing transaction")
+	}
+	packet, err := arkade.FindEmulatorPacket(tx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse emulator packet: %w", err)
+	}
+	var vins []int
+	for _, entry := range packet {
+		if int(entry.Vin) >= len(tx.TxIn) {
+			continue
+		}
+		needsExpiry, err := usesPushExpiry(entry.Script)
+		if err != nil {
+			return nil, err
+		}
+		if needsExpiry {
+			vins = append(vins, int(entry.Vin))
 		}
 	}
-	return 0, fmt.Errorf("vtxo %s:%d not found", txid, vout)
+	return vins, nil
+}
+
+func usesPushExpiry(script []byte) (bool, error) {
+	tokenizer := arkade.MakeScriptTokenizer(0, script)
+	for tokenizer.Next() {
+		if tokenizer.Opcode() == arkade.OP_PUSHEXPIRY {
+			return true, nil
+		}
+	}
+	return false, tokenizer.Err()
+}
+
+func expiryForScript(
+	script []byte, outpoint wire.OutPoint, expiries map[wire.OutPoint]int64,
+) (int64, error) {
+	needsExpiry, err := usesPushExpiry(script)
+	if err != nil || !needsExpiry {
+		return 0, err
+	}
+	expiresAt, ok := expiries[outpoint]
+	if !ok {
+		return 0, fmt.Errorf("vtxo %s not found", outpoint)
+	}
+	if expiresAt <= 0 {
+		return 0, fmt.Errorf("vtxo %s has no expiry", outpoint)
+	}
+	return expiresAt, nil
 }
 
 // validateIntentMessageCommitment checks that the proof's synthetic message

@@ -8,11 +8,11 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/macaroons"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
+	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/internal/config"
 	interfaces "github.com/arkade-os/emulator/internal/interface"
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
 	"github.com/arkade-os/emulator/internal/interface/grpc/interceptors"
-	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -26,7 +26,7 @@ type service struct {
 	version    string
 	config     Config
 	cfg        *config.Config
-	appSvc     emulator.Service
+	appSvc     application.Service
 	server     *http.Server
 	grpcServer *grpc.Server
 	// macaroonSvc gates the signing endpoints when set. It is nil until a
