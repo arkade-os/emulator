@@ -660,6 +660,18 @@ func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
 	require.ErrorContains(t, err, "commitment tx is required")
 }
 
+func TestIndexerRetryRespectsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	calls := 0
+	err := retryWithBackoff(ctx, indexerRetryConfig, func() error {
+		calls++
+		return fmt.Errorf("unavailable")
+	}, nil)
+	require.ErrorContains(t, err, "context canceled")
+	require.Equal(t, 1, calls)
+}
+
 func TestFetchOffchainData(t *testing.T) {
 	originalCfg := indexerRetryConfig
 	indexerRetryConfig = retryConfig{

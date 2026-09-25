@@ -27,7 +27,16 @@ var finalizeRetryConfig = retryConfig{
 	Jitter:       0.2, // + or - 20% randomness
 }
 
-var indexerRetryConfig = finalizeRetryConfig
+// request-path lookups: few attempts, ctx respected from the first failure
+var indexerRetryConfig = retryConfig{
+	MinAttempts:  0,
+	MaxAttempts:  4,
+	MaxElapsed:   15 * time.Second,
+	InitialDelay: 500 * time.Millisecond,
+	MaxDelay:     4 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2,
+}
 
 type retryConfig struct {
 	MinAttempts  int
