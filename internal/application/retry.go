@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// Copy of pkg/emulator's private retry helper; keep the two in sync.
-
 var arkdConnectRetryConfig = retryConfig{
 	MinAttempts:  0,
 	InitialDelay: 1 * time.Second,
@@ -27,6 +25,15 @@ var finalizeRetryConfig = retryConfig{
 	MaxDelay:     10 * time.Second,
 	Multiplier:   2.0,
 	Jitter:       0.2, // + or - 20% randomness
+}
+
+var commitmentTxRetryConfig = retryConfig{
+	MinAttempts:  5,
+	MaxAttempts:  8,
+	InitialDelay: 200 * time.Millisecond,
+	MaxDelay:     2 * time.Second,
+	Multiplier:   2.0,
+	Jitter:       0.2,
 }
 
 type retryConfig struct {

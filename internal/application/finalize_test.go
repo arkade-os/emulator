@@ -633,6 +633,33 @@ func TestRetryFinalize(t *testing.T) {
 	})
 }
 
+// TestSubmitFinalizationRejectsUnknownCommitmentTx proves the signer is never
+// reached when the commitment tx is not known to the arkd indexer.
+func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
+	originalCfg := commitmentTxRetryConfig
+	commitmentTxRetryConfig = retryConfig{
+		MinAttempts:  1,
+		MaxAttempts:  2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     time.Millisecond,
+		Multiplier:   1,
+	}
+	t.Cleanup(func() { commitmentTxRetryConfig = originalCfg })
+
+	commitmentTx, err := psbt.NewFromUnsignedTx(wire.NewMsgTx(2))
+	require.NoError(t, err)
+
+	// nil Service: reaching the signer would panic
+	idx := &testIndexer{commitmentTxErr: fmt.Errorf("batch not found")}
+	svc := &service{indexer: idx}
+	_, err = svc.SubmitFinalization(t.Context(), emulator.BatchFinalization{CommitmentTx: commitmentTx})
+	require.ErrorContains(t, err, "not known to arkd indexer")
+	require.Equal(t, 2, idx.commitmentCalls)
+
+	_, err = svc.SubmitFinalization(t.Context(), emulator.BatchFinalization{})
+	require.ErrorContains(t, err, "commitment tx is required")
+}
+
 func TestClose(t *testing.T) {
 	signerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
@@ -738,10 +765,20 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 
 type testIndexer struct {
 	clientlib.Indexer
-	closeCalls int
+	commitmentTxErr error
+	commitmentCalls int
+	closeCalls      int
 }
 
 func (i *testIndexer) Close() { i.closeCalls++ }
+
+func (i *testIndexer) GetCommitmentTx(context.Context, string) (*clientlib.CommitmentTx, error) {
+	i.commitmentCalls++
+	if i.commitmentTxErr != nil {
+		return nil, i.commitmentTxErr
+	}
+	return &clientlib.CommitmentTx{}, nil
+}
 
 type fakeArkd struct {
 	finalArkTx      string

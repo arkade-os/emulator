@@ -26,6 +26,7 @@ type arkdClient interface {
 type service struct {
 	emulator.Service
 	arkd          arkdClient
+	indexer       clientlib.Indexer
 	arkdPubKey    *btcec.PublicKey
 	signerPubKeys []*btcec.PublicKey
 }
@@ -87,9 +88,10 @@ func New(
 		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
 	}
 
+	indexer := versionedIndexer{indexerClient, clientVersion}
 	lib, err := emulator.New(
 		secretKey, deprecatedKeys, deprecatedKeysValidUntil, arkdPubKey,
-		versionedIndexer{indexerClient, clientVersion}, computeLimits,
+		indexer, computeLimits,
 	)
 	if err != nil {
 		return nil, err
@@ -100,7 +102,9 @@ func New(
 	for _, k := range deprecatedKeys {
 		signerPubKeys = append(signerPubKeys, k.PubKey())
 	}
-	return &service{Service: lib, arkd: arkd, arkdPubKey: arkdPubKey, signerPubKeys: signerPubKeys}, nil
+	return &service{
+		Service: lib, arkd: arkd, indexer: indexer, arkdPubKey: arkdPubKey, signerPubKeys: signerPubKeys,
+	}, nil
 }
 
 func (s *service) Close() {

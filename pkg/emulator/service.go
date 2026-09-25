@@ -18,7 +18,6 @@ import (
 // Indexer is the subset of the arkd indexer client used by Service.
 type Indexer interface {
 	GetVtxos(ctx context.Context, opts ...clientlib.GetVtxosOption) (*clientlib.VtxosResponse, error)
-	GetCommitmentTx(ctx context.Context, txid string) (*clientlib.CommitmentTx, error)
 }
 
 type Info struct {

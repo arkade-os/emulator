@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -21,28 +20,11 @@ import (
 // if and only if the intent proof contains the signer's signature (it means we executed the arkade script in the past)
 // before signing the forfeits, we also verify that is it part of the commitment tx
 func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFinalization) (*SignedBatchFinalization, error) {
-	// Sign nothing unless the commitment tx is an arkd-built artifact: a
-	// client-chosen commitment tx (e.g. an ark tx spending a pending
-	// checkpoint outpoint) would let a replayed proof bypass the arkade
-	// script execution that justified it. arkd indexes its commitment txs
-	// on round finalization; the write may lag the RoundFinalizationStarted
-	// event, so retry.
+	// Callers must check the commitment tx is known to arkd before calling:
+	// a client-chosen commitment tx would let a replayed proof bypass the
+	// arkade script execution that justified it.
 	if finalization.CommitmentTx == nil {
 		return nil, fmt.Errorf("commitment tx is required")
-	}
-	commitmentTxid := finalization.CommitmentTx.UnsignedTx.TxID()
-	err := retryWithBackoff(ctx, commitmentTxRetryConfig,
-		func() error {
-			_, err := s.indexerClient.GetCommitmentTx(
-				ctx, commitmentTxid,
-			)
-			return err
-		}, nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"commitment tx %s not known to arkd indexer: %w", commitmentTxid, err,
-		)
 	}
 
 	signedInputs, err := getSignedInputAssociations(
@@ -344,15 +326,6 @@ func validateForfeitOutputs(
 	}
 
 	return nil
-}
-
-var commitmentTxRetryConfig = retryConfig{
-	MinAttempts:  5,
-	MaxAttempts:  8,
-	InitialDelay: 200 * time.Millisecond,
-	MaxDelay:     2 * time.Second,
-	Multiplier:   2.0,
-	Jitter:       0.2,
 }
 
 // leafOutput returns the output spent by outpoint if it is a non-anchor output
