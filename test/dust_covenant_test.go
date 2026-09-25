@@ -11,13 +11,12 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/test/covenant"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -245,12 +244,12 @@ func TestDustCovenant(t *testing.T) {
 	awaitSpendable := func(t *testing.T, tx *wire.MsgTx, vouts ...uint32) {
 		t.Helper()
 		txid := tx.TxID()
-		outpoints := make([]types.Outpoint, 0, len(vouts))
+		outpoints := make([]clientlib.Outpoint, 0, len(vouts))
 		for _, vout := range vouts {
-			outpoints = append(outpoints, types.Outpoint{Txid: txid, VOut: vout})
+			outpoints = append(outpoints, clientlib.Outpoint{Txid: txid, VOut: vout})
 		}
 		require.Eventually(t, func() bool {
-			res, err := indexerSvc.GetVtxos(ctx, indexer.WithOutpoints(outpoints))
+			res, err := indexerSvc.GetVtxos(ctx, clientlib.WithOutpoints(outpoints))
 			if err != nil || res == nil || len(res.Vtxos) != len(outpoints) {
 				return false
 			}
@@ -409,14 +408,14 @@ func TestDustCovenant(t *testing.T) {
 	requirePaid := func(t *testing.T, tx *wire.MsgTx, id asset.AssetId, want ...paidOutput) {
 		t.Helper()
 		vouts := make([]uint32, len(want))
-		outpoints := make([]types.Outpoint, len(want))
+		outpoints := make([]clientlib.Outpoint, len(want))
 		for i := range want {
 			vouts[i] = uint32(i)
-			outpoints[i] = types.Outpoint{Txid: tx.TxID(), VOut: uint32(i)}
+			outpoints[i] = clientlib.Outpoint{Txid: tx.TxID(), VOut: uint32(i)}
 		}
 		awaitSpendable(t, tx, vouts...)
 
-		res, err := indexerSvc.GetVtxos(ctx, indexer.WithOutpoints(outpoints))
+		res, err := indexerSvc.GetVtxos(ctx, clientlib.WithOutpoints(outpoints))
 		require.NoError(t, err)
 		require.Len(t, res.Vtxos, len(want))
 		for _, v := range res.Vtxos {
