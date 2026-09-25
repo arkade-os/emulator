@@ -16,7 +16,7 @@ import (
 // SubmitTx aims to execute arkade scripts on offchain ark transactions
 // execution of the script runs only on ark tx, if valid, the associated checkpoint tx
 // tx is signed in place, even on error: do not reuse it across calls.
-func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, error) {
+func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData) (*OffchainTx, error) {
 	arkPtx := tx.ArkTx
 
 	indexedCheckpoints, err := indexCheckpoints(arkPtx, tx.Checkpoints)
@@ -63,10 +63,10 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		if prevArkTx == nil {
 			return nil, fmt.Errorf("prevout ark tx not found for input %d", inputIndex)
 		}
-		expiry, err := s.expiryForScript(
-			ctx, script.Script(), prevArkTx.TxHash().String(),
-			prevOutFetcher.prevOutIdxs[arkOutpoint],
-		)
+		vtxoOutpoint := wire.OutPoint{
+			Hash: prevArkTx.TxHash(), Index: prevOutFetcher.prevOutIdxs[arkOutpoint],
+		}
+		expiry, err := expiryForScript(script.Script(), vtxoOutpoint, data.VtxoExpiries)
 		if err != nil {
 			return nil, err
 		}
@@ -108,6 +108,34 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		ArkTx:       arkPtx,
 		Checkpoints: tx.Checkpoints,
 	}, nil
+}
+
+// RequiredVtxos returns the spent vtxos SubmitTx needs in OffchainData:
+// those spent by inputs whose arkade script uses OP_PUSHEXPIRY.
+func (t OffchainTx) RequiredVtxos() ([]wire.OutPoint, error) {
+	if t.ArkTx == nil {
+		return nil, fmt.Errorf("missing ark transaction")
+	}
+	vins, err := pushExpiryVins(t.ArkTx.UnsignedTx)
+	if err != nil || len(vins) == 0 {
+		return nil, err
+	}
+	prevOutFetcher, err := prevOutFetcherForArkTx(t.ArkTx, t.Checkpoints)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
+	}
+	outpoints := make([]wire.OutPoint, 0, len(vins))
+	for _, vin := range vins {
+		arkOutpoint := t.ArkTx.UnsignedTx.TxIn[vin].PreviousOutPoint
+		prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
+		if prevArkTx == nil {
+			return nil, fmt.Errorf("prevout ark tx not found for input %d", vin)
+		}
+		outpoints = append(outpoints, wire.OutPoint{
+			Hash: prevArkTx.TxHash(), Index: prevOutFetcher.prevOutIdxs[arkOutpoint],
+		})
+	}
+	return outpoints, nil
 }
 
 func indexCheckpoints(arkPtx *psbt.Packet, checkpoints []*psbt.Packet) (map[string]*psbt.Packet, error) {

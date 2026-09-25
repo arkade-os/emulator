@@ -10,7 +10,6 @@ import (
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -352,9 +351,8 @@ func TestSubmitFinalizationValidatesAuthorizedInput(t *testing.T) {
 			)
 			commitment := finalizationCommitment(t, tc.commitmentLeaf, tc.commitment, outpoint)
 			svc := &service{
-				signer:        signer{emulatorKey},
-				arkdPubKey:    arkdKey.PubKey(),
-				indexerClient: &mockIndexerClient{},
+				signer:     signer{emulatorKey},
+				arkdPubKey: arkdKey.PubKey(),
 			}
 
 			signed, err := svc.SubmitFinalization(context.Background(), BatchFinalization{
@@ -554,9 +552,8 @@ func (f *forfeitFixture) submit(
 	t.Helper()
 
 	svc := &service{
-		signer:        signer{f.signerKey},
-		arkdPubKey:    f.arkdKey.PubKey(),
-		indexerClient: &mockIndexerClient{},
+		signer:     signer{f.signerKey},
+		arkdPubKey: f.arkdKey.PubKey(),
 	}
 	return svc.SubmitFinalization(t.Context(), BatchFinalization{
 		Intent:        f.intent,
@@ -575,15 +572,6 @@ func (f *forfeitFixture) randomP2TRScript(t *testing.T) []byte {
 	require.NoError(t, err)
 	return pkScript
 }
-
-// mockIndexerClient panics on any indexer call via the nil embedded interface.
-type mockIndexerClient struct {
-	clientlib.Indexer
-	closeCalls int
-}
-
-// Close shadows the embedded nil Indexer's.
-func (m *mockIndexerClient) Close() { m.closeCalls++ }
 
 func finalizationTapLeaf(
 	t *testing.T, closure arkscript.Closure, tapTree arklib.TaprootTree,

@@ -27,14 +27,7 @@ var finalizeRetryConfig = retryConfig{
 	Jitter:       0.2, // + or - 20% randomness
 }
 
-var commitmentTxRetryConfig = retryConfig{
-	MinAttempts:  5,
-	MaxAttempts:  8,
-	InitialDelay: 200 * time.Millisecond,
-	MaxDelay:     2 * time.Second,
-	Multiplier:   2.0,
-	Jitter:       0.2,
-}
+var indexerRetryConfig = finalizeRetryConfig
 
 type retryConfig struct {
 	MinAttempts  int

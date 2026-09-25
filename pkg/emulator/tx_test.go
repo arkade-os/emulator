@@ -240,7 +240,7 @@ type submitTxHarness struct {
 func TestSubmitTx(t *testing.T) {
 	svc, arkTxInput := newTestSigningService(t)
 
-	out, err := svc.SubmitTx(context.Background(), arkTxInput)
+	out, err := svc.SubmitTx(context.Background(), arkTxInput, OffchainData{})
 	require.NoError(t, err)
 
 	require.Equal(t, arkTxInput.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
@@ -428,7 +428,7 @@ func (h *submitTxHarness) submit(t *testing.T) (*OffchainTx, error) {
 	return h.svc.SubmitTx(t.Context(), OffchainTx{
 		ArkTx:       h.arkPtx,
 		Checkpoints: []*psbt.Packet{h.checkpoint},
-	})
+	}, OffchainData{})
 }
 
 // taprootLeaf builds a single closure vtxo script and returns everything needed
@@ -480,4 +480,3 @@ func encodePacket(t *testing.T, ptx *psbt.Packet) string {
 
 	return encoded
 }
-

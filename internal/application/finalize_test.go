@@ -420,7 +420,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 func TestIsFinalizerRole(t *testing.T) {
 	t.Run("last non-arkd signer", func(t *testing.T) {
 		svc, tx, _ := newTestService(t, true)
-		signed, err := svc.Service.SubmitTx(t.Context(), tx)
+		signed, err := svc.Service.SubmitTx(t.Context(), tx, emulator.OffchainData{})
 		require.NoError(t, err)
 
 		ok, err := isFinalizerRole(signed.ArkTx, []int{0}, svc.signerPubKeys, svc.arkdPubKey)
@@ -430,7 +430,7 @@ func TestIsFinalizerRole(t *testing.T) {
 
 	t.Run("another signer comes after us", func(t *testing.T) {
 		svc, tx, _ := newTestService(t, false)
-		signed, err := svc.Service.SubmitTx(t.Context(), tx)
+		signed, err := svc.Service.SubmitTx(t.Context(), tx, emulator.OffchainData{})
 		require.NoError(t, err)
 
 		ok, err := isFinalizerRole(signed.ArkTx, []int{0}, svc.signerPubKeys, svc.arkdPubKey)
@@ -636,15 +636,15 @@ func TestRetryFinalize(t *testing.T) {
 // TestSubmitFinalizationRejectsUnknownCommitmentTx proves the signer is never
 // reached when the commitment tx is not known to the arkd indexer.
 func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
-	originalCfg := commitmentTxRetryConfig
-	commitmentTxRetryConfig = retryConfig{
+	originalCfg := indexerRetryConfig
+	indexerRetryConfig = retryConfig{
 		MinAttempts:  1,
 		MaxAttempts:  2,
 		InitialDelay: time.Millisecond,
 		MaxDelay:     time.Millisecond,
 		Multiplier:   1,
 	}
-	t.Cleanup(func() { commitmentTxRetryConfig = originalCfg })
+	t.Cleanup(func() { indexerRetryConfig = originalCfg })
 
 	commitmentTx, err := psbt.NewFromUnsignedTx(wire.NewMsgTx(2))
 	require.NoError(t, err)
@@ -660,16 +660,53 @@ func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
 	require.ErrorContains(t, err, "commitment tx is required")
 }
 
+func TestFetchOffchainData(t *testing.T) {
+	originalCfg := indexerRetryConfig
+	indexerRetryConfig = retryConfig{
+		MinAttempts:  1,
+		MaxAttempts:  2,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     time.Millisecond,
+		Multiplier:   1,
+	}
+	t.Cleanup(func() { indexerRetryConfig = originalCfg })
+
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{1}, Index: 2}
+	expiresAt := time.Unix(1_700_000_000, 0)
+	idx := &testIndexer{
+		vtxos: []clientlib.Vtxo{
+			{Outpoint: clientlib.Outpoint{Txid: outpoint.Hash.String(), VOut: 2}, ExpiresAt: expiresAt},
+		},
+		vtxosErrs: []error{fmt.Errorf("unavailable")},
+	}
+	svc := &service{indexer: idx}
+
+	data, err := svc.fetchOffchainData(t.Context(), []wire.OutPoint{outpoint})
+	require.NoError(t, err)
+	require.Equal(t, map[wire.OutPoint]int64{outpoint: expiresAt.Unix()}, data.VtxoExpiries)
+	require.Equal(t, 2, idx.vtxosCalls)
+
+	idx.vtxosErrs = []error{fmt.Errorf("unavailable"), fmt.Errorf("unavailable")}
+	_, err = svc.fetchOffchainData(t.Context(), []wire.OutPoint{outpoint})
+	require.ErrorContains(t, err, "failed to fetch vtxos")
+
+	// no PUSHEXPIRY input: the indexer is not queried
+	svc.indexer = nil
+	data, err = svc.fetchOffchainData(t.Context(), nil)
+	require.NoError(t, err)
+	require.Nil(t, data.VtxoExpiries)
+}
+
 func TestClose(t *testing.T) {
 	signerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	arkdKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	idx := &testIndexer{}
-	lib, err := emulator.New(signerKey, nil, nil, arkdKey.PubKey(), idx, arkade.DefaultComputeLimits())
+	lib, err := emulator.New(signerKey, nil, nil, arkdKey.PubKey(), arkade.DefaultComputeLimits())
 	require.NoError(t, err)
 	arkd := &fakeArkd{}
-	svc := &service{Service: lib, arkd: arkd}
+	svc := &service{Service: lib, arkd: arkd, indexer: idx}
 
 	svc.Close()
 	require.Equal(t, 1, idx.closeCalls)
@@ -744,8 +781,7 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevArkTx))
 
 	lib, err := emulator.New(
-		emulatorKey, nil, nil, arkdKey.PubKey(), &testIndexer{},
-		arkade.DefaultComputeLimits(),
+		emulatorKey, nil, nil, arkdKey.PubKey(), arkade.DefaultComputeLimits(),
 	)
 	require.NoError(t, err)
 
@@ -753,6 +789,7 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	svc := &service{
 		Service:       lib,
 		arkd:          arkd,
+		indexer:       &testIndexer{},
 		arkdPubKey:    arkdKey.PubKey(),
 		signerPubKeys: []*btcec.PublicKey{emulatorKey.PubKey()},
 	}
@@ -765,12 +802,25 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 
 type testIndexer struct {
 	clientlib.Indexer
+	vtxos           []clientlib.Vtxo
+	vtxosErrs       []error
+	vtxosCalls      int
 	commitmentTxErr error
 	commitmentCalls int
 	closeCalls      int
 }
 
 func (i *testIndexer) Close() { i.closeCalls++ }
+
+func (i *testIndexer) GetVtxos(context.Context, ...clientlib.GetVtxosOption) (*clientlib.VtxosResponse, error) {
+	i.vtxosCalls++
+	if len(i.vtxosErrs) > 0 {
+		err := i.vtxosErrs[0]
+		i.vtxosErrs = i.vtxosErrs[1:]
+		return nil, err
+	}
+	return &clientlib.VtxosResponse{Vtxos: i.vtxos}, nil
+}
 
 func (i *testIndexer) GetCommitmentTx(context.Context, string) (*clientlib.CommitmentTx, error) {
 	i.commitmentCalls++

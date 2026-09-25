@@ -6,12 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
-	"strings"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/psbt/v2"
@@ -19,114 +16,6 @@ import (
 	"github.com/btcsuite/btcd/wire/v2"
 	log "github.com/sirupsen/logrus"
 )
-
-// SubmitTx signs tx and, if the emulator is the last non-arkd signer, submits
-// and finalizes it on arkd.
-func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulator.OffchainTx, error) {
-	var sigsBefore []int
-	if tx.ArkTx != nil {
-		sigsBefore = make([]int, len(tx.ArkTx.Inputs))
-		for i, in := range tx.ArkTx.Inputs {
-			sigsBefore[i] = len(in.TaprootScriptSpendSig)
-		}
-	}
-
-	signed, err := s.Service.SubmitTx(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-
-	isFinalizer, err := isFinalizerRole(signed.ArkTx, sigsBefore, s.signerPubKeys, s.arkdPubKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine finalizer role: %w", err)
-	}
-
-	log.WithField("is_finalizer", isFinalizer).Debug("finalizer role analysis completed")
-
-	if !isFinalizer {
-		return signed, nil
-	}
-
-	// we must verify that we have all the required checkpoint signatures before submitting to arkd
-	// otherwise, finalizing with arkd will fail later
-	if err = verifyNonArkdCheckpointSignatures(signed.Checkpoints, s.arkdPubKey); err != nil {
-		return nil, fmt.Errorf("failed to verify non-arkd signatures on checkpoints: %w", err)
-	}
-
-	encodedCheckpoints := make([]string, 0, len(signed.Checkpoints))
-	for i, checkpoint := range signed.Checkpoints {
-		encoded, err := checkpoint.B64Encode()
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode checkpoint %d: %w", i, err)
-		}
-		encodedCheckpoints = append(encodedCheckpoints, encoded)
-	}
-
-	arkTx, err := signed.ArkTx.B64Encode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode ark tx for finalization: %w", err)
-	}
-
-	txid, finalArkTx, arkdCheckpointTxs, err := s.arkd.SubmitTx(ctx, arkTx, encodedCheckpoints)
-	if err != nil {
-		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
-	}
-
-	// combine arkd checkpoint signatures with the rest of the checkpoint signatures
-	arkdCheckpointPSBTs := make(map[string]*psbt.Packet, len(arkdCheckpointTxs))
-	for i, checkpoint := range arkdCheckpointTxs {
-		p, err := psbt.NewFromRawBytes(strings.NewReader(checkpoint), true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode arkd checkpoint %d: %w", i, err)
-		}
-		arkdCheckpointPSBTs[p.UnsignedTx.TxID()] = p
-	}
-
-	finalEncodedCheckpoints := make([]string, 0, len(signed.Checkpoints))
-	logCheckpoints := make(map[string]any)
-	for i, checkpoint := range signed.Checkpoints {
-		// arkd's response may not cover our checkpoints
-		txid := checkpoint.UnsignedTx.TxID()
-		arkdCheckpoint, ok := arkdCheckpointPSBTs[txid]
-		if !ok {
-			return nil, fmt.Errorf("arkd returned no checkpoint for txid %s", txid)
-		}
-		if len(arkdCheckpoint.Inputs) == 0 {
-			return nil, fmt.Errorf("arkd returned checkpoint %s without inputs", txid)
-		}
-		if len(checkpoint.Inputs) == 0 {
-			return nil, fmt.Errorf("checkpoint %d has no inputs", i)
-		}
-
-		checkpoint.Inputs[0].TaprootScriptSpendSig = append(
-			checkpoint.Inputs[0].TaprootScriptSpendSig,
-			arkdCheckpoint.Inputs[0].TaprootScriptSpendSig...,
-		)
-		encoded, err := checkpoint.B64Encode()
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode final checkpoint %d: %w", i, err)
-		}
-		logCheckpoints[strconv.Itoa(i)] = encoded
-		finalEncodedCheckpoints = append(finalEncodedCheckpoints, encoded)
-	}
-
-	log.WithField("txid", txid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
-
-	// TODO: if retry fails, persist retry task in background queue
-	if err := s.retryFinalize(ctx, txid, finalEncodedCheckpoints); err != nil {
-		return nil, err
-	}
-
-	finalArkPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalArkTx), true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode final ark tx: %w", err)
-	}
-
-	return &emulator.OffchainTx{
-		ArkTx:       finalArkPtx,
-		Checkpoints: signed.Checkpoints,
-	}, nil
-}
 
 func isFinalizerRole(arkPtx *psbt.Packet, sigsBefore []int, signerPubKeys []*btcec.PublicKey, arkdPubKey *btcec.PublicKey) (bool, error) {
 	packet, err := arkade.FindEmulatorPacket(arkPtx.UnsignedTx)
