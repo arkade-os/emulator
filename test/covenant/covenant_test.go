@@ -663,13 +663,27 @@ func TestParamsValidation(t *testing.T) {
 		require.ErrorContains(t, err, "requires an asset id")
 	})
 
-	t.Run("rejects_receiver_recovery_without_receipt_room", func(t *testing.T) {
-		// RefundTopup caps at Dust-vtxoMinAmount, so the held-back sat only drops
-		// under the minimum once the dust unit is worth less than two of them.
+	t.Run("rejects_receiver_recovery_with_subminimum_operator_payout", func(t *testing.T) {
 		tight := receiverParams(t, true)
 		tight.Dust, tight.Topup = 3, 3
 		_, err := covenant.Build(tight, 2)
-		require.ErrorContains(t, err, "sats to host its receipt")
+		require.ErrorContains(t, err, "operator payout 1 is below vtxoMinAmount 2")
+	})
+
+	t.Run("rejects_sender_recovery_with_subminimum_operator_payout", func(t *testing.T) {
+		for _, recipient := range []string{"", covenant.RecoverySender} {
+			name := recipient
+			if name == "" {
+				name = "default"
+			}
+			t.Run(name, func(t *testing.T) {
+				p := params(t, true)
+				p.RecoveryRecipient = recipient
+				p.Dust, p.Topup = 3, 3
+				_, err := covenant.Build(p, 2)
+				require.ErrorContains(t, err, "operator payout 1 is below vtxoMinAmount 2")
+			})
+		}
 	})
 
 	// RefundTopup only differs from Topup when the operator funded the whole

@@ -138,10 +138,10 @@ func (p Params) Validate(vtxoMinAmount int64) error {
 		return fmt.Errorf("covenant: receiver fare units must not be negative")
 	case p.RecoveryRecipient == RecoveryReceiver && p.AssetID == nil:
 		return fmt.Errorf("covenant: receiver recovery requires an asset id")
-	case p.RecoveryRecipient == RecoveryReceiver &&
-		p.RefundTopup(vtxoMinAmount) < vtxoMinAmount:
+	case p.RefundTopup(vtxoMinAmount) < vtxoMinAmount:
 		return fmt.Errorf(
-			"covenant: receiver recovery needs at least %d sats to host its receipt", vtxoMinAmount,
+			"covenant: refund operator payout %d is below vtxoMinAmount %d",
+			p.RefundTopup(vtxoMinAmount), vtxoMinAmount,
 		)
 	}
 	return nil
