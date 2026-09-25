@@ -1,28 +1,23 @@
-package application
+package emulator
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"math/rand"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	log "github.com/sirupsen/logrus"
 )
 
 // SubmitTx aims to execute arkade scripts on offchain ark transactions
 // execution of the script runs only on ark tx, if valid, the associated checkpoint tx
+// tx is signed in place, even on error: do not reuse it across calls.
 func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, error) {
 	arkPtx := tx.ArkTx
 
@@ -45,8 +40,6 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 	if len(packet) == 0 {
 		return nil, fmt.Errorf("no emulator packet found in transaction")
 	}
-
-	finalizerAcc := newFinalizerAccumulator(s.arkdPubKey)
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
 
@@ -106,10 +99,6 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 			return nil, fmt.Errorf("failed to sign checkpoint input %d: %w", inputIndex, err)
 		}
 
-		if err = finalizerAcc.checkScript(entry.Vin, script); err != nil {
-			return nil, err
-		}
-
 		nSigned++
 	}
 
@@ -117,100 +106,9 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx) (*OffchainTx, err
 		return nil, fmt.Errorf("failed to find any valid input/entry pairs")
 	}
 
-	signedCheckpointTxs := tx.Checkpoints
-
-	isFinalizer, err := finalizerAcc.isFinalizer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine finalizer role: %w", err)
-	}
-
-	log.WithField("is_finalizer", isFinalizer).Debug("finalizer role analysis completed")
-
-	if !isFinalizer {
-		return &OffchainTx{
-			ArkTx:       arkPtx,
-			Checkpoints: signedCheckpointTxs,
-		}, nil
-	}
-
-	// we must verify that we have all the required checkpoint signatures before submitting to arkd
-	// otherwise, finalizing with arkd will fail later
-	if err = verifyNonArkdCheckpointSignatures(signedCheckpointTxs, s.arkdPubKey); err != nil {
-		return nil, fmt.Errorf("failed to verify non-arkd signatures on checkpoints: %w", err)
-	}
-
-	encodedCheckpoints := make([]string, 0, len(tx.Checkpoints))
-	for i, checkpoint := range tx.Checkpoints {
-		encoded, err := checkpoint.B64Encode()
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode checkpoint %d: %w", i, err)
-		}
-		encodedCheckpoints = append(encodedCheckpoints, encoded)
-	}
-
-	arkTx, err := arkPtx.B64Encode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode ark tx for finalization: %w", err)
-	}
-
-	txid, finalArkTx, arkdCheckpointTxs, err := s.arkdClient.SubmitTx(
-		withClientVersion(ctx, s.clientVersion), arkTx, encodedCheckpoints,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
-	}
-
-	// combine arkd checkpoint signatures with the rest of the checkpoint signatures
-	arkdCheckpointPSBTs := make(map[string]*psbt.Packet, len(arkdCheckpointTxs))
-	for i, checkpoint := range arkdCheckpointTxs {
-		p, err := psbt.NewFromRawBytes(strings.NewReader(checkpoint), true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode arkd checkpoint %d: %w", i, err)
-		}
-		arkdCheckpointPSBTs[p.UnsignedTx.TxID()] = p
-	}
-
-	finalEncodedCheckpoints := make([]string, 0, len(tx.Checkpoints))
-	logCheckpoints := make(map[string]any)
-	for i, checkpoint := range signedCheckpointTxs {
-		arkdCheckpoint, ok := arkdCheckpointPSBTs[checkpoint.UnsignedTx.TxID()]
-		if !ok {
-			return nil, fmt.Errorf("arkd response is missing checkpoint %d", i)
-		}
-		if len(arkdCheckpoint.Inputs) == 0 {
-			return nil, fmt.Errorf("arkd checkpoint %d has no inputs", i)
-		}
-		if len(checkpoint.Inputs) == 0 {
-			return nil, fmt.Errorf("checkpoint %d has no inputs", i)
-		}
-
-		checkpoint.Inputs[0].TaprootScriptSpendSig = append(
-			checkpoint.Inputs[0].TaprootScriptSpendSig,
-			arkdCheckpoint.Inputs[0].TaprootScriptSpendSig...,
-		)
-		encoded, err := checkpoint.B64Encode()
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode final checkpoint %d: %w", i, err)
-		}
-		logCheckpoints[strconv.Itoa(i)] = encoded
-		finalEncodedCheckpoints = append(finalEncodedCheckpoints, encoded)
-	}
-
-	log.WithField("txid", txid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
-
-	// TODO: if retry fails, persist retry task in background queue
-	if err := s.retryFinalize(ctx, txid, finalEncodedCheckpoints); err != nil {
-		return nil, err
-	}
-
-	finalArkPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalArkTx), true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode final ark tx: %w", err)
-	}
-
 	return &OffchainTx{
-		ArkTx:       finalArkPtx,
-		Checkpoints: signedCheckpointTxs,
+		ArkTx:       arkPtx,
+		Checkpoints: tx.Checkpoints,
 	}, nil
 }
 
@@ -323,100 +221,7 @@ func validateTaprootLeaf(input psbt.PInput, expectedLeaf txscript.TapLeaf) error
 	return nil
 }
 
-func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
-	return retryWithBackoff(ctx, finalizeRetryConfig,
-		func() error {
-			return s.arkdClient.FinalizeTx(withClientVersion(ctx, s.clientVersion), txid, checkpoints)
-		},
-		func(attempt int, err error) {
-			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
-		},
-	)
-}
-
-type finalizerAccumulator struct {
-	arkdPubKeyXonly []byte
-	isLastByVin     map[uint16]bool
-	vins            []uint16
-}
-
-func newFinalizerAccumulator(arkdPubKey *btcec.PublicKey) *finalizerAccumulator {
-	arkdPubKeyXonly := schnorr.SerializePubKey(arkdPubKey)
-	return &finalizerAccumulator{
-		arkdPubKeyXonly: arkdPubKeyXonly,
-		isLastByVin:     make(map[uint16]bool),
-	}
-}
-
-func (a *finalizerAccumulator) checkScript(vin uint16, script *arkade.ArkadeScript) error {
-	a.vins = append(a.vins, vin)
-
-	nClosurePubKeys := len(script.ClosurePubKeys())
-	tweakedSignerPublicKeyXOnly := schnorr.SerializePubKey(script.PubKey())
-	if nClosurePubKeys < 2 {
-		// the script should always have a forfeit closure with at least arkd + tweaked key
-		return fmt.Errorf("malformed script %x", script.Script())
-	}
-
-	lastSigner := script.ClosurePubKeys()[nClosurePubKeys-1]
-	lastSignerXOnly := schnorr.SerializePubKey(lastSigner)
-
-	// if arkd is the last signer, check the second-to-last
-	if bytes.Equal(lastSignerXOnly, a.arkdPubKeyXonly) {
-		lastNonArkdSigner := script.ClosurePubKeys()[nClosurePubKeys-2]
-		lastNonArkdSignerXonly := schnorr.SerializePubKey(lastNonArkdSigner)
-		a.isLastByVin[vin] = bytes.Equal(lastNonArkdSignerXonly, tweakedSignerPublicKeyXOnly)
-		return nil
-	}
-
-	a.isLastByVin[vin] = bytes.Equal(lastSignerXOnly, tweakedSignerPublicKeyXOnly)
-	return nil
-}
-
-func (a *finalizerAccumulator) isFinalizer() (bool, error) {
-	if len(a.vins) == 0 {
-		return false, nil
-	}
-	referenceVin := a.vins[0]
-	referenceIsLast, ok := a.isLastByVin[referenceVin]
-	if !ok {
-		return false, fmt.Errorf("missing finalizer state for input %d", referenceVin)
-	}
-	for _, vin := range a.vins[1:] {
-		isLast, ok := a.isLastByVin[vin]
-		if !ok {
-			return false, fmt.Errorf("missing finalizer state for input %d", vin)
-		}
-		if isLast != referenceIsLast {
-			return false, fmt.Errorf("input %d has a different finalizer", vin)
-		}
-	}
-	return referenceIsLast, nil
-}
-
-func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *btcec.PublicKey) error {
-	for checkpointIndex, ptx := range checkpoints {
-		if len(ptx.Inputs) == 0 || len(ptx.UnsignedTx.TxIn) == 0 {
-			return fmt.Errorf("checkpoint %d: missing input 0", checkpointIndex)
-		}
-		// script.VerifyTapscriptSigs silently skips inputs that do not carry a
-		// taproot leaf script, so we must assert its presence here.
-		if len(ptx.Inputs[0].TaprootLeafScript) == 0 {
-			return fmt.Errorf("checkpoint %d input 0: missing taproot leaf script", checkpointIndex)
-		}
-		prevoutFetcher, err := computePrevoutFetcher(ptx)
-		if err != nil {
-			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
-		}
-		if _, err := script.VerifyTapscriptSigs(
-			ptx, prevoutFetcher, script.WithSkipPublicKeys(arkdPubKey),
-		); err != nil {
-			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
-		}
-	}
-	return nil
-}
-
+// Keep the retry helper in sync with internal/application/retry.go.
 type retryConfig struct {
 	MinAttempts  int
 	MaxAttempts  int
@@ -427,18 +232,8 @@ type retryConfig struct {
 	Jitter       float64
 }
 
-var finalizeRetryConfig = retryConfig{
-	MinAttempts: 10,
-	// absolute caps, enforced even when the caller passes a context without
-	// deadline, so the signer can never be wedged by an unresponsive arkd
-	MaxAttempts:  15,
-	MaxElapsed:   2 * time.Minute,
-	InitialDelay: 1 * time.Second,
-	MaxDelay:     10 * time.Second,
-	Multiplier:   2.0,
-	Jitter:       0.2, // + or - 20% randomness
-}
-
+// retryWithBackoff retries op with jittered backoff; the first MinAttempts
+// ignore ctx cancellation.
 func retryWithBackoff(
 	ctx context.Context, cfg retryConfig, op func() error, onErr func(attempt int, err error),
 ) error {
@@ -460,7 +255,8 @@ func retryWithBackoff(
 		}
 
 		delay := applyJitter(backoffDelay, cfg.Jitter)
-		backoffDelay = min(cfg.MaxDelay, backoffDelay*time.Duration(cfg.Multiplier))
+		// float math: time.Duration(1.5) would truncate to 1
+		backoffDelay = min(cfg.MaxDelay, time.Duration(float64(backoffDelay)*cfg.Multiplier))
 
 		if cfg.MaxElapsed > 0 && !time.Now().Add(delay).Before(deadline) {
 			return fmt.Errorf("retry budget exhausted after attempt %d: %w", attempt, err)

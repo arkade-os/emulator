@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"bytes"
@@ -12,9 +12,9 @@ import (
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // SubmitFinalization doesn't execute arkade scripts, it only signs the forfeits and the commitment tx
@@ -30,14 +30,11 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 	if finalization.CommitmentTx == nil {
 		return nil, fmt.Errorf("commitment tx is required")
 	}
-	if s.indexerClient == nil {
-		return nil, fmt.Errorf("arkd indexer client is not configured")
-	}
 	commitmentTxid := finalization.CommitmentTx.UnsignedTx.TxID()
 	err := retryWithBackoff(ctx, commitmentTxRetryConfig,
 		func() error {
 			_, err := s.indexerClient.GetCommitmentTx(
-				withClientVersion(ctx, s.clientVersion), commitmentTxid,
+				ctx, commitmentTxid,
 			)
 			return err
 		}, nil,

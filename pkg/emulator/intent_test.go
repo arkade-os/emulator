@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"context"
@@ -11,14 +11,13 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -273,15 +272,15 @@ func TestExpiryForScriptOnlyQueriesIndexerForPushExpiry(t *testing.T) {
 	require.ErrorContains(t, err, "not found")
 	require.Equal(t, 1, calls)
 
-	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
-		Outpoint:  types.Outpoint{Txid: chainhash.Hash{1}.String()},
+	svc.indexerClient = expiryIndexer{vtxos: []clientlib.Vtxo{{
+		Outpoint:  clientlib.Outpoint{Txid: chainhash.Hash{1}.String()},
 		ExpiresAt: time.Now().Add(time.Minute),
 	}}}
 	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
 	require.ErrorContains(t, err, "not found")
 
-	svc.indexerClient = expiryIndexer{vtxos: []types.Vtxo{{
-		Outpoint: types.Outpoint{Txid: txid},
+	svc.indexerClient = expiryIndexer{vtxos: []clientlib.Vtxo{{
+		Outpoint: clientlib.Outpoint{Txid: txid},
 	}}}
 	_, err = svc.expiryForScript(t.Context(), []byte{arkade.OP_PUSHEXPIRY}, txid, 0)
 	require.ErrorContains(t, err, "has no expiry")
@@ -307,8 +306,8 @@ func TestSubmitIntentPushExpiry(t *testing.T) {
 
 	svc := &service{
 		signer: signer{signerKey},
-		indexerClient: expiryIndexer{vtxos: []types.Vtxo{{
-			Outpoint:  types.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
+		indexerClient: expiryIndexer{vtxos: []clientlib.Vtxo{{
+			Outpoint:  clientlib.Outpoint{Txid: outpoint.Hash.String(), VOut: outpoint.Index},
 			ExpiresAt: expiresAt,
 		}}},
 	}
@@ -444,16 +443,16 @@ func newIntentProof(
 }
 
 type expiryIndexer struct {
-	indexer.Indexer
+	clientlib.Indexer
 	calls *int
-	vtxos []types.Vtxo
+	vtxos []clientlib.Vtxo
 }
 
 func (e expiryIndexer) GetVtxos(
-	context.Context, ...indexer.GetVtxosOption,
-) (*indexer.VtxosResponse, error) {
+	context.Context, ...clientlib.GetVtxosOption,
+) (*clientlib.VtxosResponse, error) {
 	if e.calls != nil {
 		(*e.calls)++
 	}
-	return &indexer.VtxosResponse{Vtxos: e.vtxos}, nil
+	return &clientlib.VtxosResponse{Vtxos: e.vtxos}, nil
 }

@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"strings"
 	"testing"
 	"time"
@@ -10,17 +11,15 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
-	singlekeywallet "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey"
-	inmemorystore "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey/store/inmemory"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	singlekeywallet "github.com/arkade-os/arkd/pkg/client-wallet/identity"
+	inmemorystore "github.com/arkade-os/arkd/pkg/client-wallet/identity/store/inmemory"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -53,7 +52,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	bobWallet, err := singlekeywallet.NewIdentity(walletStore)
 	require.NoError(t, err)
 
-	_, err = bobWallet.Create(ctx, chaincfg.RegressionNetParams, password, hex.EncodeToString(bobPrivKey.Serialize()))
+	_, err = bobWallet.Create(ctx, arklib.BitcoinRegTest, password, hex.EncodeToString(bobPrivKey.Serialize()))
 	require.NoError(t, err)
 
 	_, err = bobWallet.Unlock(ctx, password)
@@ -180,10 +179,11 @@ func TestPayToTwoOutputs(t *testing.T) {
 	require.NoError(t, err)
 
 	// --- Alice sends to contract ---
-	txid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: bobAddrStr, Amount: sendAmount}},
+	txidRes, err := alice.SendOffChain(
+		ctx, []clientlib.Receiver{{To: bobAddrStr, Amount: sendAmount}},
 	)
 	require.NoError(t, err)
+	txid := txidRes.Txid
 	require.NotEmpty(t, txid)
 
 	// --- Find Bob's output in funding tx ---

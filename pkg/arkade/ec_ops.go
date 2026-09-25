@@ -13,7 +13,7 @@ import (
 	gnarksecp256k1fp "github.com/consensys/gnark-crypto/ecc/secp256k1/fp"
 	gnarksecp256k1fr "github.com/consensys/gnark-crypto/ecc/secp256k1/fr"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 )
 
 // Curve identifiers consumed by OP_ECADD, OP_ECMUL, and OP_ECPAIRING. Curve

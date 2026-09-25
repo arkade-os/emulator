@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"strings"
 	"testing"
 
@@ -10,18 +11,14 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
-	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
-	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
-	"github.com/arkade-os/arkd/pkg/client-lib/identity"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	clientwallet "github.com/arkade-os/arkd/pkg/client-wallet"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -348,16 +345,16 @@ func buildRoutePacket(t *testing.T, mintTxHash chainhash.Hash, bob, change, fee 
 // offchain.VtxoInput.
 func findAccountInput(
 	t *testing.T, ctx context.Context,
-	sdk arksdk.Wallet, indexerSvc indexer.Indexer,
+	sdk clientwallet.Wallet, indexerSvc clientlib.Indexer,
 	accountVtxoScript script.TapscriptsVtxoScript,
 ) offchain.VtxoInput {
 	t.Helper()
 	pk := p2trScriptForVtxoScript(t, accountVtxoScript)
 
-	spendable, _, err := sdk.ListVtxos(ctx, arksdk.WithSpendableOnly())
+	spendable, _, err := sdk.ListVtxos(ctx)
 	require.NoError(t, err)
 
-	var account types.Vtxo
+	var account clientlib.Vtxo
 	for _, v := range spendable {
 		if v.Script == hex.EncodeToString(pk) {
 			account = v
@@ -401,7 +398,7 @@ func b64(t *testing.T, ptx *psbt.Packet) string {
 
 func signCheckpoints(
 	t *testing.T, ctx context.Context,
-	w identity.Identity, exp explorer.Explorer,
+	w clientlib.Identity, exp clientlib.Explorer,
 	cps []*psbt.Packet,
 ) []string {
 	t.Helper()

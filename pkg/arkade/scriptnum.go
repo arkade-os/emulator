@@ -3,7 +3,7 @@ package arkade
 import (
 	"fmt"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 )
 
 const (

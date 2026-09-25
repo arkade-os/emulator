@@ -17,10 +17,10 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	gnarkbn254fr "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	gnarksecp256k1fp "github.com/consensys/gnark-crypto/ecc/secp256k1/fp"
 	gnarksecp256k1fr "github.com/consensys/gnark-crypto/ecc/secp256k1/fr"
@@ -549,7 +549,7 @@ var opcodeSpecs = [256]*opcodeSpec{
 	OP_REVERSEBYTES:                  reverseBytesSpec(),
 	OP_MODEXP:                        modexpSpec(),
 	OP_PUSHEXPIRY:                    pushExpirySpec(),
-	OP_CHECKTIMEVERIFY:               checkTimeVerifySpec(),
+	OP_CHECKTIME:                     checkTimeSpec(),
 	OP_UNKNOWN221:                    invalidSpec(OP_UNKNOWN221),
 	OP_UNKNOWN222:                    invalidSpec(OP_UNKNOWN222),
 	OP_UNKNOWN223:                    invalidSpec(OP_UNKNOWN223),
@@ -5085,23 +5085,24 @@ func checkLockTimeVerifySpec() *opcodeSpec {
 	}
 }
 
-func checkTimeVerifySpec() *opcodeSpec {
+func checkTimeSpec() *opcodeSpec {
 	currentTime := int64(1_700_000_000)
 	return &opcodeSpec{
-		opcode: OP_CHECKTIMEVERIFY,
+		opcode: OP_CHECKTIME,
 		checkProperties: func(t *testing.T, c opcodeCheckContext) {
 			t.Helper()
 			require.Equal(t, c.before.GetAltStack(), c.after.GetAltStack())
 			require.Equal(t, c.before.condStack, c.after.condStack)
 			if c.execErr == nil {
 				beforeStack := c.before.GetStack()
-				require.Equal(t, beforeStack[:len(beforeStack)-1], c.after.GetStack())
+				afterStack := c.after.GetStack()
+				require.Len(t, afterStack, len(beforeStack))
+				require.Equal(t, beforeStack[:len(beforeStack)-1], afterStack[:len(afterStack)-1])
 				return
 			}
 			requireScriptErrorCodeIn(t, c.execErr,
 				txscript.ErrInvalidStackOperation,
 				txscript.ErrNegativeLockTime,
-				txscript.ErrUnsatisfiedLockTime,
 				txscript.ErrNumberTooBig,
 				txscript.ErrMinimalData,
 			)
@@ -5113,6 +5114,7 @@ func checkTimeVerifySpec() *opcodeSpec {
 				setupVM: func(vm *Engine) {
 					vm.currentTime = BigNumFromInt64(currentTime)
 				},
+				expectedStack: [][]byte{{0x01}},
 			},
 			{
 				name:       "exact_time_ignores_transaction_locktime_and_sequence",
@@ -5124,17 +5126,15 @@ func checkTimeVerifySpec() *opcodeSpec {
 				setupVM: func(vm *Engine) {
 					vm.currentTime = BigNumFromInt64(currentTime)
 				},
+				expectedStack: [][]byte{{0x01}},
 			},
-		},
-		invalidVectors: []opcodeVector{
-			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
 			{
 				name:       "future",
 				inputStack: [][]byte{scriptNum(currentTime + 1).Bytes()},
 				setupVM: func(vm *Engine) {
 					vm.currentTime = BigNumFromInt64(currentTime)
 				},
-				expectedError: txscript.ErrUnsatisfiedLockTime,
+				expectedStack: [][]byte{zeroStackItem()},
 			},
 			{
 				name:       "large_future_timestamp",
@@ -5142,8 +5142,11 @@ func checkTimeVerifySpec() *opcodeSpec {
 				setupVM: func(vm *Engine) {
 					vm.currentTime = BigNumFromInt64(currentTime)
 				},
-				expectedError: txscript.ErrUnsatisfiedLockTime,
+				expectedStack: [][]byte{zeroStackItem()},
 			},
+		},
+		invalidVectors: []opcodeVector{
+			{name: "underflow", expectedError: txscript.ErrInvalidStackOperation},
 			{
 				name:          "negative",
 				inputStack:    [][]byte{scriptNum(-1).Bytes()},
