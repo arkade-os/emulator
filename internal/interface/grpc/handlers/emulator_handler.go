@@ -252,9 +252,6 @@ func (h *handler) SubmitOnchainTx(
 }
 
 func verifyTreeRelatedToCommitment(commitmentPtx *psbt.Packet, txTree *tree.TxTree) error {
-	if len(txTree.Root.Inputs) != len(commitmentPtx.UnsignedTx.TxIn) {
-		return fmt.Errorf("invalid number of inputs")
-	}
 	if len(txTree.Root.UnsignedTx.TxIn) != 1 {
 		return fmt.Errorf("invalid tx tree root")
 	}
