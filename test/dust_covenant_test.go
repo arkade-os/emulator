@@ -419,6 +419,7 @@ func TestDustCovenant(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, res.Vtxos, len(want))
 		for _, v := range res.Vtxos {
+			require.Less(t, uint64(v.VOut), uint64(len(want)), "unexpected vout %d", v.VOut)
 			w := want[v.VOut]
 			pk, err := script.P2TRScript(w.key)
 			require.NoError(t, err)
