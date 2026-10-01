@@ -10,7 +10,7 @@
     # master, not a branch ref.
     #
     # TODO: Update this to match a release tag.
-    enclave.url = "github:ArkLabsHQ/enclave/3c33a40ef4a2a49297ab5df5163945fa9e50e544";
+    enclave.url = "github:ArkLabsHQ/enclave/2ed7e57a4405d4884d7bd62bbf604ab33bcb50b5";
   };
 
   outputs =
@@ -147,6 +147,36 @@
           inherit pkgs;
           app = emulator;
 
+          # Application variables the SSM overlay may export into the emulator's
+          # environment. Everything not named here is read from
+          # /<deployment>/<app>/env/ and dropped, so ark-infra writing the parameter is
+          # no longer enough on its own.
+          #
+          # This list is measured into PCR0: adding a name later is a new image and a
+          # migration. Keep it in step with ark-infra's eif_override_allowlist.
+          #
+          # Two names are deliberately absent, both for the same reason: they are
+          # secp256k1 private keys, and ark-infra writes this overlay as plain SSM
+          # String parameters that the host's own role can read. The whole design
+          # exists to keep signing keys away from the host.
+          #
+          #   EMULATOR_SECRET_KEY       arrives through ENCLAVE_SECRETS_CONFIG as a
+          #                             KMS-sealed static secret. Listing it here would
+          #                             offer a second, unsealed path to the same value.
+          #   EMULATOR_DEPRECATED_KEYS  config.go parses it with parsePrivateKey into
+          #                             []*btcec.PrivateKey. These are retired signing
+          #                             keys, no less secret for being retired. Rotation
+          #                             belongs in ENCLAVE_SECRETS_CONFIG, where order
+          #                             is significant and each entry is committed to its
+          #                             own PCR.
+          #
+          # The VALID_UNTIL timestamp that governs them is only a timestamp, so it stays.
+          overrideAllowlist = [
+            "EMULATOR_ARKD_URL"
+            "EMULATOR_COMPUTE_LIMITS"
+            "EMULATOR_DEPRECATED_KEYS_VALID_UNTIL"
+          ];
+
           env = {
             # --- nonOverridableEnv ----------------------------------------------------
             # The SSM overlay refuses these by name. Changing any one is a new PCR0 and a
@@ -179,12 +209,11 @@
             #
             # The cost is that the same root principal holds kms:PutKeyPolicy and can grant
             # itself Decrypt. Treat every secret in these environments as readable by
-            # anyone holding account root. Attestation documents the enclave RECEIVES also
-            # go unverified, so a host could forge a predecessor's lineage at migration.
+            # anyone holding account root.
             #
-            # Not affected: the enclave still builds real hypervisor-signed attestations
-            # through /dev/nsm, so clients verify it normally and KMS still enforces
-            # kms:RecipientAttestation:PCR0 server-side.
+            # The enclave still builds real hypervisor-signed attestations through
+            # /dev/nsm whatever this is set to, so clients verify it normally and KMS
+            # still enforces kms:RecipientAttestation:PCR0 server-side.
             #
             # Production sets dev = false and takes the ten-year lock.
             ENCLAVE_DEV = lib.boolToString env.dev;
@@ -216,9 +245,12 @@
             ENCLAVE_UPSTREAM = "auto";
 
             # CloudWatch is the only telemetry backend and cannot be turned off. The
-            # runtime creates /enclave/<deployment>/<app>/{logs,traces,metrics} on first
-            # write and fails the boot if it cannot, so the instance role must carry the
-            # logs grants before genesis. Only cadence and retention are settable.
+            # runtime creates /<deployment>/enclave/{logs,traces}/{app,supervisor} and
+            # /<deployment>/enclave/metrics on first write and fails the boot if it
+            # cannot, so the instance role must carry the logs grants before genesis.
+            # Note there is no <app> segment: two apps in one deployment share these
+            # groups unless ENCLAVE_LOG_GROUP_PREFIX separates them. Only cadence,
+            # retention and that prefix are settable.
             ENCLAVE_LOG_RETENTION_DAYS = "30";
             ENCLAVE_LOG_SHIP_INTERVAL = "5s";
 
