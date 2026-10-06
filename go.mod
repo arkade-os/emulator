@@ -16,8 +16,8 @@ require (
 	github.com/arkade-os/arkd/pkg/client-wallet v0.0.0-20260901090427-f863e4847193
 	github.com/arkade-os/arkd/pkg/errors v0.0.0-20260901090427-f863e4847193
 	github.com/arkade-os/arkd/pkg/macaroons v0.7.1-0.20260901090427-f863e4847193
-	github.com/arkade-os/emulator/api-spec v0.0.0-20260923130525-1c9e71118ed3
-	github.com/arkade-os/emulator/pkg/arkade v0.0.0-20260923130525-1c9e71118ed3
+	github.com/arkade-os/emulator/api-spec v0.1.0
+	github.com/arkade-os/emulator/pkg/arkade v0.1.0
 	github.com/arkade-os/emulator/pkg/client v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/emulator/pkg/emulator v0.0.0-00010101000000-000000000000
 	github.com/btcsuite/btcd v0.26.2
