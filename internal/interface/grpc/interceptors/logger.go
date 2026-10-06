@@ -12,13 +12,13 @@ import (
 func unaryLogger(
 	ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler,
 ) (any, error) {
-	log.Debugf("gRPC method: %s", info.FullMethod)
+	log.WithContext(ctx).Debugf("gRPC method: %s", info.FullMethod)
 	resp, err := handler(ctx, req)
 	if err != nil {
 		var structuredErr arkerrors.Error
 		if errors.As(err, &structuredErr) {
 			if structuredErr.Code() == arkerrors.INTERNAL_ERROR.Code {
-				structuredErr.Log().Error(err)
+				structuredErr.Log().WithContext(ctx).Error(err)
 			}
 		}
 	}
@@ -29,6 +29,6 @@ func streamLogger(
 	srv any, stream grpc.ServerStream,
 	info *grpc.StreamServerInfo, handler grpc.StreamHandler,
 ) error {
-	log.Debugf("gRPC method: %s", info.FullMethod)
+	log.WithContext(stream.Context()).Debugf("gRPC method: %s", info.FullMethod)
 	return handler(srv, stream)
 }

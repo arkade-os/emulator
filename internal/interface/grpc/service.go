@@ -16,6 +16,7 @@ import (
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -156,7 +157,11 @@ func (s *service) newServer() error {
 	// Creds for grpc gateway reverse proxy.
 	gatewayOpts := grpc.WithTransportCredentials(insecure.NewCredentials())
 	conn, err := grpc.NewClient(
-		s.config.gatewayAddress(), gatewayOpts,
+		s.config.gatewayAddress(),
+		gatewayOpts,
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler(
+			otelgrpc.WithTracerProvider(otel.GetTracerProvider()),
+		)),
 	)
 	if err != nil {
 		return err
@@ -184,7 +189,7 @@ func (s *service) newServer() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
 
-	httpServerHandler := http.Handler(mux)
+	httpServerHandler := otelhttp.NewHandler(mux, "emulator.http")
 
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
