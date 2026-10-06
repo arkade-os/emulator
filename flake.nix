@@ -10,7 +10,7 @@
     # master, not a branch ref.
     #
     # TODO: Update this to match a release tag.
-    enclave.url = "github:ArkLabsHQ/enclave/2ed7e57a4405d4884d7bd62bbf604ab33bcb50b5";
+    enclave.url = "github:ArkLabsHQ/enclave/4e14ae00725ea3fce8a87db87e0014cb57144da5";
   };
 
   outputs =
@@ -24,7 +24,7 @@
       pkgs = import nixpkgs { inherit system; };
       lib = pkgs.lib;
 
-      version = "0.0.8-rc.0";
+      version = "0.0.8";
 
       # PCR0 covers every byte of the source that reaches the build, so a plain
       # `src = ./.` makes the measurement move when a README, a CI file or .gitignore
@@ -60,7 +60,7 @@
         # Always go through `lib.fakeHash`. A stale hash whose vendor directory is already
         # in /nix/store is reused without a rebuild, and go then fails much later with
         # "inconsistent vendoring".
-        vendorHash = "sha256-TD1XMnE4gZrbPWdudekHMDHee99jY/LJ1VRHevWqavw=";
+        vendorHash = "sha256-uj4DrQ+KJo2BscdAlNkcCn5ycq0txraO0BM//OFZnqg=";
 
         subPackages = [ "cmd" ];
         ldflags = [
@@ -116,6 +116,15 @@
           migrationCooldown = "0s";
         };
 
+        mutinynetTelemetry = {
+          deployment = "ark/mutinynet-telemetry";
+          region = "eu-central-1";
+          fqdn = "emulator-telemetry.mutinynet.enclave-dev.arkade.sh";
+          acmeDirectory = "https://acme-v02.api.letsencrypt.org/directory";
+          dev = true;
+          migrationCooldown = "0s";
+        };
+
         se7enz = {
           deployment = "ark/se7enz";
           region = "eu-central-1";
@@ -134,11 +143,15 @@
       #     gen 1  genesis
       #     gen 2  7ac5c58 <- current
       #
+      #   mutinynetTelemetry:
+      #     gen 1  genesis <- current
+      #
       #   se7enz:
-      #     gen 1  genesis                                <- current
+      #     gen 1  genesis <- current
       predecessors = {
-        mutinynet = "7ac5c58b129cdf9ff1f9638c713378f53814c3ea0c7d82f36c1ecb8f06916ce4e58bc4d0a72e51e331ff1c036e2d0b38";
-        se7enz    = "genesis";
+        mutinynet          = "7ac5c58b129cdf9ff1f9638c713378f53814c3ea0c7d82f36c1ecb8f06916ce4e58bc4d0a72e51e331ff1c036e2d0b38";
+        mutinynetTelemetry = "genesis";
+        se7enz             = "genesis";
       };
 
       mkEif =
@@ -184,7 +197,7 @@
 
             # The SSM namespace prefix, joined as /<deployment>/<app>/..., so the slash is
             # intended: parameters land under /ark/se7enz/emulator/.
-            ENCLAVE_DEPLOYMENT = env.deployment;
+            ENCLAVE_NAMESPACE = env.deployment;
             ENCLAVE_APP_NAME = "emulator";
 
             # The predecessor this image may adopt state from, or "genesis".
@@ -251,6 +264,8 @@
             # Note there is no <app> segment: two apps in one deployment share these
             # groups unless ENCLAVE_LOG_GROUP_PREFIX separates them. Only cadence,
             # retention and that prefix are settable.
+            ENCLAVE_METRICS = "true";
+            ENCLAVE_TRACES = "true";
             ENCLAVE_LOG_RETENTION_DAYS = "30";
             ENCLAVE_LOG_SHIP_INTERVAL = "5s";
 
@@ -293,8 +308,9 @@
         # so an image cannot be mistaken for one built for somewhere else.
         #
         #   nix build .#eif-mutinynet
-        eif-mutinynet = mkEif environments.mutinynet predecessors.mutinynet;
-        eif-se7enz    = mkEif environments.se7enz predecessors.se7enz;
+        eif-mutinynet          = mkEif environments.mutinynet predecessors.mutinynet;
+        eif-mutinynetTelemetry = mkEif environments.mutinynetTelemetry predecessors.mutinynetTelemetry;
+        eif-se7enz             = mkEif environments.se7enz predecessors.se7enz;
 
         default = emulator;
       };
