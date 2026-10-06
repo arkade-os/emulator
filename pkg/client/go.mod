@@ -6,7 +6,7 @@ replace github.com/arkade-os/emulator/api-spec => ../../api-spec
 
 require (
 	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260901090427-f863e4847193
-	github.com/arkade-os/emulator/api-spec v0.0.0-00010101000000-000000000000
+	github.com/arkade-os/emulator/api-spec v0.1.0
 	google.golang.org/grpc v1.82.1
 )
 
