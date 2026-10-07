@@ -1,5 +1,6 @@
 # Emulator
 
+[![Go version](https://img.shields.io/github/go-mod/go-version/arkade-os/emulator?filename=go.mod)](go.mod)
 [![test](https://github.com/arkade-os/emulator/actions/workflows/test.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/test.yaml)
 [![quality](https://github.com/arkade-os/emulator/actions/workflows/quality.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/quality.yaml)
 [![Trivy Security Scan](https://github.com/arkade-os/emulator/actions/workflows/trivy.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/trivy.yaml)
@@ -71,10 +72,10 @@ When the emulator receives a transaction, it:
 Renewing a VTXO through every Arkade batch settlement without the owner — permanent delegation — is expressed with `OP_TUNNEL`:
 
 ```
-<output_index> <flags> OP_TUNNEL
+<output_index> <flags> 0 OP_TUNNEL
 ```
 
-`OP_TUNNEL` succeeds when the output at `output_index` preserves the fields of the current input selected by `flags` (`1` scriptPubKey, `2` value, `4` assets — combinable). See the [opcode table](#transaction-introspection-transaction) for the full stack signature.
+`OP_TUNNEL` succeeds when the output at `output_index` preserves the fields of the current input selected by `flags` (`1` scriptPubKey, `2` value, `4` assets — combinable). The trailing `0` specifies no asset exceptions. See the [opcode table](#transaction-introspection-transaction) for the full stack signature.
 
 ### Arkade Script examples
 
@@ -360,6 +361,15 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | OP_TXID | 243 | 0xf3 | Nothing | txid | Pushes the current transaction hash (32 bytes) onto the stack. |
 | OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [Arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
 | OP_TUNNEL | 247 | 0xf7 | output_index flags [asset_txid asset_gidx]... exception_count | True/fail | Requires the selected output to preserve fields from the current input. `flags` is a bitmask: `1` preserves the logical VTXO scriptPubKey, `2` preserves the directly spent output's value, and `4` preserves input-local asset IDs and amounts. Asset IDs listed before `exception_count` are excluded from the asset check and require flag `4`. Flags must be nonzero and may be combined. |
+
+### Time and VTXO expiry
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_PUSHEXPIRY | 219 | 0xdb | Nothing | expiry | Pushes the current input VTXO's Unix expiry timestamp. The service obtains it from the indexer for `SubmitTx` and `SubmitIntent`. Fails when expiry is unavailable, including in `SubmitOnchainTx`. |
+| OP_CHECKTIME | 220 | 0xdc | timestamp | bool | Pops a minimally encoded BigNum Unix timestamp and pushes whether it is less than or equal to the emulator's current Unix time. Negative timestamps fail. A future timestamp pushes false. |
+
+Use `<timestamp> OP_CHECKTIME OP_VERIFY` to enforce a time threshold, or combine the boolean with other conditions. These are emulator-time checks, not Bitcoin block-time checks. For example, `OP_PUSHEXPIRY <seconds> OP_SUB OP_CHECKTIME OP_VERIFY` permits execution starting that many seconds before expiry. `OP_CHECKTIME` replaces the former `OP_CHECKTIMEVERIFY` name and has a boolean result rather than failing on a future timestamp.
 
 ### Packet Introspection
 
