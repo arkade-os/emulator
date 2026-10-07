@@ -22,13 +22,9 @@ permissions:
   contents: read
 
 jobs:
-  # ############################################################################
-  # DO NOT MERGE THIS BRANCH. Until https://github.com/ArkLabsHQ/enclave/pull/182
-  #   is merged. Re-pin from `master` or a tagged release.
-  # ############################################################################
   build:
-    # TEST PIN — PR #182 branch.
-    uses: ArkLabsHQ/enclave/.github/workflows/eif-build.yml@9070d0e24a7ca328ccf3298b1d3a8d21137c8518
+    # master branch.
+    uses: ArkLabsHQ/enclave/.github/workflows/eif-build.yml@a2eb49e28bc3fd1c9aac88f98d4f490dd8ca93f2
     with:
       environments: '["mutinynet","se7enz"]'
       app_name: emulator
@@ -50,8 +46,8 @@ jobs:
             bucket: ark-dev-enclave-images
             region: eu-central-1
             role_secret: AWS_EIF_PUBLISH_ROLE_ARN_DEV
-    # TEST PIN — PR #182 branch.
-    uses: ArkLabsHQ/enclave/.github/workflows/eif-publish.yml@9070d0e24a7ca328ccf3298b1d3a8d21137c8518
+    # master branch.
+    uses: ArkLabsHQ/enclave/.github/workflows/eif-publish.yml@a2eb49e28bc3fd1c9aac88f98d4f490dd8ca93f2
     with:
       environment: ${{ matrix.environment }}
       app_name: emulator

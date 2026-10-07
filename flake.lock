@@ -25,17 +25,17 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1790259661,
-        "narHash": "sha256-US0J0ASVCqLeqmT9Dz/zyWK9jWU1op3mGK075y/hHaw=",
+        "lastModified": 1791374209,
+        "narHash": "sha256-ZDyqdwvrgqmcEvCmMHC7N0I9HC2nfXbG9AyEbzIIuec=",
         "owner": "ArkLabsHQ",
         "repo": "enclave",
-        "rev": "2ed7e57a4405d4884d7bd62bbf604ab33bcb50b5",
+        "rev": "df92755d448b2d3d5143f08e8266ea5026614d13",
         "type": "github"
       },
       "original": {
         "owner": "ArkLabsHQ",
         "repo": "enclave",
-        "rev": "2ed7e57a4405d4884d7bd62bbf604ab33bcb50b5",
+        "rev": "df92755d448b2d3d5143f08e8266ea5026614d13",
         "type": "github"
       }
     },

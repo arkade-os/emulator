@@ -10,7 +10,7 @@
     # master, not a branch ref.
     #
     # TODO: Update this to match a release tag.
-    enclave.url = "github:ArkLabsHQ/enclave/2ed7e57a4405d4884d7bd62bbf604ab33bcb50b5";
+    enclave.url = "github:ArkLabsHQ/enclave/df92755d448b2d3d5143f08e8266ea5026614d13";
   };
 
   outputs =
@@ -24,7 +24,7 @@
       pkgs = import nixpkgs { inherit system; };
       lib = pkgs.lib;
 
-      version = "0.0.8-rc.0";
+      version = "0.0.8";
 
       # PCR0 covers every byte of the source that reaches the build, so a plain
       # `src = ./.` makes the measurement move when a README, a CI file or .gitignore
@@ -60,7 +60,7 @@
         # Always go through `lib.fakeHash`. A stale hash whose vendor directory is already
         # in /nix/store is reused without a rebuild, and go then fails much later with
         # "inconsistent vendoring".
-        vendorHash = "sha256-TD1XMnE4gZrbPWdudekHMDHee99jY/LJ1VRHevWqavw=";
+        vendorHash = "sha256-uj4DrQ+KJo2BscdAlNkcCn5ycq0txraO0BM//OFZnqg=";
 
         subPackages = [ "cmd" ];
         ldflags = [
@@ -132,12 +132,13 @@
       #
       #   mutinynet:
       #     gen 1  genesis
-      #     gen 2  7ac5c58 <- current
+      #     gen 2  7ac5c58
+      #     gen 3  0980284 <- current
       #
       #   se7enz:
-      #     gen 1  genesis                                <- current
+      #     gen 1  genesis <- current
       predecessors = {
-        mutinynet = "7ac5c58b129cdf9ff1f9638c713378f53814c3ea0c7d82f36c1ecb8f06916ce4e58bc4d0a72e51e331ff1c036e2d0b38";
+        mutinynet = "eb1be1bb0da69abf0f53d207a4a7c66642b4aa7a5140676c22700cfb491450194eb105a8ebc9bd94bfc14ba45e5bc793";
         se7enz    = "genesis";
       };
 
@@ -197,7 +198,17 @@
             ENCLAVE_SECRETS_CONFIG = builtins.toJSON [
               {
                 name = "emulator-secret-key";
+                type = "seed";
+              }
+            ];
+
+            # TODO: Describe inherited secrets configuration.
+            ENCLAVE_INHERIT_SECRETS_CONFIG = builtins.toJSON [
+              {
+                name = "legacy-emulator-secret-key";
                 env_var = "EMULATOR_SECRET_KEY";
+                type = "publicKey";
+                value = [ "03f823b9b2febc81f4af967e77aed2f541cbd3397c6d8f5a72e32eb7b471af889a" ];
               }
             ];
 
