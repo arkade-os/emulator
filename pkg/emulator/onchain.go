@@ -1,14 +1,11 @@
 package emulator
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/psbt/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -16,10 +13,6 @@ import (
 // SubmitOnchainTx executes arkade scripts on a plain Bitcoin PSBT and signs
 // every input whose tapscript closure contains the emulator's tweaked
 // key.
-// Rejects any input whose tapscript closure also contains the arkd signer
-// pubkey: those inputs must go through SubmitTx so that the offchain
-// checks (checkpoints, forfeit flow) are enforced. Accepting them here
-// would be a path to bypass those checks.
 func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Packet, error) {
 	ptx := tx.Tx
 
@@ -51,13 +44,6 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 			return nil, fmt.Errorf("failed to read arkade script: %w vin=%d", err, inputIndex)
 		}
 
-		if containsPubKey(script.ClosurePubKeys(), s.arkdPubKey) {
-			return nil, fmt.Errorf(
-				"tapscript on input #%d contains arkd signer pubkey: can't be used onchain",
-				inputIndex,
-			)
-		}
-
 		log.Debugf("executing arkade script: %x", script.Script())
 		if err := script.Execute(
 			ptx.UnsignedTx,
@@ -84,18 +70,3 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 	return ptx, nil
 }
 
-func containsPubKey(pubkeys []*btcec.PublicKey, target *btcec.PublicKey) bool {
-	if target == nil {
-		return false
-	}
-	want := schnorr.SerializePubKey(target)
-	for _, pk := range pubkeys {
-		if pk == nil {
-			continue
-		}
-		if bytes.Equal(schnorr.SerializePubKey(pk), want) {
-			return true
-		}
-	}
-	return false
-}
