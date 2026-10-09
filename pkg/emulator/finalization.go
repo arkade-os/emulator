@@ -73,7 +73,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			// vtxo: without this the requester can reuse a vtxo input we signed in
 			// the past and redirect its value anywhere
 			if err := validateForfeitOutputs(
-				forfeit, inputIndex, &association.prevout, connectorOutput,
+				forfeit, inputIndex, &association.prevout, connectorOutput, s.arkdForfeitPkScript,
 			); err != nil {
 				return nil, fmt.Errorf(
 					"malformed forfeit %s: %w", forfeit.UnsignedTx.TxID(), err,
@@ -269,15 +269,19 @@ func getSignedInputAssociations(
 
 // validateForfeitOutputs checks the output side of a forfeit against the two
 // prevouts it spends. tree.BuildForfeitTx, which arkd itself replays to accept a
-// forfeit, collects the vtxo and the connector into a single output followed by
-// the anchor, so everything but the destination script is determined by data the
-// emulator can trust: the vtxo prevout is committed by the intent proof
-// signature and the connector output comes from the connector tree.
+// forfeit, collects the vtxo and the connector into a single output paying
+// arkd's forfeit script, followed by the anchor, so the whole output side is
+// determined by data the emulator can trust: the intent proof signature commits
+// the vtxo prevout, the connector comes from the tree, the destination from GetInfo.
 func validateForfeitOutputs(
 	forfeit *psbt.Packet, vtxoIndex int, vtxoPrevout, connectorOutput *wire.TxOut,
+	forfeitPkScript []byte,
 ) error {
 	if vtxoPrevout == nil {
 		return fmt.Errorf("missing vtxo prevout for input %d", vtxoIndex)
+	}
+	if len(forfeitPkScript) == 0 {
+		return fmt.Errorf("missing arkd forfeit script")
 	}
 
 	spentVtxo := forfeit.Inputs[vtxoIndex].WitnessUtxo
@@ -319,6 +323,9 @@ func validateForfeitOutputs(
 			"output 0 pays %d, expected %d",
 			forfeit.UnsignedTx.TxOut[0].Value, expectedValue,
 		)
+	}
+	if !bytes.Equal(forfeit.UnsignedTx.TxOut[0].PkScript, forfeitPkScript) {
+		return fmt.Errorf("output 0 does not pay the arkd forfeit script")
 	}
 
 	return nil

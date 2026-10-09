@@ -26,6 +26,18 @@ func TestNew(t *testing.T) {
 		_, err := New(signerKey, nil, nil, nil, arkade.ComputeLimits{})
 		require.ErrorContains(t, err, "arkd public key is required")
 	})
+
+	// the two scripts bind the outputs we sign, so a caller that does not
+	// supply them must not get a signer that skips those checks
+	t.Run("missing arkd scripts", func(t *testing.T) {
+		_, err := New(signerKey, nil, nil, arkdKey.PubKey(), arkade.ComputeLimits{})
+		require.ErrorContains(t, err, "arkd checkpoint tapscript is required")
+
+		_, err = New(signerKey, nil, nil, arkdKey.PubKey(), arkade.ComputeLimits{},
+			WithArkdScripts([]byte{0x01}, nil),
+		)
+		require.ErrorContains(t, err, "arkd forfeit script is required")
+	})
 }
 
 func TestGetInfo(t *testing.T) {
@@ -39,6 +51,7 @@ func TestGetInfo(t *testing.T) {
 	svc, err := New(
 		signerKey, []*btcec.PrivateKey{deprecatedKey}, nil,
 		arkdKey.PubKey(), arkade.ComputeLimits{},
+		WithArkdScripts(testArkdCheckpointTapscript(t, arkdKey.PubKey()), []byte{0x51}),
 	)
 	require.NoError(t, err)
 
