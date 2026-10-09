@@ -1,6 +1,6 @@
 module github.com/arkade-os/emulator/pkg/emulator
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260901090427-f863e4847193
