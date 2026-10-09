@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -64,6 +65,7 @@ func TestValidateCheckpoint(t *testing.T) {
 		previousOutput *wire.TxOut
 		expectedLeaf   txscript.TapLeaf
 		foreignLeaf    *psbt.TaprootTapLeafScript
+		unrollScript   []byte
 	}
 
 	newSetup := func(t *testing.T, unrelatedOutput bool) setup {
@@ -73,6 +75,9 @@ func TestValidateCheckpoint(t *testing.T) {
 		require.NoError(t, err)
 		secondKey, err := btcec.NewPrivateKey()
 		require.NoError(t, err)
+		arkdKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+		unrollScript := testArkdCheckpointTapscript(t, arkdKey.PubKey())
 		closures := []*arkscript.MultisigClosure{
 			{PubKeys: []*btcec.PublicKey{firstKey.PubKey()}},
 			{PubKeys: []*btcec.PublicKey{secondKey.PubKey()}},
@@ -107,7 +112,9 @@ func TestValidateCheckpoint(t *testing.T) {
 		previousTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{9}}})
 		previousTx.AddTxOut(previousOutput)
 
-		checkpointOutputScript := vtxoPkScript
+		checkpointOutputScript, arkInputField := testCheckpointSpend(
+			t, unrollScript, authorizedField.Script,
+		)
 		if unrelatedOutput {
 			attackerKey, err := btcec.NewPrivateKey()
 			require.NoError(t, err)
@@ -130,7 +137,7 @@ func TestValidateCheckpoint(t *testing.T) {
 		arkPtx, err := psbt.NewFromUnsignedTx(arkTx)
 		require.NoError(t, err)
 		arkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: amount, PkScript: append([]byte(nil), checkpointOutputScript...)}
-		arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{authorizedField}
+		arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{arkInputField}
 
 		return setup{
 			arkPtx:         arkPtx,
@@ -138,61 +145,125 @@ func TestValidateCheckpoint(t *testing.T) {
 			previousOutput: previousOutput,
 			expectedLeaf:   authorizedLeaf,
 			foreignLeaf:    foreignField,
+			unrollScript:   unrollScript,
 		}
+	}
+
+	// forgeCheckpointOutput repoints the checkpoint and the ark input at a self
+	// consistent taproot output built from the given internal key and leaves.
+	forgeCheckpointOutput := func(
+		t *testing.T, s setup, internalKey *btcec.PublicKey, leaves ...txscript.TapLeaf,
+	) {
+		t.Helper()
+
+		tapTree := txscript.AssembleTaprootScriptTree(leaves...)
+		root := tapTree.RootNode.TapHash()
+		pkScript, err := arkscript.P2TRScript(
+			txscript.ComputeTaprootOutputKey(internalKey, root[:]),
+		)
+		require.NoError(t, err)
+
+		proofIndex, ok := tapTree.LeafProofIndex[s.expectedLeaf.TapHash()]
+		require.True(t, ok)
+		block := tapTree.LeafMerkleProofs[proofIndex].ToControlBlock(internalKey)
+		controlBlock, err := block.ToBytes()
+		require.NoError(t, err)
+
+		s.checkpoint.UnsignedTx.TxOut[0].PkScript = pkScript
+		s.arkPtx.Inputs[0].WitnessUtxo.PkScript = pkScript
+		s.arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
+			ControlBlock: controlBlock,
+			Script:       s.expectedLeaf.Script,
+			LeafVersion:  txscript.BaseLeafVersion,
+		}}
+		// the new output changes the checkpoint txid the ark input must spend
+		s.arkPtx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = s.checkpoint.UnsignedTx.TxHash()
 	}
 
 	t.Run("valid", func(t *testing.T) {
 		setup := newSetup(t, false)
-		require.NoError(t, validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf))
+		require.NoError(t, validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript))
 	})
 
 	t.Run("multiple checkpoint inputs", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.UnsignedTx.AddTxIn(&wire.TxIn{})
 		setup.checkpoint.Inputs = append(setup.checkpoint.Inputs, psbt.PInput{})
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
 		require.ErrorContains(t, err, "exactly one input")
 	})
 
 	t.Run("extra checkpoint output", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.UnsignedTx.AddTxOut(&wire.TxOut{})
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
 		require.ErrorContains(t, err, "one vtxo output and one anchor output")
 	})
 
 	t.Run("checkpoint output mismatch", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.arkPtx.Inputs[0].WitnessUtxo.Value--
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
 		require.ErrorContains(t, err, "checkpoint output does not match")
 	})
 
 	t.Run("unauthenticated checkpoint input", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.Inputs[0].WitnessUtxo.Value--
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
 		require.ErrorContains(t, err, "does not match previous ark transaction")
 	})
 
 	t.Run("missing previous ark transaction", func(t *testing.T) {
 		setup := newSetup(t, false)
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, nil, setup.expectedLeaf)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, nil, setup.expectedLeaf, setup.unrollScript)
 		require.ErrorContains(t, err, "missing authenticated previous ark output")
 	})
 
 	t.Run("substituted checkpoint leaf", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.Inputs[0].TaprootLeafScript[0] = setup.foreignLeaf
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
 		require.ErrorContains(t, err, "tapleaf does not match ark input")
 	})
 
 	t.Run("unrelated checkpoint destination", func(t *testing.T) {
 		setup := newSetup(t, true)
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf)
-		require.ErrorContains(t, err, "ark input tapleaf")
-		require.ErrorContains(t, err, "not committed by witness utxo")
+		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		require.ErrorContains(t, err, "not the arkd checkpoint script")
+	})
+
+	// the two trees below keep the expected leaf committed and the control
+	// block proving it, so every per-leaf check still passes: only rebuilding
+	// the output arkd would rebuild rejects them.
+	t.Run("expected leaf under a foreign internal key", func(t *testing.T) {
+		setup := newSetup(t, false)
+		attackerKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+
+		forgeCheckpointOutput(t, setup, attackerKey.PubKey(),
+			txscript.NewBaseTapLeaf(setup.unrollScript), setup.expectedLeaf,
+		)
+
+		err = validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		require.ErrorContains(t, err, "not the arkd checkpoint script")
+	})
+
+	t.Run("expected leaf in a tree carrying an extra leaf", func(t *testing.T) {
+		setup := newSetup(t, false)
+		attackerKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+		extra := arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{attackerKey.PubKey()}}
+		extraScript, err := extra.Script()
+		require.NoError(t, err)
+
+		forgeCheckpointOutput(t, setup, arkscript.UnspendableKey(),
+			txscript.NewBaseTapLeaf(setup.unrollScript), setup.expectedLeaf,
+			txscript.NewBaseTapLeaf(extraScript),
+		)
+
+		err = validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		require.ErrorContains(t, err, "not the arkd checkpoint script")
 	})
 }
 
@@ -285,10 +356,13 @@ func newTestSigningService(t *testing.T) (*service, OffchainTx) {
 	prevArkTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
 	prevArkTxHash := prevArkTx.TxHash()
 
+	unrollScript := testArkdCheckpointTapscript(t, arkdKey.PubKey())
+	checkpointPkScript, arkInputField := testCheckpointSpend(t, unrollScript, merkleProof.Script)
+
 	// -- checkpoint tx: spends output 0 of prevArkTx --
 	checkpointTx := wire.NewMsgTx(2)
 	checkpointTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevArkTxHash, Index: 0}})
-	checkpointTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
+	checkpointTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: checkpointPkScript})
 	checkpointTx.AddTxOut(txutils.AnchorOutput())
 
 	checkpointPtx, err := psbt.NewFromUnsignedTx(checkpointTx)
@@ -320,20 +394,17 @@ func newTestSigningService(t *testing.T) (*service, OffchainTx) {
 	// set WitnessUtxo (the output of the checkpoint that this ark tx input spends)
 	arkPtx.Inputs[0].WitnessUtxo = checkpointPtx.UnsignedTx.TxOut[0]
 	// set TaprootLeafScript so resolveArkadeScriptSigner can read the closure
-	arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
-		ControlBlock: merkleProof.ControlBlock,
-		Script:       merkleProof.Script,
-		LeafVersion:  txscript.BaseLeafVersion,
-	}}
+	arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{arkInputField}
 	arkPtx.Outputs = append(arkPtx.Outputs, psbt.POutput{})
 
 	// set PrevArkTxField so prevOutFetcherForArkTx can find the prevout ark tx
 	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevArkTx))
 
 	svc := &service{
-		signer:        signer{emulatorKey},
-		arkdPubKey:    arkdKey.PubKey(),
-		computeLimits: arkade.DefaultComputeLimits(),
+		signer:                  signer{emulatorKey},
+		arkdPubKey:              arkdKey.PubKey(),
+		arkdCheckpointTapscript: unrollScript,
+		computeLimits:           arkade.DefaultComputeLimits(),
 	}
 
 	return svc, OffchainTx{
@@ -366,9 +437,11 @@ func newSubmitTxHarness(
 	cpLeaf, cpInputPkScript := taprootLeaf(
 		t, checkpointClosure(tweaked, aliceKey.PubKey(), arkdKey.PubKey())...,
 	)
-	arkLeaf, cpOutputPkScript := taprootLeaf(
+	arkLeaf, _ := taprootLeaf(
 		t, arkClosure(tweaked, aliceKey.PubKey(), arkdKey.PubKey())...,
 	)
+	unrollScript := testArkdCheckpointTapscript(t, arkdKey.PubKey())
+	cpOutputPkScript, arkInputField := testCheckpointSpend(t, unrollScript, arkLeaf.Script)
 
 	// checkpoint spends a vtxo and pays the script the ark tx will spend
 	prevTx := wire.NewMsgTx(2)
@@ -399,7 +472,7 @@ func newSubmitTxHarness(
 	arkPtx, err := psbt.NewFromUnsignedTx(arkTx)
 	require.NoError(t, err)
 	arkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 10_000, PkScript: cpOutputPkScript}
-	arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{arkLeaf}
+	arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{arkInputField}
 	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevTx))
 
 	packet, err := arkade.NewPacket(arkade.EmulatorEntry{Vin: 0, Script: arkadeScriptBytes})
@@ -413,9 +486,10 @@ func newSubmitTxHarness(
 
 	return &submitTxHarness{
 		svc: &service{
-			signer:        signer{secretKey: signerKey},
-			arkdPubKey:    arkdKey.PubKey(),
-			computeLimits: arkade.DefaultComputeLimits(),
+			signer:                  signer{secretKey: signerKey},
+			arkdPubKey:              arkdKey.PubKey(),
+			arkdCheckpointTapscript: unrollScript,
+			computeLimits:           arkade.DefaultComputeLimits(),
 		},
 		arkPtx:     arkPtx,
 		checkpoint: checkpoint,
@@ -458,6 +532,55 @@ func taprootLeaf(t *testing.T, pubkeys ...*btcec.PublicKey) (*psbt.TaprootTapLea
 		Script:       merkleProof.Script,
 		LeafVersion:  txscript.BaseLeafVersion,
 	}, pkScript
+}
+
+// testArkdCheckpointTapscript mimics the CSV unroll leaf arkd derives from its
+// forfeit key and publishes in GetInfo.
+func testArkdCheckpointTapscript(t *testing.T, arkdKey *btcec.PublicKey) []byte {
+	t.Helper()
+
+	closure := &arkscript.CSVMultisigClosure{
+		MultisigClosure: arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{arkdKey}},
+		Locktime:        arklib.RelativeLocktime{Type: arklib.LocktimeTypeBlock, Value: 144},
+	}
+	tapscript, err := closure.Script()
+	require.NoError(t, err)
+
+	return tapscript
+}
+
+// testCheckpointSpend returns the checkpoint output offchain.BuildTxs produces
+// for a vtxo spent through spentLeaf, plus the ark tx's leaf field for it.
+func testCheckpointSpend(
+	t *testing.T, unrollScript, spentLeaf []byte,
+) ([]byte, *psbt.TaprootTapLeafScript) {
+	t.Helper()
+
+	unroll := &arkscript.CSVMultisigClosure{}
+	valid, err := unroll.Decode(unrollScript)
+	require.NoError(t, err)
+	require.True(t, valid)
+
+	spent, err := arkscript.DecodeClosure(spentLeaf)
+	require.NoError(t, err)
+
+	checkpointScript := arkscript.TapscriptsVtxoScript{
+		Closures: []arkscript.Closure{unroll, spent},
+	}
+	tapKey, tapTree, err := checkpointScript.TapTree()
+	require.NoError(t, err)
+
+	pkScript, err := arkscript.P2TRScript(tapKey)
+	require.NoError(t, err)
+
+	proof, err := tapTree.GetTaprootMerkleProof(txscript.NewBaseTapLeaf(spentLeaf).TapHash())
+	require.NoError(t, err)
+
+	return pkScript, &psbt.TaprootTapLeafScript{
+		ControlBlock: proof.ControlBlock,
+		Script:       proof.Script,
+		LeafVersion:  txscript.BaseLeafVersion,
+	}
 }
 
 func tweakedAliceArkd(tweaked, alice, arkd *btcec.PublicKey) []*btcec.PublicKey {

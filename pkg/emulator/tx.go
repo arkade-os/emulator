@@ -1,10 +1,12 @@
 package emulator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 
+	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/psbt/v2"
@@ -56,7 +58,10 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData
 		inputTxid := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint.Hash.String()
 		checkpointPtx := indexedCheckpoints[inputTxid]
 		arkOutpoint := arkPtx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
-		if err := validateCheckpoint(arkPtx, inputIndex, checkpointPtx, prevOutFetcher.fetchVtxoPrevOut(arkOutpoint), script.TapLeaf()); err != nil {
+		if err := validateCheckpoint(
+			arkPtx, inputIndex, checkpointPtx, prevOutFetcher.fetchVtxoPrevOut(arkOutpoint),
+			script.TapLeaf(), s.arkdCheckpointTapscript,
+		); err != nil {
 			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
 		}
 		prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
@@ -175,7 +180,7 @@ func indexCheckpoints(arkPtx *psbt.Packet, checkpoints []*psbt.Packet) (map[stri
 
 func validateCheckpoint(
 	arkPtx *psbt.Packet, inputIndex int, checkpoint *psbt.Packet,
-	previousOutput *wire.TxOut, expectedLeaf txscript.TapLeaf,
+	previousOutput *wire.TxOut, expectedLeaf txscript.TapLeaf, arkdCheckpointTapscript []byte,
 ) error {
 	if inputIndex < 0 || inputIndex >= len(arkPtx.Inputs) || inputIndex >= len(arkPtx.UnsignedTx.TxIn) {
 		return fmt.Errorf("ark input index out of range")
@@ -210,6 +215,13 @@ func validateCheckpoint(
 	if checkpoint.UnsignedTx.TxOut[0].Value != previousOutput.Value {
 		return fmt.Errorf("checkpoint vtxo output value does not match its input")
 	}
+	expectedPkScript, err := expectedCheckpointPkScript(arkdCheckpointTapscript, expectedLeaf)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(checkpoint.UnsignedTx.TxOut[0].PkScript, expectedPkScript) {
+		return fmt.Errorf("checkpoint vtxo output is not the arkd checkpoint script")
+	}
 
 	if err := validateTaprootLeaf(arkPtx.Inputs[inputIndex], expectedLeaf); err != nil {
 		return fmt.Errorf("ark input tapleaf: %w", err)
@@ -219,6 +231,41 @@ func validateCheckpoint(
 	}
 
 	return nil
+}
+
+// expectedCheckpointPkScript rebuilds the checkpoint output as offchain.BuildTxs and arkd do: the
+// unspendable key over [unroll, spent] in that order, unroll being arkd's CSV multisig leaf.
+// Revisit if arkd publishes another unroll leaf type: a leaf commitment alone is not enough.
+func expectedCheckpointPkScript(
+	arkdCheckpointTapscript []byte, spentLeaf txscript.TapLeaf,
+) ([]byte, error) {
+	if len(arkdCheckpointTapscript) == 0 {
+		return nil, fmt.Errorf("missing arkd checkpoint tapscript")
+	}
+
+	unroll := &arkscript.CSVMultisigClosure{}
+	valid, err := unroll.Decode(arkdCheckpointTapscript)
+	if err != nil {
+		return nil, fmt.Errorf("invalid arkd checkpoint tapscript: %w", err)
+	}
+	if !valid {
+		return nil, fmt.Errorf("invalid arkd checkpoint tapscript")
+	}
+
+	spent, err := arkscript.DecodeClosure(spentLeaf.Script)
+	if err != nil {
+		return nil, fmt.Errorf("spent leaf is not a vtxo closure: %w", err)
+	}
+
+	checkpointScript := arkscript.TapscriptsVtxoScript{
+		Closures: []arkscript.Closure{unroll, spent},
+	}
+	tapKey, _, err := checkpointScript.TapTree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build checkpoint taptree: %w", err)
+	}
+
+	return arkscript.P2TRScript(tapKey)
 }
 
 func validateTaprootLeaf(input psbt.PInput, expectedLeaf txscript.TapLeaf) error {

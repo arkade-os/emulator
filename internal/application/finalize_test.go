@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	arkscript "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
@@ -477,15 +478,6 @@ func TestSubmitTx(t *testing.T) {
 	t.Run("finalizer", func(t *testing.T) {
 		svc, tx, arkd := newTestService(t, true)
 
-		// distinct txid, to tell arkd's final tx from the input
-		finalArkMsg := wire.NewMsgTx(2)
-		finalArkMsg.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xfe}, Index: 3}})
-		finalArkMsg.AddTxOut(&wire.TxOut{Value: 1234, PkScript: []byte{txscript.OP_TRUE}})
-		finalArkPtx, err := psbt.NewFromUnsignedTx(finalArkMsg)
-		require.NoError(t, err)
-		finalArkPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: []byte{txscript.OP_TRUE}}
-		arkd.finalArkTx = encodePacket(t, finalArkPtx)
-
 		// arkd's checkpoints carry an extra signature to detect the merge
 		arkdSig := &psbt.TaprootScriptSpendSig{
 			XOnlyPubKey: bytes.Repeat([]byte{0xab}, 32),
@@ -507,7 +499,8 @@ func TestSubmitTx(t *testing.T) {
 		require.Equal(t, 1, arkd.submitCalls)
 		require.Equal(t, 1, arkd.finalizeCalls)
 
-		require.Equal(t, finalArkMsg.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+		require.Equal(t, tx.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
+		require.Equal(t, []string{tx.ArkTx.UnsignedTx.TxID()}, arkd.finalizeTxids)
 
 		mergedSigs := out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig
 		require.GreaterOrEqual(t, len(mergedSigs), 2)
@@ -542,17 +535,32 @@ func TestSubmitTx(t *testing.T) {
 
 	t.Run("arkd returns unknown checkpoint txid", func(t *testing.T) {
 		svc, tx, arkd := newTestService(t, true)
-
-		otherTx := wire.NewMsgTx(2)
-		otherTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0x99}, Index: 7}})
-		otherTx.AddTxOut(&wire.TxOut{Value: 42, PkScript: []byte{txscript.OP_TRUE}})
-		otherPtx, err := psbt.NewFromUnsignedTx(otherTx)
-		require.NoError(t, err)
-		arkd.finalArkTx = encodePacket(t, otherPtx)
-		arkd.arkdCheckpoints = []string{arkd.finalArkTx}
+		arkd.arkdCheckpoints = []string{encodePacket(t, unrelatedPacket(t))}
 
 		out, err := svc.SubmitTx(t.Context(), tx)
 		require.ErrorContains(t, err, "arkd returned no checkpoint for txid")
+		require.Nil(t, out)
+		require.Zero(t, arkd.finalizeCalls)
+	})
+
+	// arkd only countersigns what we submitted, so a different transaction in
+	// its response is never the one the arkade script was executed against
+	t.Run("arkd returns a different ark tx", func(t *testing.T) {
+		svc, tx, arkd := newTestService(t, true)
+		arkd.finalArkTx = encodePacket(t, unrelatedPacket(t))
+
+		out, err := svc.SubmitTx(t.Context(), tx)
+		require.ErrorContains(t, err, "arkd returned ark tx")
+		require.Nil(t, out)
+		require.Zero(t, arkd.finalizeCalls)
+	})
+
+	t.Run("arkd returns a different txid", func(t *testing.T) {
+		svc, tx, arkd := newTestService(t, true)
+		arkd.arkTxid = unrelatedPacket(t).UnsignedTx.TxID()
+
+		out, err := svc.SubmitTx(t.Context(), tx)
+		require.ErrorContains(t, err, "arkd returned txid")
 		require.Nil(t, out)
 		require.Zero(t, arkd.finalizeCalls)
 	})
@@ -715,7 +723,11 @@ func TestClose(t *testing.T) {
 	arkdKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	idx := &testIndexer{}
-	lib, err := emulator.New(signerKey, nil, nil, arkdKey.PubKey(), arkade.DefaultComputeLimits())
+	lib, err := emulator.New(signerKey, nil, nil, arkdKey.PubKey(), arkade.DefaultComputeLimits(),
+		emulator.WithArkdScripts(
+			testArkdCheckpointTapscript(t, arkdKey.PubKey()), []byte{txscript.OP_TRUE},
+		),
+	)
 	require.NoError(t, err)
 	arkd := &fakeArkd{}
 	svc := &service{Service: lib, arkd: arkd, indexer: idx}
@@ -768,9 +780,12 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	prevArkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xaa}, Index: 0}})
 	prevArkTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
 
+	unrollScript := testArkdCheckpointTapscript(t, arkdKey.PubKey())
+	checkpointPkScript, arkInputField := testCheckpointSpend(t, unrollScript, merkleProof.Script)
+
 	checkpointTx := wire.NewMsgTx(2)
 	checkpointTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevArkTx.TxHash(), Index: 0}})
-	checkpointTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
+	checkpointTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: checkpointPkScript})
 	checkpointTx.AddTxOut(txutils.AnchorOutput())
 	checkpointPtx, err := psbt.NewFromUnsignedTx(checkpointTx)
 	require.NoError(t, err)
@@ -789,15 +804,20 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	arkPtx, err := psbt.NewFromUnsignedTx(arkTx)
 	require.NoError(t, err)
 	arkPtx.Inputs[0].WitnessUtxo = checkpointPtx.UnsignedTx.TxOut[0]
-	arkPtx.Inputs[0].TaprootLeafScript = leafScript
+	arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{arkInputField}
 	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevArkTx))
 
 	lib, err := emulator.New(
 		emulatorKey, nil, nil, arkdKey.PubKey(), arkade.DefaultComputeLimits(),
+		emulator.WithArkdScripts(unrollScript, []byte{txscript.OP_TRUE}),
 	)
 	require.NoError(t, err)
 
-	arkd := &fakeArkd{}
+	// a cooperative arkd echoes the tx it was asked to countersign
+	arkd := &fakeArkd{
+		arkTxid:    arkPtx.UnsignedTx.TxID(),
+		finalArkTx: encodePacket(t, arkPtx),
+	}
 	svc := &service{
 		Service:       lib,
 		arkd:          arkd,
@@ -842,7 +862,69 @@ func (i *testIndexer) GetCommitmentTx(context.Context, string) (*clientlib.Commi
 	return &clientlib.CommitmentTx{}, nil
 }
 
+// unrelatedPacket is a well formed psbt that is not the tx under test.
+func unrelatedPacket(t *testing.T) *psbt.Packet {
+	t.Helper()
+
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0x99}, Index: 7}})
+	tx.AddTxOut(&wire.TxOut{Value: 42, PkScript: []byte{txscript.OP_TRUE}})
+	ptx, err := psbt.NewFromUnsignedTx(tx)
+	require.NoError(t, err)
+
+	return ptx
+}
+
+// testArkdCheckpointTapscript mimics the CSV unroll leaf arkd derives from its
+// forfeit key and publishes in GetInfo.
+func testArkdCheckpointTapscript(t *testing.T, arkdKey *btcec.PublicKey) []byte {
+	t.Helper()
+
+	closure := &arkscript.CSVMultisigClosure{
+		MultisigClosure: arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{arkdKey}},
+		Locktime:        arklib.RelativeLocktime{Type: arklib.LocktimeTypeBlock, Value: 144},
+	}
+	tapscript, err := closure.Script()
+	require.NoError(t, err)
+
+	return tapscript
+}
+
+// testCheckpointSpend returns the checkpoint output offchain.BuildTxs produces
+// for a vtxo spent through spentLeaf, plus the ark tx's leaf field for it.
+func testCheckpointSpend(
+	t *testing.T, unrollScript, spentLeaf []byte,
+) ([]byte, *psbt.TaprootTapLeafScript) {
+	t.Helper()
+
+	unroll := &arkscript.CSVMultisigClosure{}
+	valid, err := unroll.Decode(unrollScript)
+	require.NoError(t, err)
+	require.True(t, valid)
+
+	spent, err := arkscript.DecodeClosure(spentLeaf)
+	require.NoError(t, err)
+
+	tapKey, tapTree, err := (&arkscript.TapscriptsVtxoScript{
+		Closures: []arkscript.Closure{unroll, spent},
+	}).TapTree()
+	require.NoError(t, err)
+
+	pkScript, err := arkscript.P2TRScript(tapKey)
+	require.NoError(t, err)
+
+	proof, err := tapTree.GetTaprootMerkleProof(txscript.NewBaseTapLeaf(spentLeaf).TapHash())
+	require.NoError(t, err)
+
+	return pkScript, &psbt.TaprootTapLeafScript{
+		ControlBlock: proof.ControlBlock,
+		Script:       proof.Script,
+		LeafVersion:  txscript.BaseLeafVersion,
+	}
+}
+
 type fakeArkd struct {
+	arkTxid         string
 	finalArkTx      string
 	arkdCheckpoints []string
 	submitErr       error
@@ -862,7 +944,7 @@ func (f *fakeArkd) SubmitTx(_ context.Context, _ string, checkpoints []string) (
 	if f.submitErr != nil {
 		return "", "", nil, f.submitErr
 	}
-	return "arkd-txid", f.finalArkTx, f.arkdCheckpoints, nil
+	return f.arkTxid, f.finalArkTx, f.arkdCheckpoints, nil
 }
 
 func (f *fakeArkd) FinalizeTx(_ context.Context, txid string, checkpoints []string) error {

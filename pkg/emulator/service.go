@@ -76,7 +76,23 @@ type service struct {
 	publicKey                string
 	deprecatedPublicKeys     []string
 	arkdPubKey               *btcec.PublicKey
+	arkdCheckpointTapscript  []byte
+	arkdForfeitPkScript      []byte
 	computeLimits            arkade.ComputeLimits
+}
+
+// Option configures a Service built by New.
+type Option func(*service)
+
+// WithArkdScripts supplies GetInfo's checkpoint_tapscript and the forfeit
+// payout script. Both are required: the requester supplies the whole
+// checkpoint and forfeit, so matching only their inputs leaves the
+// destination to them.
+func WithArkdScripts(checkpointTapscript, forfeitPkScript []byte) Option {
+	return func(s *service) {
+		s.arkdCheckpointTapscript = append([]byte(nil), checkpointTapscript...)
+		s.arkdForfeitPkScript = append([]byte(nil), forfeitPkScript...)
+	}
 }
 
 // activeDeprecatedSigners returns the deprecated signers usable for the
@@ -99,7 +115,7 @@ func (s *service) activeDeprecatedSigners() []signer {
 // New builds a signing Service.
 func New(
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
-	arkdPubKey *btcec.PublicKey, computeLimits arkade.ComputeLimits,
+	arkdPubKey *btcec.PublicKey, computeLimits arkade.ComputeLimits, opts ...Option,
 ) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
@@ -120,7 +136,7 @@ func New(
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	return &service{
+	svc := &service{
 		signer:                   signer{secretKey},
 		deprecatedSigners:        deprecatedSigners,
 		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
@@ -128,7 +144,19 @@ func New(
 		deprecatedPublicKeys:     deprecatedPublicKeys,
 		arkdPubKey:               arkdPubKey,
 		computeLimits:            computeLimits,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+
+	if len(svc.arkdCheckpointTapscript) == 0 {
+		return nil, fmt.Errorf("arkd checkpoint tapscript is required")
+	}
+	if len(svc.arkdForfeitPkScript) == 0 {
+		return nil, fmt.Errorf("arkd forfeit script is required")
+	}
+
+	return svc, nil
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {
