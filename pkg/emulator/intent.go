@@ -214,14 +214,11 @@ func validateIntentMessageCommitment(request Intent, encodedMessage string) erro
 	return nil
 }
 
-// validateMessage checks intent admission policy and the proof's validity window.
+// validateMessage checks the proof's validity window.
 func validateMessage(message IntentMessage) error {
 	var validAt, expireAt int64
 	switch m := message.(type) {
 	case *intent.RegisterMessage:
-		if len(m.OnchainOutputIndexes) > 0 {
-			return fmt.Errorf("onchain outputs are not supported")
-		}
 		validAt, expireAt = m.ValidAt, m.ExpireAt
 	case *intent.EstimateIntentFeeMessage:
 		validAt, expireAt = m.ValidAt, m.ExpireAt
