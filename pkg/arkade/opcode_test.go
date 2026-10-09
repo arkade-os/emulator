@@ -204,6 +204,21 @@ func TestOpcodeSha256StateRoundTripsGolden(t *testing.T) {
 	require.Equal(t, [][]byte{sha256FinalizeGolden}, vm.GetStack())
 }
 
+func TestMerkleBranchRootAlias(t *testing.T) {
+	require.Equal(t, 0xb3, OP_MERKLEBRANCHROOT)
+	require.Equal(t, OP_MERKLEBRANCHROOT, OP_MERKLEBRANCHVERIFY)
+	for _, name := range []string{"OP_MERKLEBRANCHROOT", "OP_MERKLEBRANCHVERIFY"} {
+		t.Run(name, func(t *testing.T) {
+			op, ok := OpcodeByName[name]
+			require.True(t, ok)
+			require.Equal(t, byte(OP_MERKLEBRANCHROOT), op)
+			var buf strings.Builder
+			disasmOpcode(&buf, &opcodeArray[op], nil, false)
+			require.Equal(t, "OP_MERKLEBRANCHROOT", buf.String())
+		})
+	}
+}
+
 func TestOpcodeModexpSmoke(t *testing.T) {
 	require.Equal(t, "OP_MODEXP", opcodeArray[OP_MODEXP].name)
 	require.Equal(t, 1, opcodeArray[OP_MODEXP].length)
