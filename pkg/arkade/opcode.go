@@ -225,7 +225,8 @@ const (
 	OP_CHECKLOCKTIMEVERIFY = 0xb1 // 177 - AKA OP_NOP2
 	OP_NOP3                = 0xb2 // 178
 	OP_CHECKSEQUENCEVERIFY = 0xb2 // 178 - AKA OP_NOP3
-	OP_MERKLEBRANCHVERIFY  = 0xb3 // 179
+	OP_MERKLEBRANCHROOT    = 0xb3 // 179
+	OP_MERKLEBRANCHVERIFY  = OP_MERKLEBRANCHROOT
 	OP_NOP5                = 0xb4 // 180
 	OP_NOP6                = 0xb5 // 181
 	OP_NOP7                = 0xb6 // 182
@@ -524,14 +525,14 @@ var opcodeArray = [256]opcode{
 	OP_CHECKSIGADD:         {OP_CHECKSIGADD, "OP_CHECKSIGADD", 1, opcodeCheckSigAdd},
 
 	// Reserved opcodes.
-	OP_NOP1:               {OP_NOP1, "OP_NOP1", 1, opcodeNop},
-	OP_MERKLEBRANCHVERIFY: {OP_MERKLEBRANCHVERIFY, "OP_MERKLEBRANCHVERIFY", 1, opcodeMerkleBranchVerify},
-	OP_NOP5:               {OP_NOP5, "OP_NOP5", 1, opcodeNop},
-	OP_NOP6:               {OP_NOP6, "OP_NOP6", 1, opcodeNop},
-	OP_NOP7:               {OP_NOP7, "OP_NOP7", 1, opcodeNop},
-	OP_NOP8:               {OP_NOP8, "OP_NOP8", 1, opcodeNop},
-	OP_NOP9:               {OP_NOP9, "OP_NOP9", 1, opcodeNop},
-	OP_NOP10:              {OP_NOP10, "OP_NOP10", 1, opcodeNop},
+	OP_NOP1:             {OP_NOP1, "OP_NOP1", 1, opcodeNop},
+	OP_MERKLEBRANCHROOT: {OP_MERKLEBRANCHROOT, "OP_MERKLEBRANCHROOT", 1, opcodeMerkleBranchRoot},
+	OP_NOP5:             {OP_NOP5, "OP_NOP5", 1, opcodeNop},
+	OP_NOP6:             {OP_NOP6, "OP_NOP6", 1, opcodeNop},
+	OP_NOP7:             {OP_NOP7, "OP_NOP7", 1, opcodeNop},
+	OP_NOP8:             {OP_NOP8, "OP_NOP8", 1, opcodeNop},
+	OP_NOP9:             {OP_NOP9, "OP_NOP9", 1, opcodeNop},
+	OP_NOP10:            {OP_NOP10, "OP_NOP10", 1, opcodeNop},
 
 	OP_PUT: {OP_PUT, "OP_PUT", 1, opcodePut},
 
@@ -2008,10 +2009,7 @@ func opcodeCheckMultiSigVerify(op *opcode, data []byte, vm *Engine) error {
 var OpcodeByName = make(map[string]byte)
 
 func init() {
-	// Initialize the opcode name to value map using the contents of the
-	// opcode array.  Also add entries for "OP_FALSE", "OP_TRUE", and
-	// "OP_NOP2" since they are aliases for "OP_0", "OP_1",
-	// and "OP_CHECKLOCKTIMEVERIFY" respectively.
+	// Initialize the opcode name to value map, including aliases.
 	for _, op := range opcodeArray {
 		OpcodeByName[op.name] = op.value
 	}
@@ -2019,6 +2017,7 @@ func init() {
 	OpcodeByName["OP_TRUE"] = OP_TRUE
 	OpcodeByName["OP_NOP2"] = OP_CHECKLOCKTIMEVERIFY
 	OpcodeByName["OP_NOP3"] = OP_CHECKSEQUENCEVERIFY
+	OpcodeByName["OP_MERKLEBRANCHVERIFY"] = OP_MERKLEBRANCHROOT
 }
 
 // opcodeInspectInputOutpoint pops the input index from the stack and pushes the outpoint of the current input onto the stack.
@@ -2884,7 +2883,7 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeMerkleBranchVerify computes a Merkle root from a leaf and proof
+// opcodeMerkleBranchRoot computes a Merkle root from a leaf and proof
 // path using BIP-341 tagged hashes with lexicographic sibling ordering.
 //
 // Stack inputs (top to bottom): leaf_data, proof, branch_tag, leaf_tag
@@ -2896,7 +2895,7 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 //
 // At each proof step, siblings are sorted lexicographically before
 // hashing: tagged_hash(branch_tag, min || max).
-func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
+func opcodeMerkleBranchRoot(op *opcode, data []byte, vm *Engine) error {
 	// Pop leaf_data
 	leafData, err := vm.dstack.PopByteArray()
 	if err != nil {
