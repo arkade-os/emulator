@@ -206,7 +206,7 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		return nil, fmt.Errorf("failed to encode ark tx for finalization: %w", err)
 	}
 
-	txid, finalArkTx, arkdCheckpointTxs, err := s.arkd.SubmitTx(ctx, arkTx, encodedCheckpoints)
+	arkdTxid, finalArkTx, arkdCheckpointTxs, err := s.arkd.SubmitTx(ctx, arkTx, encodedCheckpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
 	}
@@ -215,8 +215,8 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 	// different transaction, and finalizing or returning it would publish a
 	// result the arkade script was never executed against.
 	signedTxid := signed.ArkTx.UnsignedTx.TxID()
-	if txid != signedTxid {
-		return nil, fmt.Errorf("arkd returned txid %s, expected %s", txid, signedTxid)
+	if arkdTxid != signedTxid {
+		return nil, fmt.Errorf("arkd returned txid %s, expected %s", arkdTxid, signedTxid)
 	}
 	finalArkPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalArkTx), true)
 	if err != nil {
@@ -266,10 +266,10 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		finalEncodedCheckpoints = append(finalEncodedCheckpoints, encoded)
 	}
 
-	log.WithField("txid", txid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
+	log.WithField("txid", arkdTxid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
 
 	// TODO: if retry fails, persist retry task in background queue
-	if err := s.retryFinalize(ctx, txid, finalEncodedCheckpoints); err != nil {
+	if err := s.retryFinalize(ctx, arkdTxid, finalEncodedCheckpoints); err != nil {
 		return nil, err
 	}
 

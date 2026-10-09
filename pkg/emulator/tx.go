@@ -233,11 +233,9 @@ func validateCheckpoint(
 	return nil
 }
 
-// expectedCheckpointPkScript rebuilds the checkpoint output the way
-// offchain.BuildTxs does, and arkd rebuilds it to accept a submission: the
-// unspendable internal key over arkd's unroll leaf plus the leaf being spent.
-// A leaf commitment alone leaves the internal key and the rest of the tree to
-// the requester.
+// expectedCheckpointPkScript rebuilds the checkpoint output as offchain.BuildTxs and arkd do: the
+// unspendable key over [unroll, spent] in that order, unroll being arkd's CSV multisig leaf.
+// Revisit if arkd publishes another unroll leaf type: a leaf commitment alone is not enough.
 func expectedCheckpointPkScript(
 	arkdCheckpointTapscript []byte, spentLeaf txscript.TapLeaf,
 ) ([]byte, error) {
