@@ -340,7 +340,6 @@ func TestSubmitFinalizationValidatesAuthorizedInput(t *testing.T) {
 			proofLeaf:      foreignLeaf,
 			commitmentLeaf: foreignLeaf,
 			commitment:     prevout,
-			wantErr:        "finalization leaf does not require the arkd signer",
 		},
 	}
 
@@ -371,6 +370,56 @@ func TestSubmitFinalizationValidatesAuthorizedInput(t *testing.T) {
 		})
 	}
 }
+
+// A leaf naming the signer key tweaked by the script, and not the plain one,
+// is finalized like any other; a deprecated key tweaked counts the same, as
+// long as it is still accepted.
+func TestSubmitFinalizationAcceptsTweakedArkdLeaf(t *testing.T) {
+	arkdKey := newResolverPrivateKey(t)
+	oldArkdKey := newResolverPrivateKey(t)
+	ownerKey := newResolverPrivateKey(t)
+	arkadeScript := []byte{txscript.OP_TRUE}
+	submit := func(t *testing.T, signingKey *btcec.PrivateKey) (*SignedBatchFinalization, error) {
+		tweakedKey := arkade.ComputeArkadeScriptPublicKey(
+			signingKey.PubKey(), arkade.ArkadeScriptHash(arkadeScript),
+		)
+		closure := &arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{ownerKey.PubKey(), tweakedKey}}
+		vtxoScript := arkscript.TapscriptsVtxoScript{Closures: []arkscript.Closure{closure}}
+		tapKey, tapTree, err := vtxoScript.TapTree()
+		require.NoError(t, err)
+		pkScript, err := arkscript.P2TRScript(tapKey)
+		require.NoError(t, err)
+		leaf := finalizationTapLeaf(t, closure, tapTree)
+		prevout := &wire.TxOut{Value: 100_000, PkScript: pkScript}
+		outpoint := wire.OutPoint{Hash: chainhash.Hash{1}, Index: 0}
+
+		svc := &service{
+			signer:            signer{arkdKey},
+			deprecatedSigners: []signer{{oldArkdKey}},
+			arkdPubKey:        arkdKey.PubKey(),
+		}
+		return svc.SubmitFinalization(context.Background(), BatchFinalization{
+			Intent:       signedFinalizationIntent(t, signingKey, arkadeScript, leaf, prevout, outpoint),
+			CommitmentTx: finalizationCommitment(t, leaf, prevout, outpoint),
+		})
+	}
+
+	for _, tt := range []struct {
+		name string
+		key  *btcec.PrivateKey
+	}{
+		{"current arkd key tweaked", arkdKey},
+		{"deprecated arkd key tweaked", oldArkdKey},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			signed, err := submit(t, tt.key)
+			require.NoError(t, err)
+			require.NotNil(t, signed.CommitmentTx)
+			require.Len(t, signed.CommitmentTx.Inputs[0].TaprootScriptSpendSig, 1)
+		})
+	}
+}
+
 
 // forfeitFixture holds a signer that already approved an intent proof for a
 // single vtxo, plus the connector tree that vtxo's forfeit must use.

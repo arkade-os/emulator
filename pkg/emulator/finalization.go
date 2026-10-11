@@ -9,7 +9,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/psbt/v2"
 	"github.com/btcsuite/btcd/txscript/v2"
@@ -59,7 +58,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			if !ok {
 				continue
 			}
-			if err := association.validateFinalizationInput(forfeit, inputIndex, s.arkdPubKey); err != nil {
+			if err := association.validateFinalizationInput(forfeit, inputIndex); err != nil {
 				return nil, err
 			}
 
@@ -118,7 +117,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			continue
 		}
 		if err := association.validateFinalizationInput(
-			finalization.CommitmentTx, inputIndex, s.arkdPubKey,
+			finalization.CommitmentTx, inputIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -145,11 +144,8 @@ type signedInputAssociation struct {
 }
 
 func (a signedInputAssociation) validateFinalizationInput(
-	ptx *psbt.Packet, inputIndex int, arkdPubKey *btcec.PublicKey,
+	ptx *psbt.Packet, inputIndex int,
 ) error {
-	if !containsPubKey(a.script.ClosurePubKeys(), arkdPubKey) {
-		return fmt.Errorf("input %d: finalization leaf does not require the arkd signer", inputIndex)
-	}
 	if len(ptx.Inputs) <= inputIndex {
 		return fmt.Errorf("input %d: PSBT input index out of range", inputIndex)
 	}

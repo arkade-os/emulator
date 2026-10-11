@@ -150,7 +150,7 @@ func TestValidateIntentMessageCommitment(t *testing.T) {
 		validateIntentMessageCommitment(request, encoded), "synthetic message input")
 }
 
-func TestSubmitIntentRejectsOnchainOutputsBeforeSigning(t *testing.T) {
+func TestSubmitIntentAcceptsOnchainOutputs(t *testing.T) {
 	signerKey := newResolverPrivateKey(t)
 	arkadeScript := []byte{txscript.OP_TRUE}
 	tweaked := arkade.ComputeArkadeScriptPublicKey(
@@ -161,19 +161,20 @@ func TestSubmitIntentRejectsOnchainOutputsBeforeSigning(t *testing.T) {
 		t, []intentVtxo{owned, owned},
 		arkade.EmulatorEntry{Vin: 1, Script: arkadeScript},
 	)
+	message, _ := testRegisterMessage(t)
+	message.OnchainOutputIndexes = []int{0}
+	encoded, err := message.Encode()
+	require.NoError(t, err)
+	bindIntentProofToMessage(t, ptx, encoded)
 
 	svc := &service{signer: signer{signerKey}}
 	signed, err := svc.SubmitIntent(t.Context(), Intent{
-		Proof: intent.Proof{Packet: *ptx},
-		Message: &intent.RegisterMessage{
-			OnchainOutputIndexes: []int{0},
-		},
+		Proof:   intent.Proof{Packet: *ptx},
+		Message: message,
 	}, OffchainData{})
 
-	require.ErrorContains(t, err, "onchain outputs are not supported")
-	require.Nil(t, signed)
-	require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
-	require.Empty(t, ptx.Inputs[1].TaprootScriptSpendSig)
+	require.NoError(t, err)
+	require.NotEmpty(t, signed.Inputs[1].TaprootScriptSpendSig)
 }
 
 // TestSubmitIntentEntryResolution covers how SubmitIntent treats entries that do
