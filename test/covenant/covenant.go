@@ -323,29 +323,7 @@ func BuildRefund(p Params, vtxoMinAmount int64) ([]byte, error) {
 	if p.RecoveryRecipient == RecoveryReceiver {
 		return BuildReclaim(p, vtxoMinAmount)
 	}
-	topup := p.RefundTopup(vtxoMinAmount)
-	b := txscript.NewScriptBuilder().
-		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).AddInt64(0).AddOp(arkade.OP_EQUALVERIFY).
-		AddInt64(0).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddInt64(topup).AddOp(arkade.OP_EQUALVERIFY)
-
-	if err := pinOutput(b, 0, p.OperatorKey, topup, p.Dust); err != nil {
-		return nil, err
-	}
-
-	b.AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
-		AddInt64(p.Dust - topup).AddOp(arkade.OP_EQUALVERIFY)
-
-	if err := pinOutput(b, 1, p.SenderKey, p.Dust-topup, p.Dust); err != nil {
-		return nil, err
-	}
-
-	if p.AssetID != nil {
-		appendAssetLookup(b, 1, p.AssetID, true, true)
-		appendAssetLookup(b, 0, p.AssetID, false, true)
-		b.AddOp(arkade.OP_EQUAL)
-	}
-	return finish(b, p.AssetID != nil)
+	return buildRecovery(p, vtxoMinAmount, p.SenderKey)
 }
 
 // BuildReclaim is the post-claim backstop: the operator recovers its carrier
@@ -353,6 +331,10 @@ func BuildRefund(p Params, vtxoMinAmount int64) ([]byte, error) {
 // BuildRefund but paid to the receiver -- refunding post-claim would return the
 // asset to an already-paid sender.
 func BuildReclaim(p Params, vtxoMinAmount int64) ([]byte, error) {
+	return buildRecovery(p, vtxoMinAmount, p.ReceiverKey)
+}
+
+func buildRecovery(p Params, vtxoMinAmount int64, recipient *btcec.PublicKey) ([]byte, error) {
 	topup := p.RefundTopup(vtxoMinAmount)
 	b := txscript.NewScriptBuilder().
 		AddOp(arkade.OP_PUSHCURRENTINPUTINDEX).AddInt64(0).AddOp(arkade.OP_EQUALVERIFY).
@@ -366,7 +348,7 @@ func BuildReclaim(p Params, vtxoMinAmount int64) ([]byte, error) {
 	b.AddInt64(1).AddOp(arkade.OP_INSPECTOUTPUTVALUE).
 		AddInt64(p.Dust - topup).AddOp(arkade.OP_EQUALVERIFY)
 
-	if err := pinOutput(b, 1, p.ReceiverKey, p.Dust-topup, p.Dust); err != nil {
+	if err := pinOutput(b, 1, recipient, p.Dust-topup, p.Dust); err != nil {
 		return nil, err
 	}
 
