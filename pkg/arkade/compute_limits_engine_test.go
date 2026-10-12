@@ -1,9 +1,13 @@
 package arkade
 
 import (
+	"bytes"
 	"testing"
+	"time"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -201,6 +205,41 @@ func TestChargeOpcodeNoTaprootContextIsUnlimited(t *testing.T) {
 	vm.limits = ComputeLimits{OP_1: 0}
 
 	require.NoError(t, invokeOpcodeWithData(OP_1, nil, vm))
+}
+
+func TestTxDigestOpcodesOverLargeTx(t *testing.T) {
+	ops := []byte{OP_TXID, OP_DROP, OP_0, OP_SIGHASH, OP_DROP}
+	script := append(bytes.Repeat(ops, (MaxScriptLength-1)/len(ops)), OP_1)
+
+	witness := wire.TxWitness{}
+	for i := range 1900 {
+		witness = append(witness, bytes.Repeat([]byte{byte(i)}, txscript.MaxScriptElementSize))
+	}
+	packet, err := NewPacket(EmulatorEntry{Vin: 0, Script: script, Witness: witness})
+	require.NoError(t, err)
+	packetOut, err := extension.Extension{packet}.TxOut()
+	require.NoError(t, err)
+
+	prevout := wire.OutPoint{Hash: [32]byte{1}}
+	pkScript := append([]byte{txscript.OP_1, txscript.OP_DATA_32}, bytes.Repeat([]byte{0xaa}, 32)...)
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(wire.NewTxIn(&prevout, nil, nil))
+	tx.AddTxOut(wire.NewTxOut(10_000, pkScript))
+	tx.AddTxOut(packetOut)
+	fetcher := newTestArkPrevOutFetcher(txscript.NewMultiPrevOutFetcher(
+		map[wire.OutPoint]*wire.TxOut{prevout: wire.NewTxOut(10_000, pkScript)},
+	), nil, nil)
+
+	vm, err := NewEngine(
+		script, tx, 0, txscript.NewSigCache(10),
+		txscript.NewTxSigHashes(tx, fetcher), 10_000, fetcher,
+	)
+	require.NoError(t, err)
+	vm.taprootCtx = newTaprootExecutionCtxForLeaf(txscript.NewBaseTapLeaf([]byte{txscript.OP_TRUE}))
+
+	start := time.Now()
+	require.NoError(t, vm.Execute())
+	require.Less(t, time.Since(start), 200*time.Millisecond)
 }
 
 // limitOnlyOp1 builds an engine whose only compute limit is OP_1, with a

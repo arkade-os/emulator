@@ -2966,7 +2966,7 @@ func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
 // opcodeTxId pushes the hash of the current transaction onto the stack.
 // Stack transformation: [...] -> [... txid]
 func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
-	txHash := vm.tx.TxHash()
+	txHash := vm.txID()
 	vm.dstack.PushByteArray(txHash[:])
 	return nil
 }
