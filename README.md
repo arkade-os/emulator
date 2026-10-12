@@ -420,7 +420,7 @@ Arithmetic operands and results use the VM's minimally encoded BigNum format and
 |------|--------|-----|-------|--------|-------------|
 | OP_DIGEST | 195 | 0xc3 | data hash_type | hash | Pushes the digest of `data` under the algorithm selected by `hash_type`: `1`=SHA-256, `2`=SHA-1, `3`=RIPEMD-160, `4`=Keccak-256 (legacy/Ethereum, distinct from NIST SHA3), `5`=SHA3-256 (NIST). Any other `hash_type` fails the script. |
 | OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig message pubkey | True/false | Verifies a 64-byte compact signature against the message and public key popped from the stack. Public keys are either legacy 32-byte x-only Schnorr/secp256k1 keys, `0x10 \|\| compressed secp256k1` for ECDSA/secp256k1, or `0x11 \|\| compressed P-256` for ECDSA/P-256. ECDSA messages must be 32-byte digests. If signature is empty, pushes empty vector. |
-| OP_MERKLEBRANCHVERIFY | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. |
+| OP_MERKLEBRANCHROOT | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. `OP_MERKLEBRANCHVERIFY` is an alias. |
 
 ### Elliptic Curve Operations
 
