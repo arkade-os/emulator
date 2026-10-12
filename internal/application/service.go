@@ -102,8 +102,10 @@ func New(
 		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
 	}
 
+	// SubmitFinalization only accepts commitment txs known to arkd
 	lib, err := emulator.New(
 		secretKey, deprecatedKeys, deprecatedKeysValidUntil, arkdPubKey, computeLimits,
+		emulator.WithTrustedCommitmentTx(),
 	)
 	if err != nil {
 		return nil, err
