@@ -255,19 +255,22 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 		if idx >= len(tx.TxOut) {
 			return nil, fmt.Errorf("SIGHASH_SINGLE: no output at input index %d", idx)
 		}
-		out := tx.TxOut[idx]
 		m, err := vm.maskedTx()
 		if err != nil {
 			return nil, fmt.Errorf("arkade single-output rewrite: %w", err)
 		}
-		if m.idx == idx {
-			out = m.out
+		if m.singleOutputHash == nil {
+			out := tx.TxOut[idx]
+			if m.idx == idx {
+				out = m.out
+			}
+			h := sha256.New()
+			if err := wire.WriteTxOut(h, 0, 0, out); err != nil {
+				return nil, err
+			}
+			m.singleOutputHash = h.Sum(nil)
 		}
-		h := sha256.New()
-		if err := wire.WriteTxOut(h, 0, 0, out); err != nil {
-			return nil, err
-		}
-		sigMsg.Write(h.Sum(nil))
+		sigMsg.Write(m.singleOutputHash)
 	}
 
 	// 10. BIP342 tapscript extension (ext_flag = 1).
@@ -442,6 +445,8 @@ type maskedTx struct {
 	out         *wire.TxOut
 	idx         int
 	outputsHash []byte
+	// lazily set: SIGHASH_SINGLE digest of the output at vm.txIdx
+	singleOutputHash []byte
 }
 
 func (vm *Engine) maskedTx() (*maskedTx, error) {
