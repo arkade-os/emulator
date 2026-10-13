@@ -149,6 +149,10 @@ func TestValidateCheckpoint(t *testing.T) {
 		}
 	}
 
+	validate := func(s setup) error {
+		return validateCheckpoint(s.arkPtx, 0, s.checkpoint, s.previousOutput, s.expectedLeaf, s.unrollScript)
+	}
+
 	// forgeCheckpointOutput repoints the checkpoint and the ark input at a self
 	// consistent taproot output built from the given internal key and leaves.
 	forgeCheckpointOutput := func(
@@ -182,54 +186,55 @@ func TestValidateCheckpoint(t *testing.T) {
 
 	t.Run("valid", func(t *testing.T) {
 		setup := newSetup(t, false)
-		require.NoError(t, validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript))
+		require.NoError(t, validate(setup))
 	})
 
 	t.Run("multiple checkpoint inputs", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.UnsignedTx.AddTxIn(&wire.TxIn{})
 		setup.checkpoint.Inputs = append(setup.checkpoint.Inputs, psbt.PInput{})
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err := validate(setup)
 		require.ErrorContains(t, err, "exactly one input")
 	})
 
 	t.Run("extra checkpoint output", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.UnsignedTx.AddTxOut(&wire.TxOut{})
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err := validate(setup)
 		require.ErrorContains(t, err, "one vtxo output and one anchor output")
 	})
 
 	t.Run("checkpoint output mismatch", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.arkPtx.Inputs[0].WitnessUtxo.Value--
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err := validate(setup)
 		require.ErrorContains(t, err, "checkpoint output does not match")
 	})
 
 	t.Run("unauthenticated checkpoint input", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.Inputs[0].WitnessUtxo.Value--
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err := validate(setup)
 		require.ErrorContains(t, err, "does not match previous ark transaction")
 	})
 
 	t.Run("missing previous ark transaction", func(t *testing.T) {
 		setup := newSetup(t, false)
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, nil, setup.expectedLeaf, setup.unrollScript)
+		setup.previousOutput = nil
+		err := validate(setup)
 		require.ErrorContains(t, err, "missing authenticated previous ark output")
 	})
 
 	t.Run("substituted checkpoint leaf", func(t *testing.T) {
 		setup := newSetup(t, false)
 		setup.checkpoint.Inputs[0].TaprootLeafScript[0] = setup.foreignLeaf
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err := validate(setup)
 		require.ErrorContains(t, err, "tapleaf does not match ark input")
 	})
 
 	t.Run("unrelated checkpoint destination", func(t *testing.T) {
 		setup := newSetup(t, true)
-		err := validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err := validate(setup)
 		require.ErrorContains(t, err, "not the arkd checkpoint script")
 	})
 
@@ -245,7 +250,7 @@ func TestValidateCheckpoint(t *testing.T) {
 			txscript.NewBaseTapLeaf(setup.unrollScript), setup.expectedLeaf,
 		)
 
-		err = validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err = validate(setup)
 		require.ErrorContains(t, err, "not the arkd checkpoint script")
 	})
 
@@ -262,7 +267,7 @@ func TestValidateCheckpoint(t *testing.T) {
 			txscript.NewBaseTapLeaf(extraScript),
 		)
 
-		err = validateCheckpoint(setup.arkPtx, 0, setup.checkpoint, setup.previousOutput, setup.expectedLeaf, setup.unrollScript)
+		err = validate(setup)
 		require.ErrorContains(t, err, "not the arkd checkpoint script")
 	})
 }
@@ -402,7 +407,6 @@ func newTestSigningService(t *testing.T) (*service, OffchainTx) {
 
 	svc := &service{
 		signer:                  signer{emulatorKey},
-		arkdPubKey:              arkdKey.PubKey(),
 		arkdCheckpointTapscript: unrollScript,
 		computeLimits:           arkade.DefaultComputeLimits(),
 	}
@@ -487,7 +491,6 @@ func newSubmitTxHarness(
 	return &submitTxHarness{
 		svc: &service{
 			signer:                  signer{secretKey: signerKey},
-			arkdPubKey:              arkdKey.PubKey(),
 			arkdCheckpointTapscript: unrollScript,
 			computeLimits:           arkade.DefaultComputeLimits(),
 		},
@@ -593,13 +596,4 @@ func tweakedArkd(tweaked, _, arkd *btcec.PublicKey) []*btcec.PublicKey {
 
 func aliceArkd(_, alice, arkd *btcec.PublicKey) []*btcec.PublicKey {
 	return []*btcec.PublicKey{alice, arkd}
-}
-
-func encodePacket(t *testing.T, ptx *psbt.Packet) string {
-	t.Helper()
-
-	encoded, err := ptx.B64Encode()
-	require.NoError(t, err)
-
-	return encoded
 }

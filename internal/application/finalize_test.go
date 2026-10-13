@@ -720,13 +720,10 @@ func TestFetchOffchainData(t *testing.T) {
 func TestClose(t *testing.T) {
 	signerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
-	arkdKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
 	idx := &testIndexer{}
-	lib, err := emulator.New(signerKey, nil, nil, arkdKey.PubKey(), arkade.DefaultComputeLimits(),
-		emulator.WithArkdScripts(
-			testArkdCheckpointTapscript(t, arkdKey.PubKey()), []byte{txscript.OP_TRUE},
-		),
+	lib, err := emulator.New(
+		signerKey, nil, nil, []byte{txscript.OP_TRUE}, []byte{txscript.OP_TRUE},
+		arkade.DefaultComputeLimits(),
 	)
 	require.NoError(t, err)
 	arkd := &fakeArkd{}
@@ -808,8 +805,8 @@ func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainT
 	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevArkTx))
 
 	lib, err := emulator.New(
-		emulatorKey, nil, nil, arkdKey.PubKey(), arkade.DefaultComputeLimits(),
-		emulator.WithArkdScripts(unrollScript, []byte{txscript.OP_TRUE}),
+		emulatorKey, nil, nil, unrollScript, []byte{txscript.OP_TRUE},
+		arkade.DefaultComputeLimits(),
 	)
 	require.NoError(t, err)
 

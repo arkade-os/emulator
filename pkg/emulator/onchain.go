@@ -69,4 +69,3 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 
 	return ptx, nil
 }
-

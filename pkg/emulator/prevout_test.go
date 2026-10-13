@@ -284,8 +284,6 @@ func TestPrevOutFetcherForArkTxReconcilesCheckpointWitnessUtxo(t *testing.T) {
 func TestSubmitOnchainTxRejectsAnyOneCanPayPrevoutLie(t *testing.T) {
 	emulatorKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
-	arkdKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
 
 	const (
 		signedAmount        = int64(10_000)
@@ -346,7 +344,6 @@ func TestSubmitOnchainTxRejectsAnyOneCanPayPrevoutLie(t *testing.T) {
 
 	service := &service{
 		signer:        signer{secretKey: emulatorKey},
-		arkdPubKey:    arkdKey.PubKey(),
 		computeLimits: arkade.DefaultComputeLimits(),
 	}
 	_, err = service.SubmitOnchainTx(context.Background(), OnchainTx{Tx: packet})

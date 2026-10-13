@@ -28,7 +28,7 @@ import (
 // without an output check a legitimately approved input can be spent into any
 // transaction they like.
 func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
-	fix := newForfeitFixture(t)
+	fix := newForfeitFixture(t, true)
 
 	attackerScript := fix.randomP2TRScript(t)
 
@@ -115,7 +115,7 @@ func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
 	// plus the owner's is the whole witness, so the payout script is all that
 	// keeps the value on arkd's forfeit address
 	t.Run("payout redirected on a leaf without the arkd key", func(t *testing.T) {
-		fix := newForfeitFixtureWithoutArkdKey(t)
+		fix := newForfeitFixture(t, false)
 		forfeit := fix.buildForfeit(t, fix.vtxoPrevout, fix.connectorOutput)
 		forfeit.UnsignedTx.TxOut[0].PkScript = fix.randomP2TRScript(t)
 
@@ -169,11 +169,6 @@ func TestValidateForfeitOutputs(t *testing.T) {
 	t.Run("nil vtxo prevout is rejected", func(t *testing.T) {
 		err := validateForfeitOutputs(newForfeit(t), 0, nil, connector, forfeitPkScript)
 		require.ErrorContains(t, err, "missing vtxo prevout for input 0")
-	})
-
-	t.Run("unset arkd forfeit script is rejected", func(t *testing.T) {
-		err := validateForfeitOutputs(newForfeit(t), 0, vtxo, connector, nil)
-		require.ErrorContains(t, err, "missing arkd forfeit script")
 	})
 
 	tests := []struct {
@@ -376,8 +371,7 @@ func TestSubmitFinalizationValidatesAuthorizedInput(t *testing.T) {
 			)
 			commitment := finalizationCommitment(t, tc.commitmentLeaf, tc.commitment, outpoint)
 			svc := &service{
-				signer:     signer{emulatorKey},
-				arkdPubKey: arkdKey.PubKey(),
+				signer: signer{emulatorKey},
 			}
 
 			signed, err := svc.SubmitFinalization(context.Background(), BatchFinalization{
@@ -422,7 +416,6 @@ func TestSubmitFinalizationAcceptsTweakedArkdLeaf(t *testing.T) {
 		svc := &service{
 			signer:            signer{arkdKey},
 			deprecatedSigners: []signer{{oldArkdKey}},
-			arkdPubKey:        arkdKey.PubKey(),
 		}
 		return svc.SubmitFinalization(context.Background(), BatchFinalization{
 			Intent:       signedFinalizationIntent(t, signingKey, arkadeScript, leaf, prevout, outpoint),
@@ -462,21 +455,8 @@ type forfeitFixture struct {
 	connectorOutput   *wire.TxOut
 }
 
-func newForfeitFixture(t *testing.T) *forfeitFixture {
-	t.Helper()
-
-	return newForfeitFixtureWithLeaf(t, true)
-}
-
-// newForfeitFixtureWithoutArkdKey builds the same fixture on a leaf naming only
-// the tweaked signer key.
-func newForfeitFixtureWithoutArkdKey(t *testing.T) *forfeitFixture {
-	t.Helper()
-
-	return newForfeitFixtureWithLeaf(t, false)
-}
-
-func newForfeitFixtureWithLeaf(t *testing.T, withArkdKey bool) *forfeitFixture {
+// newForfeitFixture builds the fixture, withArkdKey adds the arkd signer key to the vtxo leaf.
+func newForfeitFixture(t *testing.T, withArkdKey bool) *forfeitFixture {
 	t.Helper()
 
 	signerKey, err := btcec.NewPrivateKey()
@@ -643,7 +623,6 @@ func (f *forfeitFixture) submit(
 
 	svc := &service{
 		signer:              signer{f.signerKey},
-		arkdPubKey:          f.arkdKey.PubKey(),
 		arkdForfeitPkScript: f.forfeitScript,
 	}
 	return svc.SubmitFinalization(t.Context(), BatchFinalization{

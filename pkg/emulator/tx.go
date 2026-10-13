@@ -215,7 +215,8 @@ func validateCheckpoint(
 	if checkpoint.UnsignedTx.TxOut[0].Value != previousOutput.Value {
 		return fmt.Errorf("checkpoint vtxo output value does not match its input")
 	}
-	expectedPkScript, err := expectedCheckpointPkScript(arkdCheckpointTapscript, expectedLeaf)
+	// the requester picks the checkpoint output, it must be the one arkd rebuilds
+	expectedPkScript, err := checkpointPkScript(arkdCheckpointTapscript, expectedLeaf)
 	if err != nil {
 		return err
 	}
@@ -233,39 +234,12 @@ func validateCheckpoint(
 	return nil
 }
 
-// expectedCheckpointPkScript rebuilds the checkpoint output as offchain.BuildTxs and arkd do: the
-// unspendable key over [unroll, spent] in that order, unroll being arkd's CSV multisig leaf.
-// Revisit if arkd publishes another unroll leaf type: a leaf commitment alone is not enough.
-func expectedCheckpointPkScript(
-	arkdCheckpointTapscript []byte, spentLeaf txscript.TapLeaf,
-) ([]byte, error) {
-	if len(arkdCheckpointTapscript) == 0 {
-		return nil, fmt.Errorf("missing arkd checkpoint tapscript")
-	}
-
-	unroll := &arkscript.CSVMultisigClosure{}
-	valid, err := unroll.Decode(arkdCheckpointTapscript)
-	if err != nil {
-		return nil, fmt.Errorf("invalid arkd checkpoint tapscript: %w", err)
-	}
-	if !valid {
-		return nil, fmt.Errorf("invalid arkd checkpoint tapscript")
-	}
-
-	spent, err := arkscript.DecodeClosure(spentLeaf.Script)
-	if err != nil {
-		return nil, fmt.Errorf("spent leaf is not a vtxo closure: %w", err)
-	}
-
-	checkpointScript := arkscript.TapscriptsVtxoScript{
-		Closures: []arkscript.Closure{unroll, spent},
-	}
-	tapKey, _, err := checkpointScript.TapTree()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build checkpoint taptree: %w", err)
-	}
-
-	return arkscript.P2TRScript(tapKey)
+// checkpointPkScript rebuilds the checkpoint output the way offchain.BuildTxs does: the unspendable
+// key over the arkd unroll leaf and the spent leaf (a two leaf branch sorts its children, order is irrelevant).
+func checkpointPkScript(arkdCheckpointTapscript []byte, spentLeaf txscript.TapLeaf) ([]byte, error) {
+	tapTree := txscript.AssembleTaprootScriptTree(txscript.NewBaseTapLeaf(arkdCheckpointTapscript), spentLeaf)
+	root := tapTree.RootNode.TapHash()
+	return arkscript.P2TRScript(txscript.ComputeTaprootOutputKey(arkscript.UnspendableKey(), root[:]))
 }
 
 func validateTaprootLeaf(input psbt.PInput, expectedLeaf txscript.TapLeaf) error {

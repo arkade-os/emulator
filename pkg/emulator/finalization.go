@@ -280,9 +280,6 @@ func validateForfeitOutputs(
 	if vtxoPrevout == nil {
 		return fmt.Errorf("missing vtxo prevout for input %d", vtxoIndex)
 	}
-	if len(forfeitPkScript) == 0 {
-		return fmt.Errorf("missing arkd forfeit script")
-	}
 
 	spentVtxo := forfeit.Inputs[vtxoIndex].WitnessUtxo
 	if spentVtxo == nil {

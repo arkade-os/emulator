@@ -108,14 +108,19 @@ func New(
 	if err != nil {
 		return nil, fmt.Errorf("invalid arkd checkpoint tapscript: %w", err)
 	}
-	forfeitPkScript, err := forfeitPkScriptFromInfo(*info)
+	network := clientlib.ToBitcoinNetwork(clientlib.NetworkFromString(info.Network))
+	forfeitAddr, err := arklib.DecodeBitcoinAddress(info.ForfeitAddress, &network)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid arkd forfeit address: %w", err)
+	}
+	forfeitPkScript, err := txscript.PayToAddrScript(forfeitAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build arkd forfeit script: %w", err)
 	}
 
 	lib, err := emulator.New(
-		secretKey, deprecatedKeys, deprecatedKeysValidUntil, arkdPubKey, computeLimits,
-		emulator.WithArkdScripts(checkpointTapscript, forfeitPkScript),
+		secretKey, deprecatedKeys, deprecatedKeysValidUntil,
+		checkpointTapscript, forfeitPkScript, computeLimits,
 	)
 	if err != nil {
 		return nil, err
@@ -133,21 +138,6 @@ func New(
 		arkdPubKey:    arkdPubKey,
 		signerPubKeys: signerPubKeys,
 	}, nil
-}
-
-// forfeitPkScriptFromInfo derives the script arkd pays its forfeits to the
-// same way the reference client does, so the signer can require a forfeit to
-// pay it before signing.
-func forfeitPkScriptFromInfo(info clientlib.Info) ([]byte, error) {
-	if info.ForfeitAddress == "" {
-		return nil, fmt.Errorf("arkd info does not include the forfeit address")
-	}
-	network := clientlib.ToBitcoinNetwork(clientlib.NetworkFromString(info.Network))
-	addr, err := arklib.DecodeBitcoinAddress(info.ForfeitAddress, &network)
-	if err != nil {
-		return nil, fmt.Errorf("invalid arkd forfeit address: %w", err)
-	}
-	return txscript.PayToAddrScript(addr)
 }
 
 // SubmitTx executes and signs arkade script for offchain tx
@@ -211,21 +201,17 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
 	}
 
-	// arkd only ever countersigns what we submitted: anything else is a
-	// different transaction, and finalizing or returning it would publish a
-	// result the arkade script was never executed against.
-	signedTxid := signed.ArkTx.UnsignedTx.TxID()
-	if arkdTxid != signedTxid {
-		return nil, fmt.Errorf("arkd returned txid %s, expected %s", arkdTxid, signedTxid)
+	// arkd must countersign the ark tx we executed the arkade script against, not another one
+	arkTxid := signed.ArkTx.UnsignedTx.TxID()
+	if arkdTxid != arkTxid {
+		return nil, fmt.Errorf("arkd returned txid %s, expected %s", arkdTxid, arkTxid)
 	}
 	finalArkPtx, err := psbt.NewFromRawBytes(strings.NewReader(finalArkTx), true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode final ark tx: %w", err)
 	}
-	if finalArkPtx.UnsignedTx.TxID() != signedTxid {
-		return nil, fmt.Errorf(
-			"arkd returned ark tx %s, expected %s", finalArkPtx.UnsignedTx.TxID(), signedTxid,
-		)
+	if finalTxid := finalArkPtx.UnsignedTx.TxID(); finalTxid != arkTxid {
+		return nil, fmt.Errorf("arkd returned ark tx %s, expected %s", finalTxid, arkTxid)
 	}
 
 	// combine arkd checkpoint signatures with the rest of the checkpoint signatures
@@ -266,10 +252,10 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		finalEncodedCheckpoints = append(finalEncodedCheckpoints, encoded)
 	}
 
-	log.WithField("txid", arkdTxid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
+	log.WithField("txid", arkTxid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
 
 	// TODO: if retry fails, persist retry task in background queue
-	if err := s.retryFinalize(ctx, arkdTxid, finalEncodedCheckpoints); err != nil {
+	if err := s.retryFinalize(ctx, arkTxid, finalEncodedCheckpoints); err != nil {
 		return nil, err
 	}
 
