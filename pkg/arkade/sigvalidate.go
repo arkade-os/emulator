@@ -200,11 +200,11 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 	// SINGLE-specific per-output digest goes in further below.
 	sigHashMode := hashType & sigHashMask
 	if sigHashMode != txscript.SigHashSingle && sigHashMode != txscript.SigHashNone {
-		outputsHash, err := arkadeOutputsHash(tx)
+		m, err := vm.maskedTx()
 		if err != nil {
 			return nil, fmt.Errorf("arkade sha_outputs: %w", err)
 		}
-		sigMsg.Write(outputsHash)
+		sigMsg.Write(m.outputsHash)
 	}
 
 	// 6. spend_type = 2*ext_flag + annex_present. ext_flag is always 1 in
@@ -255,19 +255,22 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 		if idx >= len(tx.TxOut) {
 			return nil, fmt.Errorf("SIGHASH_SINGLE: no output at input index %d", idx)
 		}
-		out := tx.TxOut[idx]
-		masked, maskedIdx, err := maskExtensionOutput(tx)
+		m, err := vm.maskedTx()
 		if err != nil {
 			return nil, fmt.Errorf("arkade single-output rewrite: %w", err)
 		}
-		if maskedIdx == idx {
-			out = masked
+		if m.singleOutputHash == nil {
+			out := tx.TxOut[idx]
+			if m.idx == idx {
+				out = m.out
+			}
+			h := sha256.New()
+			if err := wire.WriteTxOut(h, 0, 0, out); err != nil {
+				return nil, err
+			}
+			m.singleOutputHash = h.Sum(nil)
 		}
-		h := sha256.New()
-		if err := wire.WriteTxOut(h, 0, 0, out); err != nil {
-			return nil, err
-		}
-		sigMsg.Write(h.Sum(nil))
+		sigMsg.Write(m.singleOutputHash)
 	}
 
 	// 10. BIP342 tapscript extension (ext_flag = 1).
@@ -436,4 +439,28 @@ func (v *tapscriptSigVerifier) Verify() bool {
 		return false
 	}
 	return v.verifySig(sigHash)
+}
+
+type maskedTx struct {
+	out         *wire.TxOut
+	idx         int
+	outputsHash []byte
+	// lazily set: SIGHASH_SINGLE digest of the output at vm.txIdx
+	singleOutputHash []byte
+}
+
+func (vm *Engine) maskedTx() (*maskedTx, error) {
+	if vm.masked != nil {
+		return vm.masked, nil
+	}
+	out, idx, err := maskExtensionOutput(&vm.tx)
+	if err != nil {
+		return nil, err
+	}
+	outputsHash, err := arkadeOutputsHash(&vm.tx)
+	if err != nil {
+		return nil, err
+	}
+	vm.masked = &maskedTx{out: out, idx: idx, outputsHash: outputsHash}
+	return vm.masked, nil
 }

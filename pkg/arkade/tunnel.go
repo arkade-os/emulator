@@ -89,7 +89,7 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 	}
 	if flags&TunnelAssets != 0 {
 		if err := tunnelAssets(
-			vm.tx.TxHash(), vm.assetPacket, vm.txIdx, int(outputIndex), exceptions,
+			vm.txID(), vm.assetPacket, vm.txIdx, int(outputIndex), exceptions,
 		); err != nil {
 			return err
 		}

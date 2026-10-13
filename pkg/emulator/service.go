@@ -77,7 +77,8 @@ type service struct {
 	deprecatedKeysValidUntil *time.Time
 	publicKey                string
 	deprecatedPublicKeys     []string
-	arkdPubKey               *btcec.PublicKey
+	arkdCheckpointTapscript  []byte
+	arkdForfeitPkScript      []byte
 	computeLimits            arkade.ComputeLimits
 	trustedCommitmentTx      bool
 }
@@ -108,16 +109,23 @@ func (s *service) activeDeprecatedSigners() []signer {
 }
 
 // New builds a signing Service.
+// arkdCheckpointTapscript and arkdForfeitPkScript come from arkd's GetInfo, they bind the outputs
+// of the checkpoint and forfeit txs the requester submits.
 func New(
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
-	arkdPubKey *btcec.PublicKey, computeLimits arkade.ComputeLimits, opts ...Option,
+	arkdCheckpointTapscript, arkdForfeitPkScript []byte, computeLimits arkade.ComputeLimits,
+	opts ...Option,
 ) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
 
-	if arkdPubKey == nil {
-		return nil, fmt.Errorf("arkd public key is required")
+	if len(arkdCheckpointTapscript) == 0 {
+		return nil, fmt.Errorf("arkd checkpoint tapscript is required")
+	}
+
+	if len(arkdForfeitPkScript) == 0 {
+		return nil, fmt.Errorf("arkd forfeit script is required")
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
@@ -137,7 +145,8 @@ func New(
 		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
 		publicKey:                publicKey,
 		deprecatedPublicKeys:     deprecatedPublicKeys,
-		arkdPubKey:               arkdPubKey,
+		arkdCheckpointTapscript:  arkdCheckpointTapscript,
+		arkdForfeitPkScript:      arkdForfeitPkScript,
 		computeLimits:            computeLimits,
 	}
 	for _, opt := range opts {

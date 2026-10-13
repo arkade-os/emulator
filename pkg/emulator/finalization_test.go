@@ -28,7 +28,7 @@ import (
 // without an output check a legitimately approved input can be spent into any
 // transaction they like.
 func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
-	fix := newForfeitFixture(t)
+	fix := newForfeitFixture(t, true)
 
 	attackerScript := fix.randomP2TRScript(t)
 
@@ -111,6 +111,19 @@ func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
 		require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 	})
 
+	// on a leaf that does not name arkd's plain key the emulator's signature
+	// plus the owner's is the whole witness, so the payout script is all that
+	// keeps the value on arkd's forfeit address
+	t.Run("payout redirected on a leaf without the arkd key", func(t *testing.T) {
+		fix := newForfeitFixture(t, false)
+		forfeit := fix.buildForfeit(t, fix.vtxoPrevout, fix.connectorOutput)
+		forfeit.UnsignedTx.TxOut[0].PkScript = fix.randomP2TRScript(t)
+
+		_, err := fix.submit(t, forfeit)
+		require.ErrorContains(t, err, "output 0 does not pay the arkd forfeit script")
+		require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
+	})
+
 	t.Run("connector outside the tree", func(t *testing.T) {
 		bogusConnector := wire.OutPoint{Hash: chainhash.Hash{0x99}, Index: 0}
 		forfeit, err := tree.BuildForfeitTx(
@@ -132,6 +145,7 @@ func TestSubmitFinalizationValidatesForfeitOutputs(t *testing.T) {
 func TestValidateForfeitOutputs(t *testing.T) {
 	vtxo := &wire.TxOut{Value: 100_000, PkScript: []byte{txscript.OP_TRUE}}
 	connector := &wire.TxOut{Value: 450, PkScript: []byte{txscript.OP_TRUE}}
+	forfeitPkScript := []byte{txscript.OP_TRUE}
 
 	newForfeit := func(t *testing.T) *psbt.Packet {
 		t.Helper()
@@ -141,7 +155,7 @@ func TestValidateForfeitOutputs(t *testing.T) {
 		tx.AddTxIn(&wire.TxIn{})
 		tx.AddTxOut(&wire.TxOut{
 			Value:    vtxo.Value + connector.Value - txutils.ANCHOR_VALUE,
-			PkScript: []byte{txscript.OP_TRUE},
+			PkScript: forfeitPkScript,
 		})
 		tx.AddTxOut(txutils.AnchorOutput())
 		ptx, err := psbt.NewFromUnsignedTx(tx)
@@ -153,7 +167,7 @@ func TestValidateForfeitOutputs(t *testing.T) {
 
 	// not a packet mutation: the vtxo prevout argument itself is missing
 	t.Run("nil vtxo prevout is rejected", func(t *testing.T) {
-		err := validateForfeitOutputs(newForfeit(t), 0, nil, connector)
+		err := validateForfeitOutputs(newForfeit(t), 0, nil, connector, forfeitPkScript)
 		require.ErrorContains(t, err, "missing vtxo prevout for input 0")
 	})
 
@@ -219,6 +233,13 @@ func TestValidateForfeitOutputs(t *testing.T) {
 			},
 			wantErr: "output 0 pays",
 		},
+		{
+			name: "payout redirected off the arkd forfeit script",
+			mutate: func(ptx *psbt.Packet) {
+				ptx.UnsignedTx.TxOut[0].PkScript = []byte{txscript.OP_RETURN}
+			},
+			wantErr: "output 0 does not pay the arkd forfeit script",
+		},
 	}
 
 	for _, tc := range tests {
@@ -228,7 +249,7 @@ func TestValidateForfeitOutputs(t *testing.T) {
 				tc.mutate(forfeit)
 			}
 
-			err := validateForfeitOutputs(forfeit, 0, vtxo, connector)
+			err := validateForfeitOutputs(forfeit, 0, vtxo, connector, forfeitPkScript)
 			if tc.wantErr == "" {
 				require.NoError(t, err)
 				return
@@ -351,7 +372,6 @@ func TestSubmitFinalizationValidatesAuthorizedInput(t *testing.T) {
 			commitment := finalizationCommitment(t, tc.commitmentLeaf, tc.commitment, outpoint)
 			svc := &service{
 				signer:              signer{emulatorKey},
-				arkdPubKey:          arkdKey.PubKey(),
 				trustedCommitmentTx: true,
 			}
 
@@ -397,7 +417,6 @@ func TestSubmitFinalizationAcceptsTweakedArkdLeaf(t *testing.T) {
 		svc := &service{
 			signer:              signer{arkdKey},
 			deprecatedSigners:   []signer{{oldArkdKey}},
-			arkdPubKey:          arkdKey.PubKey(),
 			trustedCommitmentTx: true,
 		}
 		return svc.SubmitFinalization(context.Background(), BatchFinalization{
@@ -423,10 +442,10 @@ func TestSubmitFinalizationAcceptsTweakedArkdLeaf(t *testing.T) {
 }
 
 func TestSubmitFinalizationChecksBatchUnlessTrusted(t *testing.T) {
-	fix := newForfeitFixture(t)
+	fix := newForfeitFixture(t, true)
 	forfeit := fix.buildForfeit(t, fix.vtxoPrevout, fix.connectorOutput)
 
-	svc := &service{signer: signer{fix.signerKey}, arkdPubKey: fix.arkdKey.PubKey()}
+	svc := &service{signer: signer{fix.signerKey}}
 	_, err := svc.SubmitFinalization(t.Context(), BatchFinalization{
 		Intent:        fix.intent,
 		Forfeits:      []*psbt.Packet{forfeit},
@@ -609,7 +628,8 @@ type forfeitFixture struct {
 	connectorOutput   *wire.TxOut
 }
 
-func newForfeitFixture(t *testing.T) *forfeitFixture {
+// newForfeitFixture builds the fixture, withArkdKey adds the arkd signer key to the vtxo leaf.
+func newForfeitFixture(t *testing.T, withArkdKey bool) *forfeitFixture {
 	t.Helper()
 
 	signerKey, err := btcec.NewPrivateKey()
@@ -621,11 +641,13 @@ func newForfeitFixture(t *testing.T) *forfeitFixture {
 	arkadeScript := []byte{txscript.OP_TRUE}
 	scriptHash := arkade.ArkadeScriptHash(arkadeScript)
 
-	// the finalization leaf must require the arkd signer, see validateFinalizationInput
-	closure := arkscript.MultisigClosure{PubKeys: []*btcec.PublicKey{
+	pubKeys := []*btcec.PublicKey{
 		arkade.ComputeArkadeScriptPublicKey(signerKey.PubKey(), scriptHash),
-		arkdKey.PubKey(),
-	}}
+	}
+	if withArkdKey {
+		pubKeys = append(pubKeys, arkdKey.PubKey())
+	}
+	closure := arkscript.MultisigClosure{PubKeys: pubKeys}
 	vtxoScript := arkscript.TapscriptsVtxoScript{
 		Closures: []arkscript.Closure{&closure},
 	}
@@ -774,7 +796,7 @@ func (f *forfeitFixture) submit(
 
 	svc := &service{
 		signer:              signer{f.signerKey},
-		arkdPubKey:          f.arkdKey.PubKey(),
+		arkdForfeitPkScript: f.forfeitScript,
 		trustedCommitmentTx: true,
 	}
 	return svc.SubmitFinalization(t.Context(), BatchFinalization{
