@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
@@ -24,6 +27,13 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 	// arkade script execution that justified it.
 	if finalization.CommitmentTx == nil {
 		return nil, fmt.Errorf("commitment tx is required")
+	}
+	if !s.trustedCommitmentTx {
+		if err := validateBatchPaysIntent(
+			finalization.Intent, finalization.CommitmentTx, finalization.VtxoTree,
+		); err != nil {
+			return nil, fmt.Errorf("batch does not pay the intent: %w", err)
+		}
 	}
 
 	signedInputs, err := getSignedInputAssociations(
@@ -357,4 +367,74 @@ func leafOutput(tree *tree.TxTree, outpoint wire.OutPoint) *wire.TxOut {
 	}
 
 	return output
+}
+
+// validateBatchPaysIntent checks the batch pays every output of the register
+// intent proof, the outputs its arkade scripts were executed against: onchain
+// ones in the commitment tx, offchain ones in a leaf of the vtxo tree rooted in it.
+func validateBatchPaysIntent(
+	request Intent, commitmentTx *psbt.Packet, vtxoTree *tree.TxTree,
+) error {
+	message, ok := request.Message.(*intent.RegisterMessage)
+	if !ok {
+		return fmt.Errorf("expected a register intent message, got %T", request.Message)
+	}
+	encodedMessage, err := message.Encode()
+	if err != nil {
+		return fmt.Errorf("failed to encode intent message: %w", err)
+	}
+	if err := validateIntentMessageCommitment(request, encodedMessage); err != nil {
+		return fmt.Errorf("intent message is not committed by the proof: %w", err)
+	}
+	onchain := countTxOuts(commitmentTx.UnsignedTx.TxOut)
+	offchain := make(map[txOutKey]int)
+	if vtxoTree != nil {
+		if vtxoTree.Root == nil || len(vtxoTree.Root.UnsignedTx.TxIn) != 1 {
+			return fmt.Errorf("invalid vtxo tree root")
+		}
+		root := vtxoTree.Root.UnsignedTx.TxIn[0].PreviousOutPoint
+		if root.Hash != commitmentTx.UnsignedTx.TxHash() ||
+			int(root.Index) >= len(commitmentTx.UnsignedTx.TxOut) {
+			return fmt.Errorf("vtxo tree is not rooted in the commitment tx")
+		}
+		for _, leaf := range vtxoTree.Leaves() {
+			for key, n := range countTxOuts(leaf.UnsignedTx.TxOut) {
+				offchain[key] += n
+			}
+		}
+	}
+
+	for i, out := range request.Proof.UnsignedTx.TxOut {
+		// the extension and the placeholder of a proof without outputs pay no one
+		if extension.IsExtension(out.PkScript) ||
+			(out.Value == 0 && bytes.Equal(out.PkScript, []byte{txscript.OP_RETURN})) {
+			continue
+		}
+		paid := offchain
+		if slices.Contains(message.OnchainOutputIndexes, i) {
+			paid = onchain
+		}
+		key := txOutKey{out.Value, string(out.PkScript)}
+		if paid[key] == 0 {
+			return fmt.Errorf("output %d is not paid", i)
+		}
+		paid[key]--
+	}
+	return nil
+}
+
+type txOutKey struct {
+	value    int64
+	pkScript string
+}
+
+func countTxOuts(outs []*wire.TxOut) map[txOutKey]int {
+	counts := make(map[txOutKey]int, len(outs))
+	for _, out := range outs {
+		if bytes.Equal(out.PkScript, txutils.ANCHOR_PKSCRIPT) {
+			continue
+		}
+		counts[txOutKey{out.Value, string(out.PkScript)}]++
+	}
+	return counts
 }

@@ -49,7 +49,9 @@ type BatchFinalization struct {
 	Intent        Intent
 	Forfeits      []*psbt.Packet
 	ConnectorTree *tree.TxTree
-	CommitmentTx  *psbt.Packet
+	// VtxoTree must pay the intent's offchain outputs, see WithTrustedCommitmentTx.
+	VtxoTree     *tree.TxTree
+	CommitmentTx *psbt.Packet
 }
 
 type SignedBatchFinalization struct {
@@ -78,6 +80,15 @@ type service struct {
 	arkdCheckpointTapscript  []byte
 	arkdForfeitPkScript      []byte
 	computeLimits            arkade.ComputeLimits
+	trustedCommitmentTx      bool
+}
+
+type Option func(*service)
+
+// WithTrustedCommitmentTx is for callers that only finalize commitment txs
+// known to arkd: SubmitFinalization then trusts the batch pays the intent.
+func WithTrustedCommitmentTx() Option {
+	return func(s *service) { s.trustedCommitmentTx = true }
 }
 
 // activeDeprecatedSigners returns the deprecated signers usable for the
@@ -103,6 +114,7 @@ func (s *service) activeDeprecatedSigners() []signer {
 func New(
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
 	arkdCheckpointTapscript, arkdForfeitPkScript []byte, computeLimits arkade.ComputeLimits,
+	opts ...Option,
 ) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
@@ -127,7 +139,7 @@ func New(
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	return &service{
+	svc := &service{
 		signer:                   signer{secretKey},
 		deprecatedSigners:        deprecatedSigners,
 		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
@@ -136,7 +148,11 @@ func New(
 		arkdCheckpointTapscript:  arkdCheckpointTapscript,
 		arkdForfeitPkScript:      arkdForfeitPkScript,
 		computeLimits:            computeLimits,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc, nil
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {

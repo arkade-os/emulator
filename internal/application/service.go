@@ -121,6 +121,7 @@ func New(
 	lib, err := emulator.New(
 		secretKey, deprecatedKeys, deprecatedKeysValidUntil,
 		checkpointTapscript, forfeitPkScript, computeLimits,
+		emulator.WithTrustedCommitmentTx(),
 	)
 	if err != nil {
 		return nil, err
