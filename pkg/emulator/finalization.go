@@ -373,7 +373,7 @@ func validateBatchPaysIntent(
 ) error {
 	message, ok := request.Message.(*intent.RegisterMessage)
 	if !ok {
-		return fmt.Errorf("expected a register intent message")
+		return fmt.Errorf("expected a register intent message, got %T", request.Message)
 	}
 	encodedMessage, err := message.Encode()
 	if err != nil {
@@ -427,6 +427,9 @@ type txOutKey struct {
 func countTxOuts(outs []*wire.TxOut) map[txOutKey]int {
 	counts := make(map[txOutKey]int, len(outs))
 	for _, out := range outs {
+		if bytes.Equal(out.PkScript, txutils.ANCHOR_PKSCRIPT) {
+			continue
+		}
 		counts[txOutKey{out.Value, string(out.PkScript)}]++
 	}
 	return counts

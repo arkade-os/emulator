@@ -511,6 +511,20 @@ func TestValidateBatchPaysIntent(t *testing.T) {
 			wantErr:       "output 1 is not paid",
 		},
 		{
+			name:          "offchain output with no vtxo tree",
+			message:       offchain,
+			intentOutputs: []*wire.TxOut{alice},
+			commitment:    []*wire.TxOut{alice},
+			wantErr:       "output 0 is not paid",
+		},
+		{
+			name:          "anchor is not a payment",
+			message:       onchain,
+			intentOutputs: []*wire.TxOut{txutils.AnchorOutput()},
+			commitment:    []*wire.TxOut{txutils.AnchorOutput()},
+			wantErr:       "output 0 is not paid",
+		},
+		{
 			name:          "message not committed by the proof",
 			message:       offchain,
 			intentOutputs: []*wire.TxOut{alice},
