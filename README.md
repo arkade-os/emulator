@@ -198,8 +198,6 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
 
 Validates and signs the inputs of a plain Bitcoin transaction whose tapscripts contain the emulator's tweaked key (e.g. a VTXO unrolled on-chain). Each input may carry an optional `PrevoutTxField` PSBT unknown field (key `"prevouttx"`) holding the raw previous transaction, required only by Arkade opcodes that introspect it.
 
-Inputs whose tapscript closure also contains the `arkd` signer pubkey are rejected — those must go through [`SubmitTx`](#submittx) so checkpoint and forfeit checks are enforced.
-
 **Endpoint**: `POST /v1/onchain-tx`
 
 **Request**:
