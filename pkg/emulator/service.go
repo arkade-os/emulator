@@ -49,7 +49,9 @@ type BatchFinalization struct {
 	Intent        Intent
 	Forfeits      []*psbt.Packet
 	ConnectorTree *tree.TxTree
-	CommitmentTx  *psbt.Packet
+	// VtxoTree must pay the intent's offchain outputs, see WithTrustedCommitmentTx.
+	VtxoTree     *tree.TxTree
+	CommitmentTx *psbt.Packet
 }
 
 type SignedBatchFinalization struct {
@@ -75,8 +77,18 @@ type service struct {
 	deprecatedKeysValidUntil *time.Time
 	publicKey                string
 	deprecatedPublicKeys     []string
-	arkdPubKey               *btcec.PublicKey
+	arkdCheckpointTapscript  []byte
+	arkdForfeitPkScript      []byte
 	computeLimits            arkade.ComputeLimits
+	trustedCommitmentTx      bool
+}
+
+type Option func(*service)
+
+// WithTrustedCommitmentTx is for callers that only finalize commitment txs
+// known to arkd: SubmitFinalization then trusts the batch pays the intent.
+func WithTrustedCommitmentTx() Option {
+	return func(s *service) { s.trustedCommitmentTx = true }
 }
 
 // activeDeprecatedSigners returns the deprecated signers usable for the
@@ -97,16 +109,23 @@ func (s *service) activeDeprecatedSigners() []signer {
 }
 
 // New builds a signing Service.
+// arkdCheckpointTapscript and arkdForfeitPkScript come from arkd's GetInfo, they bind the outputs
+// of the checkpoint and forfeit txs the requester submits.
 func New(
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
-	arkdPubKey *btcec.PublicKey, computeLimits arkade.ComputeLimits,
+	arkdCheckpointTapscript, arkdForfeitPkScript []byte, computeLimits arkade.ComputeLimits,
+	opts ...Option,
 ) (Service, error) {
 	if secretKey == nil {
 		return nil, fmt.Errorf("current signer key is required")
 	}
 
-	if arkdPubKey == nil {
-		return nil, fmt.Errorf("arkd public key is required")
+	if len(arkdCheckpointTapscript) == 0 {
+		return nil, fmt.Errorf("arkd checkpoint tapscript is required")
+	}
+
+	if len(arkdForfeitPkScript) == 0 {
+		return nil, fmt.Errorf("arkd forfeit script is required")
 	}
 
 	publicKey := hex.EncodeToString(secretKey.PubKey().SerializeCompressed())
@@ -120,15 +139,20 @@ func New(
 		deprecatedPublicKeys = append(deprecatedPublicKeys, hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed()))
 	}
 
-	return &service{
+	svc := &service{
 		signer:                   signer{secretKey},
 		deprecatedSigners:        deprecatedSigners,
 		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
 		publicKey:                publicKey,
 		deprecatedPublicKeys:     deprecatedPublicKeys,
-		arkdPubKey:               arkdPubKey,
+		arkdCheckpointTapscript:  arkdCheckpointTapscript,
+		arkdForfeitPkScript:      arkdForfeitPkScript,
 		computeLimits:            computeLimits,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc, nil
 }
 
 func (s *service) GetInfo(ctx context.Context) (*Info, error) {

@@ -35,7 +35,7 @@ func opcodeInspectAssetGroupAssetId(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "group index out of range")
 	}
 
-	id, err := resolveAssetID(vm.tx.TxHash(), int(k), vm.assetPacket[int(k)])
+	id, err := resolveAssetID(vm.txID(), int(k), vm.assetPacket[int(k)])
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func opcodeInspectAssetGroupCtrl(op *opcode, data []byte, vm *Engine) error {
 		if k >= len(vm.assetPacket) {
 			return scriptError(txscript.ErrInvalidStackOperation, "control asset group index out of range")
 		}
-		id, err := resolveAssetID(vm.tx.TxHash(), k, vm.assetPacket[k])
+		id, err := resolveAssetID(vm.txID(), k, vm.assetPacket[k])
 		if err != nil {
 			return err
 		}
@@ -110,7 +110,7 @@ func opcodeFindAssetGroupByAssetId(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	txHash := vm.tx.TxHash()
+	txHash := vm.txID()
 	for k, group := range vm.assetPacket {
 		id, err := resolveAssetID(txHash, k, group)
 		if err != nil {
@@ -345,7 +345,7 @@ func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "asset index out of range")
 	}
 
-	txHash := vm.tx.TxHash()
+	txHash := vm.txID()
 	idx := 0
 
 	for k, group := range vm.assetPacket {
@@ -390,7 +390,7 @@ func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	txHash := vm.tx.TxHash()
+	txHash := vm.txID()
 
 	for k, group := range vm.assetPacket {
 		id, err := resolveAssetID(txHash, k, group)
@@ -466,7 +466,7 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "asset index out of range")
 	}
 
-	txHash := vm.tx.TxHash()
+	txHash := vm.txID()
 	idx := 0
 
 	for k, group := range vm.assetPacket {
@@ -513,7 +513,7 @@ func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 		return err
 	}
 
-	txHash := vm.tx.TxHash()
+	txHash := vm.txID()
 
 	for k, group := range vm.assetPacket {
 		id, err := resolveAssetID(txHash, k, group)

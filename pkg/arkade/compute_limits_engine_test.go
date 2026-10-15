@@ -1,9 +1,13 @@
 package arkade
 
 import (
+	"bytes"
 	"testing"
+	"time"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -201,6 +205,71 @@ func TestChargeOpcodeNoTaprootContextIsUnlimited(t *testing.T) {
 	vm.limits = ComputeLimits{OP_1: 0}
 
 	require.NoError(t, invokeOpcodeWithData(OP_1, nil, vm))
+}
+
+func TestTxDigestOpcodesOverLargeTx(t *testing.T) {
+	largeWitness := wire.TxWitness{}
+	for i := range 1900 {
+		largeWitness = append(largeWitness, bytes.Repeat([]byte{byte(i)}, txscript.MaxScriptElementSize))
+	}
+
+	for _, tc := range []struct {
+		name       string
+		sighashOp  byte
+		entryCount int
+		witness    wire.TxWitness
+	}{
+		{
+			name:       "sighash_default",
+			sighashOp:  OP_0, // SIGHASH_DEFAULT
+			entryCount: 1,
+			witness:    largeWitness,
+		},
+		{
+			name:      "sighash_single",
+			sighashOp: OP_3, // SIGHASH_SINGLE
+			// Many scripts keep the extension output large after witness masking.
+			entryCount: 75,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			digestOps := []byte{OP_TXID, OP_DROP, tc.sighashOp, OP_SIGHASH, OP_DROP}
+			repetitions := (MaxScriptLength - 1) / len(digestOps)
+			script := append(bytes.Repeat(digestOps, repetitions), OP_1)
+
+			pkScript := append([]byte{txscript.OP_1, txscript.OP_DATA_32}, bytes.Repeat([]byte{0xaa}, 32)...)
+			tx := wire.NewMsgTx(2)
+			prevouts := make(map[wire.OutPoint]*wire.TxOut)
+			entries := make([]EmulatorEntry, tc.entryCount)
+			for i := range tc.entryCount {
+				entries[i] = EmulatorEntry{Vin: uint16(i), Script: script}
+				prevout := wire.OutPoint{Hash: [32]byte{byte(i + 1)}}
+				tx.AddTxIn(wire.NewTxIn(&prevout, nil, nil))
+				prevouts[prevout] = wire.NewTxOut(10_000, pkScript)
+			}
+			entries[0].Witness = tc.witness
+			packet, err := NewPacket(entries...)
+			require.NoError(t, err)
+			packetOut, err := extension.Extension{packet}.TxOut()
+			require.NoError(t, err)
+
+			// Input zero's SIGHASH_SINGLE must commit to the extension output.
+			tx.AddTxOut(packetOut)
+			tx.AddTxOut(wire.NewTxOut(10_000*int64(tc.entryCount), pkScript))
+			fetcher := newTestArkPrevOutFetcher(txscript.NewMultiPrevOutFetcher(prevouts), nil, nil)
+
+			vm, err := NewEngine(
+				script, tx, 0, txscript.NewSigCache(10),
+				txscript.NewTxSigHashes(tx, fetcher), 10_000, fetcher,
+			)
+			require.NoError(t, err)
+			vm.taprootCtx = newTaprootExecutionCtxForLeaf(txscript.NewBaseTapLeaf([]byte{txscript.OP_TRUE}))
+
+			start := time.Now()
+			require.NoError(t, vm.Execute())
+			require.Less(t, time.Since(start), 200*time.Millisecond)
+		})
+	}
 }
 
 // limitOnlyOp1 builds an engine whose only compute limit is OP_1, with a
