@@ -9,6 +9,7 @@ import (
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -115,6 +116,50 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 		})
 		requireGenericInternal(t, err)
 	})
+}
+
+// refusingService fails every script-executing call the way the engine does when
+// a covenant does not hold.
+type refusingService struct{ failingService }
+
+var refusal = fmt.Errorf(
+	"failed to execute arkade script: %w vin=%d",
+	txscript.Error{ErrorCode: txscript.ErrVerify, Description: "OP_VERIFY failed"}, 0,
+)
+
+func (refusingService) SubmitTx(
+	context.Context, emulator.OffchainTx,
+) (*emulator.OffchainTx, error) {
+	return nil, refusal
+}
+
+func (refusingService) SubmitIntent(context.Context, emulator.Intent) (*psbt.Packet, error) {
+	return nil, refusal
+}
+
+func (refusingService) SubmitOnchainTx(context.Context, emulator.OnchainTx) (*psbt.Packet, error) {
+	return nil, refusal
+}
+
+func TestScriptRefusalsNameTheFailure(t *testing.T) {
+	h := New("test", refusingService{})
+	ctx := context.Background()
+	ptx := newProofB64(t)
+
+	requireRefusal := func(t *testing.T, err error) {
+		t.Helper()
+		st, ok := status.FromError(err)
+		require.True(t, ok, "expected a grpc status error, got %v", err)
+		require.Equal(t, codes.FailedPrecondition, st.Code())
+		require.Contains(t, st.Message(), "OP_VERIFY failed vin=0")
+	}
+
+	_, err := h.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{ArkTx: ptx, CheckpointTxs: []string{ptx}})
+	requireRefusal(t, err)
+	_, err = h.SubmitIntent(ctx, &emulatorv1.SubmitIntentRequest{Intent: newIntentProto(t)})
+	requireRefusal(t, err)
+	_, err = h.SubmitOnchainTx(ctx, &emulatorv1.SubmitOnchainTxRequest{Tx: ptx})
+	requireRefusal(t, err)
 }
 
 // TestValidationErrorsStayDescriptive pins the other half of the fix: errors a
