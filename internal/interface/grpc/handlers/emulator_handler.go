@@ -40,6 +40,7 @@ var verdicts = map[txscript.ErrorCode]bool{
 func serviceError(err error, what string) error {
 	var refused txscript.Error
 	if errors.As(err, &refused) && verdicts[refused.ErrorCode] {
+		log.WithError(err).Debug(what)
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	log.WithError(err).Error(what)
