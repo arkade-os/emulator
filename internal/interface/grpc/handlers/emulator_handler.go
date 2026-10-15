@@ -23,12 +23,23 @@ import (
 // legitimate caller can fix its request.
 const internalErrMsg = "internal error"
 
-// serviceError names a covenant the request does not satisfy, which the caller can
-// fix (an engine error only describes the script it submitted); anything else stays
-// opaque.
+// verdicts are the engine errors that only judge the submitted script. Other
+// txscript errors can describe the engine's own state, so they stay opaque.
+var verdicts = map[txscript.ErrorCode]bool{
+	txscript.ErrVerify:              true,
+	txscript.ErrEqualVerify:         true,
+	txscript.ErrNumEqualVerify:      true,
+	txscript.ErrCheckSigVerify:      true,
+	txscript.ErrEvalFalse:           true,
+	txscript.ErrUnsatisfiedLockTime: true,
+	txscript.ErrNullFail:            true,
+}
+
+// serviceError names the covenant check a request failed, which the caller can
+// fix; anything else stays opaque.
 func serviceError(err error, what string) error {
 	var refused txscript.Error
-	if errors.As(err, &refused) {
+	if errors.As(err, &refused) && verdicts[refused.ErrorCode] {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	log.WithError(err).Error(what)

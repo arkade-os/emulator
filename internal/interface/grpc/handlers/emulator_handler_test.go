@@ -118,48 +118,56 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	})
 }
 
-// refusingService fails every script-executing call the way the engine does when
-// a covenant does not hold.
-type refusingService struct{ failingService }
+// scriptService fails every script-executing call with inner, wrapped the way each
+// producer in pkg/emulator wraps it.
+type scriptService struct {
+	failingService
+	inner txscript.Error
+}
 
-var refusal = fmt.Errorf(
-	"failed to execute arkade script: %w vin=%d",
-	txscript.Error{ErrorCode: txscript.ErrVerify, Description: "OP_VERIFY failed"}, 0,
-)
-
-func (refusingService) SubmitTx(
+func (s scriptService) SubmitTx(
 	context.Context, emulator.OffchainTx,
 ) (*emulator.OffchainTx, error) {
-	return nil, refusal
+	return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", s.inner, 0)
 }
 
-func (refusingService) SubmitIntent(context.Context, emulator.Intent) (*psbt.Packet, error) {
-	return nil, refusal
+func (s scriptService) SubmitIntent(context.Context, emulator.Intent) (*psbt.Packet, error) {
+	return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", 0, s.inner)
 }
 
-func (refusingService) SubmitOnchainTx(context.Context, emulator.OnchainTx) (*psbt.Packet, error) {
-	return nil, refusal
+func (s scriptService) SubmitOnchainTx(context.Context, emulator.OnchainTx) (*psbt.Packet, error) {
+	return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", s.inner, 0)
+}
+
+func submitAll(t *testing.T, h *handler) []error {
+	t.Helper()
+	ctx := context.Background()
+	ptx := newProofB64(t)
+	_, errTx := h.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{ArkTx: ptx, CheckpointTxs: []string{ptx}})
+	_, errIntent := h.SubmitIntent(ctx, &emulatorv1.SubmitIntentRequest{Intent: newIntentProto(t)})
+	_, errOnchain := h.SubmitOnchainTx(ctx, &emulatorv1.SubmitOnchainTxRequest{Tx: ptx})
+	return []error{errTx, errIntent, errOnchain}
 }
 
 func TestScriptRefusalsNameTheFailure(t *testing.T) {
-	h := New("test", refusingService{})
-	ctx := context.Background()
-	ptx := newProofB64(t)
-
-	requireRefusal := func(t *testing.T, err error) {
-		t.Helper()
+	inner := txscript.Error{ErrorCode: txscript.ErrVerify, Description: "OP_VERIFY failed"}
+	for _, err := range submitAll(t, New("test", scriptService{inner: inner})) {
 		st, ok := status.FromError(err)
 		require.True(t, ok, "expected a grpc status error, got %v", err)
 		require.Equal(t, codes.FailedPrecondition, st.Code())
-		require.Contains(t, st.Message(), "OP_VERIFY failed vin=0")
+		require.Contains(t, st.Message(), "OP_VERIFY failed")
 	}
+}
 
-	_, err := h.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{ArkTx: ptx, CheckpointTxs: []string{ptx}})
-	requireRefusal(t, err)
-	_, err = h.SubmitIntent(ctx, &emulatorv1.SubmitIntentRequest{Intent: newIntentProto(t)})
-	requireRefusal(t, err)
-	_, err = h.SubmitOnchainTx(ctx, &emulatorv1.SubmitOnchainTxRequest{Tx: ptx})
-	requireRefusal(t, err)
+// The engine also reports its own state as txscript errors; those stay opaque.
+func TestOtherScriptErrorsStayOpaque(t *testing.T) {
+	inner := txscript.Error{ErrorCode: txscript.ErrInvalidIndex, Description: "previous output fetcher not set"}
+	for _, err := range submitAll(t, New("test", scriptService{inner: inner})) {
+		st, ok := status.FromError(err)
+		require.True(t, ok, "expected a grpc status error, got %v", err)
+		require.Equal(t, codes.Internal, st.Code())
+		require.Equal(t, internalErrMsg, st.Message())
+	}
 }
 
 // TestValidationErrorsStayDescriptive pins the other half of the fix: errors a
