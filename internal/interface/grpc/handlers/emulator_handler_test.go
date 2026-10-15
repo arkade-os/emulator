@@ -9,6 +9,7 @@ import (
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -115,6 +116,58 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 		})
 		requireGenericInternal(t, err)
 	})
+}
+
+// scriptService fails every script-executing call with inner, wrapped the way each
+// producer in pkg/emulator wraps it.
+type scriptService struct {
+	failingService
+	inner txscript.Error
+}
+
+func (s scriptService) SubmitTx(
+	context.Context, emulator.OffchainTx,
+) (*emulator.OffchainTx, error) {
+	return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", s.inner, 0)
+}
+
+func (s scriptService) SubmitIntent(context.Context, emulator.Intent) (*psbt.Packet, error) {
+	return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", 0, s.inner)
+}
+
+func (s scriptService) SubmitOnchainTx(context.Context, emulator.OnchainTx) (*psbt.Packet, error) {
+	return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", s.inner, 0)
+}
+
+func submitAll(t *testing.T, h *handler) []error {
+	t.Helper()
+	ctx := context.Background()
+	ptx := newProofB64(t)
+	_, errTx := h.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{ArkTx: ptx, CheckpointTxs: []string{ptx}})
+	_, errIntent := h.SubmitIntent(ctx, &emulatorv1.SubmitIntentRequest{Intent: newIntentProto(t)})
+	_, errOnchain := h.SubmitOnchainTx(ctx, &emulatorv1.SubmitOnchainTxRequest{Tx: ptx})
+	return []error{errTx, errIntent, errOnchain}
+}
+
+func TestScriptRefusalsNameTheFailure(t *testing.T) {
+	inner := txscript.Error{ErrorCode: txscript.ErrVerify, Description: "OP_VERIFY failed"}
+	for _, err := range submitAll(t, New("test", scriptService{inner: inner})) {
+		st, ok := status.FromError(err)
+		require.True(t, ok, "expected a grpc status error, got %v", err)
+		require.Equal(t, codes.FailedPrecondition, st.Code())
+		require.Contains(t, st.Message(), "OP_VERIFY failed")
+	}
+}
+
+// The engine also reports its own state as txscript errors; those stay opaque.
+func TestOtherScriptErrorsStayOpaque(t *testing.T) {
+	inner := txscript.Error{ErrorCode: txscript.ErrInvalidIndex, Description: "previous output fetcher not set"}
+	for _, err := range submitAll(t, New("test", scriptService{inner: inner})) {
+		st, ok := status.FromError(err)
+		require.True(t, ok, "expected a grpc status error, got %v", err)
+		require.Equal(t, codes.Internal, st.Code())
+		require.Equal(t, internalErrMsg, st.Message())
+	}
 }
 
 // TestValidationErrorsStayDescriptive pins the other half of the fix: errors a
