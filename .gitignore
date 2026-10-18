@@ -3,3 +3,7 @@
 build/
 bin/
 docs/plans/
+
+# nix build output symlinks
+result
+result-*
