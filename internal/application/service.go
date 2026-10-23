@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -185,7 +186,12 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 
 	encodedCheckpoints := make([]string, 0, len(signed.Checkpoints))
 	for i, checkpoint := range signed.Checkpoints {
-		encoded, err := checkpoint.B64Encode()
+		// remove the singature from checkpoints, submitTx doesn't require them
+		unsigned := *checkpoint
+		unsigned.Inputs = slices.Clone(checkpoint.Inputs)
+		unsigned.Inputs[0].TaprootScriptSpendSig = nil
+
+		encoded, err := unsigned.B64Encode()
 		if err != nil {
 			return nil, fmt.Errorf("failed to encode checkpoint %d: %w", i, err)
 		}
@@ -227,7 +233,6 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 
 	finalEncodedCheckpoints := make([]string, 0, len(signed.Checkpoints))
 	logCheckpoints := make(map[string]any)
-	finalizedOnSubmit := len(signed.Checkpoints) > 0
 	for i, checkpoint := range signed.Checkpoints {
 		// arkd's response may not cover our checkpoints
 		txid := checkpoint.UnsignedTx.TxID()
@@ -242,18 +247,9 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 			return nil, fmt.Errorf("checkpoint %d has no inputs", i)
 		}
 
-		// arkd >= v0.9.22 finalizes inside the submit call when the checkpoint it
-		// receives is already signed, and then rejects any FinalizeTx attempt
-		if !carriesTapscriptSigs(
-			arkdCheckpoint.Inputs[0].TaprootScriptSpendSig,
+		checkpoint.Inputs[0].TaprootScriptSpendSig = append(
 			checkpoint.Inputs[0].TaprootScriptSpendSig,
-		) {
-			finalizedOnSubmit = false
-		}
-
-		checkpoint.Inputs[0].TaprootScriptSpendSig = mergeTapscriptSigs(
-			checkpoint.Inputs[0].TaprootScriptSpendSig,
-			arkdCheckpoint.Inputs[0].TaprootScriptSpendSig,
+			arkdCheckpoint.Inputs[0].TaprootScriptSpendSig...,
 		)
 		encoded, err := checkpoint.B64Encode()
 		if err != nil {
@@ -263,15 +259,11 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		finalEncodedCheckpoints = append(finalEncodedCheckpoints, encoded)
 	}
 
-	if finalizedOnSubmit {
-		log.WithField("txid", arkTxid).Info("arkd finalized the tx on submit")
-	} else {
-		log.WithField("txid", arkTxid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
+	log.WithField("txid", arkTxid).WithFields(log.Fields(logCheckpoints)).Info("finalizing tx")
 
-		// TODO: if retry fails, persist retry task in background queue
-		if err := s.retryFinalize(ctx, arkTxid, finalEncodedCheckpoints); err != nil {
-			return nil, err
-		}
+	// TODO: if retry fails, persist retry task in background queue
+	if err := s.retryFinalize(ctx, arkTxid, finalEncodedCheckpoints); err != nil {
+		return nil, err
 	}
 
 	return &emulator.OffchainTx{

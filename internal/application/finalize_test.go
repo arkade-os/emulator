@@ -509,7 +509,8 @@ func TestSubmitTx(t *testing.T) {
 		require.Len(t, arkd.submitCheckpoints, len(tx.Checkpoints))
 		submitted, err := psbt.NewFromRawBytes(strings.NewReader(arkd.submitCheckpoints[0]), true)
 		require.NoError(t, err)
-		require.False(t, hasSignature(submitted.Inputs[0].TaprootScriptSpendSig, arkdSig.Signature))
+		// a signed checkpoint makes arkd >= v0.9.22 finalize on submit and reject FinalizeTx
+		require.Empty(t, submitted.Inputs[0].TaprootScriptSpendSig)
 
 		require.Len(t, arkd.finalizePayloads, 1)
 		finalized, err := psbt.NewFromRawBytes(strings.NewReader(arkd.finalizePayloads[0][0]), true)
@@ -518,46 +519,6 @@ func TestSubmitTx(t *testing.T) {
 			hasSignature(finalized.Inputs[0].TaprootScriptSpendSig, arkdSig.Signature),
 			"FinalizeTx must receive the merged checkpoints",
 		)
-	})
-
-	t.Run("arkd finalized on submit", func(t *testing.T) {
-		svc, tx, arkd := newTestService(t, true)
-		arkd.countersign = testArkdCountersig()
-		arkd.echoSigs = []bool{true}
-
-		out, err := svc.SubmitTx(t.Context(), tx)
-		require.NoError(t, err)
-
-		require.Equal(t, 1, arkd.submitCalls)
-		require.Zero(t, arkd.finalizeCalls)
-
-		require.Equal(t, tx.ArkTx.UnsignedTx.TxHash(), out.ArkTx.UnsignedTx.TxHash())
-		require.True(t,
-			hasSignature(out.Checkpoints[0].Inputs[0].TaprootScriptSpendSig, arkd.countersign.Signature),
-			"arkd signature must be merged in",
-		)
-		requireRedecodable(t, out.Checkpoints)
-	})
-
-	t.Run("arkd finalized only one checkpoint on submit", func(t *testing.T) {
-		svc, tx, arkd := newTestServiceWithCheckpoints(t, true, 2)
-		arkd.countersign = testArkdCountersig()
-		arkd.echoSigs = []bool{true, false}
-
-		out, err := svc.SubmitTx(t.Context(), tx)
-		require.NoError(t, err)
-
-		require.Equal(t, 1, arkd.finalizeCalls)
-		require.Len(t, arkd.finalizePayloads[0], 2)
-		for i, encoded := range arkd.finalizePayloads[0] {
-			finalized, err := psbt.NewFromRawBytes(strings.NewReader(encoded), true)
-			require.NoErrorf(t, err, "finalized checkpoint %d", i)
-			require.True(t,
-				hasSignature(finalized.Inputs[0].TaprootScriptSpendSig, arkd.countersign.Signature),
-				"FinalizeTx must receive the merged checkpoint %d", i,
-			)
-		}
-		requireRedecodable(t, out.Checkpoints)
 	})
 
 	t.Run("submit error", func(t *testing.T) {
@@ -779,14 +740,6 @@ func TestClose(t *testing.T) {
 func newTestService(t *testing.T, lastSigner bool) (*service, emulator.OffchainTx, *fakeArkd) {
 	t.Helper()
 
-	return newTestServiceWithCheckpoints(t, lastSigner, 1)
-}
-
-func newTestServiceWithCheckpoints(
-	t *testing.T, lastSigner bool, nCheckpoints int,
-) (*service, emulator.OffchainTx, *fakeArkd) {
-	t.Helper()
-
 	emulatorKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	aliceKey, err := btcec.NewPrivateKey()
@@ -821,36 +774,26 @@ func newTestServiceWithCheckpoints(
 	vtxoPkScript, err := arkscript.P2TRScript(vtxoTapKey)
 	require.NoError(t, err)
 
+	prevArkTx := wire.NewMsgTx(2)
+	prevArkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xaa}, Index: 0}})
+	prevArkTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
+
 	unrollScript := testArkdCheckpointTapscript(t, arkdKey.PubKey())
 	checkpointPkScript, arkInputField := testCheckpointSpend(t, unrollScript, merkleProof.Script)
 
+	checkpointTx := wire.NewMsgTx(2)
+	checkpointTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevArkTx.TxHash(), Index: 0}})
+	checkpointTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: checkpointPkScript})
+	checkpointTx.AddTxOut(txutils.AnchorOutput())
+	checkpointPtx, err := psbt.NewFromUnsignedTx(checkpointTx)
+	require.NoError(t, err)
+	checkpointPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: vtxoPkScript}
+	checkpointPtx.Inputs[0].TaprootLeafScript = leafScript
+
 	arkTx := wire.NewMsgTx(2)
-	checkpointPtxs := make([]*psbt.Packet, 0, nCheckpoints)
-	prevArkTxs := make([]*wire.MsgTx, 0, nCheckpoints)
-	entries := make([]arkade.EmulatorEntry, 0, nCheckpoints)
-	for i := range nCheckpoints {
-		// a distinct previous ark tx per input keeps the checkpoint txids distinct
-		prevArkTx := wire.NewMsgTx(2)
-		prevArkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0xaa, byte(i)}, Index: 0}})
-		prevArkTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: vtxoPkScript})
-
-		checkpointTx := wire.NewMsgTx(2)
-		checkpointTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevArkTx.TxHash(), Index: 0}})
-		checkpointTx.AddTxOut(&wire.TxOut{Value: 5_000, PkScript: checkpointPkScript})
-		checkpointTx.AddTxOut(txutils.AnchorOutput())
-		checkpointPtx, err := psbt.NewFromUnsignedTx(checkpointTx)
-		require.NoError(t, err)
-		checkpointPtx.Inputs[0].WitnessUtxo = &wire.TxOut{Value: 5_000, PkScript: vtxoPkScript}
-		checkpointPtx.Inputs[0].TaprootLeafScript = leafScript
-
-		arkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: checkpointPtx.UnsignedTx.TxHash(), Index: 0}})
-		checkpointPtxs = append(checkpointPtxs, checkpointPtx)
-		prevArkTxs = append(prevArkTxs, prevArkTx)
-		entries = append(entries, arkade.EmulatorEntry{Vin: uint16(i), Script: arkadeScriptBytes})
-	}
-
+	arkTx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: checkpointPtx.UnsignedTx.TxHash(), Index: 0}})
 	arkTx.AddTxOut(&wire.TxOut{Value: 4_800, PkScript: vtxoPkScript})
-	emulatorPacket, err := arkade.NewPacket(entries...)
+	emulatorPacket, err := arkade.NewPacket(arkade.EmulatorEntry{Vin: 0, Script: arkadeScriptBytes})
 	require.NoError(t, err)
 	opReturnOut, err := extension.Extension{emulatorPacket}.TxOut()
 	require.NoError(t, err)
@@ -858,11 +801,9 @@ func newTestServiceWithCheckpoints(
 
 	arkPtx, err := psbt.NewFromUnsignedTx(arkTx)
 	require.NoError(t, err)
-	for i, checkpointPtx := range checkpointPtxs {
-		arkPtx.Inputs[i].WitnessUtxo = checkpointPtx.UnsignedTx.TxOut[0]
-		arkPtx.Inputs[i].TaprootLeafScript = []*psbt.TaprootTapLeafScript{arkInputField}
-		require.NoError(t, txutils.SetArkPsbtField(arkPtx, i, arkade.PrevArkTxField, *prevArkTxs[i]))
-	}
+	arkPtx.Inputs[0].WitnessUtxo = checkpointPtx.UnsignedTx.TxOut[0]
+	arkPtx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{arkInputField}
+	require.NoError(t, txutils.SetArkPsbtField(arkPtx, 0, arkade.PrevArkTxField, *prevArkTx))
 
 	lib, err := emulator.New(
 		emulatorKey, nil, nil, unrollScript, []byte{txscript.OP_TRUE},
@@ -885,7 +826,7 @@ func newTestServiceWithCheckpoints(
 
 	return svc, emulator.OffchainTx{
 		ArkTx:       arkPtx,
-		Checkpoints: checkpointPtxs,
+		Checkpoints: []*psbt.Packet{checkpointPtx},
 	}, arkd
 }
 
@@ -987,11 +928,6 @@ type fakeArkd struct {
 	submitErr       error
 	finalizeErrs    []error
 
-	// when set, SubmitTx countersigns the checkpoints it received instead of
-	// returning arkdCheckpoints, keeping their signatures where echoSigs[i]
-	echoSigs    []bool
-	countersign *psbt.TaprootScriptSpendSig
-
 	submitCalls       int
 	submitCheckpoints []string
 	finalizeCalls     int
@@ -1006,34 +942,7 @@ func (f *fakeArkd) SubmitTx(_ context.Context, _ string, checkpoints []string) (
 	if f.submitErr != nil {
 		return "", "", nil, f.submitErr
 	}
-	if f.echoSigs == nil {
-		return f.arkTxid, f.finalArkTx, f.arkdCheckpoints, nil
-	}
-
-	rebuilt := make([]string, 0, len(checkpoints))
-	for i, encoded := range checkpoints {
-		submitted, err := psbt.NewFromRawBytes(strings.NewReader(encoded), true)
-		if err != nil {
-			return "", "", nil, err
-		}
-		arkdCp, err := psbt.NewFromUnsignedTx(submitted.UnsignedTx)
-		if err != nil {
-			return "", "", nil, err
-		}
-		arkdCp.Inputs[0].WitnessUtxo = submitted.Inputs[0].WitnessUtxo
-		arkdCp.Inputs[0].TaprootLeafScript = submitted.Inputs[0].TaprootLeafScript
-		var sigs []*psbt.TaprootScriptSpendSig
-		if i < len(f.echoSigs) && f.echoSigs[i] {
-			sigs = append(sigs, submitted.Inputs[0].TaprootScriptSpendSig...)
-		}
-		arkdCp.Inputs[0].TaprootScriptSpendSig = append(sigs, f.countersign)
-		out, err := arkdCp.B64Encode()
-		if err != nil {
-			return "", "", nil, err
-		}
-		rebuilt = append(rebuilt, out)
-	}
-	return f.arkTxid, f.finalArkTx, rebuilt, nil
+	return f.arkTxid, f.finalArkTx, f.arkdCheckpoints, nil
 }
 
 func (f *fakeArkd) FinalizeTx(_ context.Context, txid string, checkpoints []string) error {
@@ -1049,24 +958,6 @@ func (f *fakeArkd) FinalizeTx(_ context.Context, txid string, checkpoints []stri
 }
 
 func (f *fakeArkd) Close() { f.closeCalls++ }
-
-func testArkdCountersig() *psbt.TaprootScriptSpendSig {
-	return &psbt.TaprootScriptSpendSig{
-		XOnlyPubKey: bytes.Repeat([]byte{0xab}, 32),
-		LeafHash:    bytes.Repeat([]byte{0xcd}, 32),
-		Signature:   bytes.Repeat([]byte{0xee}, 64),
-	}
-}
-
-// requireRedecodable proves the merged checkpoints still reach a client: psbt
-// rejects a repeated (pubkey, leaf hash) script spend signature key.
-func requireRedecodable(t *testing.T, checkpoints []*psbt.Packet) {
-	t.Helper()
-	for i, checkpoint := range checkpoints {
-		_, err := psbt.NewFromRawBytes(strings.NewReader(encodePacket(t, checkpoint)), true)
-		require.NoErrorf(t, err, "checkpoint %d", i)
-	}
-}
 
 func hasSignature(sigs []*psbt.TaprootScriptSpendSig, want []byte) bool {
 	for _, s := range sigs {
