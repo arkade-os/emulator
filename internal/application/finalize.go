@@ -55,6 +55,34 @@ func signedBy(sigs []*psbt.TaprootScriptSpendSig, pubKey *btcec.PublicKey) bool 
 	return false
 }
 
+// carriesTapscriptSigs reports whether got holds every signature in want, matched
+// on pubkey, leaf hash and signature bytes. An empty want is never carried.
+func carriesTapscriptSigs(got, want []*psbt.TaprootScriptSpendSig) bool {
+	if len(want) == 0 {
+		return false
+	}
+	for _, w := range want {
+		carried := slices.ContainsFunc(got, func(g *psbt.TaprootScriptSpendSig) bool {
+			return g.EqualKey(w) && bytes.Equal(g.Signature, w.Signature)
+		})
+		if !carried {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeTapscriptSigs adds the entries of extra whose (pubkey, leaf hash) key is
+// not in sigs yet: psbt refuses to decode a repeated key.
+func mergeTapscriptSigs(sigs, extra []*psbt.TaprootScriptSpendSig) []*psbt.TaprootScriptSpendSig {
+	for _, e := range extra {
+		if !slices.ContainsFunc(sigs, e.EqualKey) {
+			sigs = append(sigs, e)
+		}
+	}
+	return sigs
+}
+
 func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
 	return retryWithBackoff(ctx, finalizeRetryConfig,
 		func() error { return s.arkd.FinalizeTx(ctx, txid, checkpoints) },
