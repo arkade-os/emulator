@@ -1,6 +1,6 @@
 module github.com/arkade-os/emulator
 
-go 1.26.9
+go 1.27.3
 
 replace github.com/arkade-os/emulator/pkg/arkade => ./pkg/arkade
 
