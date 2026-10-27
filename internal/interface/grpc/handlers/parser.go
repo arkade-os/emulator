@@ -25,8 +25,8 @@ func parsePsbt(b64 string) (*psbt.Packet, error) {
 }
 
 // parseIntent decodes the proof and intent message. The emulator takes every
-// intent type through one endpoint, so it sniffs `BaseMessage.Type` then decodes
-// the matching concrete struct.
+// intent type through one endpoint, so it sniffs `BaseMessage.Type`, decodes
+// the matching concrete struct and hands the lib its canonical encoding.
 func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 	proof := fromProto.GetProof()
 	message := fromProto.GetMessage()
@@ -50,7 +50,10 @@ func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 	}
 
 	// pick the concrete struct for that type
-	var decoded emulator.IntentMessage
+	var decoded interface {
+		Encode() (string, error)
+		Decode(string) error
+	}
 	switch base.Type {
 	case intent.IntentMessageTypeRegister:
 		decoded = &intent.RegisterMessage{}
@@ -71,9 +74,13 @@ func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 	if err := decoded.Decode(message); err != nil {
 		return nil, fmt.Errorf("invalid %s message: %w", base.Type, err)
 	}
+	canonical, err := decoded.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode %s message: %w", base.Type, err)
+	}
 
 	return &emulator.Intent{
 		Proof:   intent.Proof{Packet: *proofPsbt},
-		Message: decoded,
+		Message: canonical,
 	}, nil
 }

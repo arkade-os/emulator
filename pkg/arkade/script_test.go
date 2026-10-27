@@ -711,3 +711,37 @@ func decodeEntry(t *testing.T, raw scriptFixtureEntry) EmulatorEntry {
 		Witness: witness,
 	}
 }
+
+func TestNewArkadeScriptIgnoresSignerKey(t *testing.T) {
+	t.Parallel()
+
+	keyA, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+	foreign, err := btcec.NewPrivateKey()
+	require.NoError(t, err)
+
+	arkadeScript := []byte{OP_TRUE}
+	tweaked := ComputeArkadeScriptPublicKey(keyA.PubKey(), ArkadeScriptHash(arkadeScript))
+	closure := scriptlib.MultisigClosure{PubKeys: []*btcec.PublicKey{tweaked}}
+	spendingScript, err := closure.Script()
+	require.NoError(t, err)
+
+	tx := wire.NewMsgTx(2)
+	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{0x04}}})
+	tx.AddTxOut(&wire.TxOut{Value: 1_000, PkScript: []byte{OP_TRUE}})
+	ptx, err := psbt.NewFromUnsignedTx(tx)
+	require.NoError(t, err)
+	ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{{
+		Script:      spendingScript,
+		LeafVersion: txscript.BaseLeafVersion,
+	}}
+	entry := EmulatorEntry{Vin: 0, Script: arkadeScript}
+
+	_, err = ReadArkadeScript(ptx, foreign.PubKey(), entry)
+	require.ErrorIs(t, err, ErrTweakedArkadePubKeyNotFound)
+
+	s, err := NewArkadeScript(ptx, entry)
+	require.NoError(t, err)
+	require.Nil(t, s.PubKey())
+	require.Equal(t, ArkadeScriptHash(entry.Script), s.Hash())
+}
