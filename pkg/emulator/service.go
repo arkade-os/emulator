@@ -33,6 +33,14 @@ func (s *service) EmulateOffchainTx(
 ) ([]SignRequest, error) {
 	arkPtx := tx.ArkTx
 
+	scripts, err := packetScripts(arkPtx)
+	if err != nil {
+		return nil, err
+	}
+	if len(scripts) == 0 {
+		return nil, nil
+	}
+
 	indexedCheckpoints, err := indexCheckpoints(arkPtx, tx.Checkpoints)
 	if err != nil {
 		return nil, err
@@ -41,11 +49,6 @@ func (s *service) EmulateOffchainTx(
 	prevOutFetcher, err := prevOutFetcherForArkTx(arkPtx, tx.Checkpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
-	}
-
-	scripts, err := packetScripts(arkPtx)
-	if err != nil {
-		return nil, err
 	}
 
 	opts := s.executeOptions()
@@ -101,14 +104,17 @@ func (s *service) EmulateOffchainTx(
 func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignRequest, error) {
 	ptx := tx.Tx
 
-	prevOutFetcher, err := prevOutFetcherForOnchainTx(ptx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
-	}
-
 	scripts, err := packetScripts(ptx)
 	if err != nil {
 		return nil, err
+	}
+	if len(scripts) == 0 {
+		return nil, nil
+	}
+
+	prevOutFetcher, err := prevOutFetcherForOnchainTx(ptx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
 	opts := s.executeOptions()
@@ -142,15 +148,19 @@ func (s *service) EmulateIntent(
 ) ([]SignRequest, error) {
 	ptx := &intent.Proof.Packet
 
+	scripts, err := packetScripts(ptx)
+	if err != nil {
+		return nil, err
+	}
+	if len(scripts) == 0 {
+		return nil, nil
+	}
+
 	prevOutFetcher, err := prevOutFetcherForIntent(ptx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
 	}
 
-	scripts, err := packetScripts(ptx)
-	if err != nil {
-		return nil, err
-	}
 	// input 0 is approved through input 1, whose script it carries
 	scripts = slices.DeleteFunc(scripts, func(rs packetScript) bool { return rs.vin == 0 })
 	if len(scripts) == 0 {
@@ -223,7 +233,7 @@ func (s *service) EmulateBatchFinalization(
 		}
 	}
 	if len(approved) == 0 {
-		return nil, fmt.Errorf("no approved input in intent proofs")
+		return nil, nil
 	}
 
 	txs := finalization.Forfeits

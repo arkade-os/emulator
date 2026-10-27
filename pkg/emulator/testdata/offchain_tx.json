@@ -117,7 +117,7 @@
   "invalid": [
     {
       "name": "nil ark tx",
-      "errorContains": "missing ark transaction"
+      "errorContains": "missing transaction"
     },
     {
       "name": "missing checkpoint",

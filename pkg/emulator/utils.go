@@ -334,6 +334,9 @@ type packetScript struct {
 
 // packetScripts returns every emulator packet entry's arkade script, in packet order.
 func packetScripts(ptx *psbt.Packet) ([]packetScript, error) {
+	if ptx == nil || ptx.UnsignedTx == nil {
+		return nil, fmt.Errorf("missing transaction")
+	}
 	packet, err := arkade.FindEmulatorPacket(ptx.UnsignedTx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse emulator packet: %w", err)
