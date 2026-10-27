@@ -20,47 +20,40 @@ func TestParseIntent(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		proof    string
-		message  string
-		wantType interface{} // expected concrete type behind Intent.Message
-		wantErr  string
+		name    string
+		proof   string
+		message string
+		wantErr string
 	}{
 		{
-			name:     "register",
-			proof:    proof,
-			message:  encodeMsg(t, intent.RegisterMessage{BaseMessage: base(intent.IntentMessageTypeRegister), ExpireAt: future}),
-			wantType: &intent.RegisterMessage{},
+			name:    "register",
+			proof:   proof,
+			message: encodeMsg(t, intent.RegisterMessage{BaseMessage: base(intent.IntentMessageTypeRegister), ExpireAt: future}),
 		},
 		{
-			name:     "estimate-fee",
-			proof:    proof,
-			message:  encodeMsg(t, intent.EstimateIntentFeeMessage{BaseMessage: base(intent.IntentMessageTypeEstimateFee), ExpireAt: future}),
-			wantType: &intent.EstimateIntentFeeMessage{},
+			name:    "estimate-fee",
+			proof:   proof,
+			message: encodeMsg(t, intent.EstimateIntentFeeMessage{BaseMessage: base(intent.IntentMessageTypeEstimateFee), ExpireAt: future}),
 		},
 		{
-			name:     "delete",
-			proof:    proof,
-			message:  encodeMsg(t, intent.DeleteMessage{BaseMessage: base(intent.IntentMessageTypeDelete), ExpireAt: future}),
-			wantType: &intent.DeleteMessage{},
+			name:    "delete",
+			proof:   proof,
+			message: encodeMsg(t, intent.DeleteMessage{BaseMessage: base(intent.IntentMessageTypeDelete), ExpireAt: future}),
 		},
 		{
-			name:     "get-pending-tx",
-			proof:    proof,
-			message:  encodeMsg(t, intent.GetPendingTxMessage{BaseMessage: base(intent.IntentMessageTypeGetPendingTx), ExpireAt: future}),
-			wantType: &intent.GetPendingTxMessage{},
+			name:    "get-pending-tx",
+			proof:   proof,
+			message: encodeMsg(t, intent.GetPendingTxMessage{BaseMessage: base(intent.IntentMessageTypeGetPendingTx), ExpireAt: future}),
 		},
 		{
-			name:     "get-intent",
-			proof:    proof,
-			message:  encodeMsg(t, intent.GetIntentMessage{BaseMessage: base(intent.IntentMessageTypeGetIntent), ExpireAt: future}),
-			wantType: &intent.GetIntentMessage{},
+			name:    "get-intent",
+			proof:   proof,
+			message: encodeMsg(t, intent.GetIntentMessage{BaseMessage: base(intent.IntentMessageTypeGetIntent), ExpireAt: future}),
 		},
 		{
-			name:     "get-data",
-			proof:    proof,
-			message:  encodeMsg(t, intent.GetDataMessage{BaseMessage: base(intent.IntentMessageTypeGetData), ExpireAt: future}),
-			wantType: &intent.GetDataMessage{},
+			name:    "get-data",
+			proof:   proof,
+			message: encodeMsg(t, intent.GetDataMessage{BaseMessage: base(intent.IntentMessageTypeGetData), ExpireAt: future}),
 		},
 		{
 			name:    "missing proof",
@@ -97,7 +90,7 @@ func TestParseIntent(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.IsType(t, tc.wantType, result.Message)
+			require.Equal(t, tc.message, result.Message)
 		})
 	}
 }

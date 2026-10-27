@@ -421,7 +421,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 func TestIsFinalizerRole(t *testing.T) {
 	t.Run("last non-arkd signer", func(t *testing.T) {
 		svc, tx, _ := newTestService(t, true)
-		signed, err := svc.Service.SubmitTx(t.Context(), tx, emulator.OffchainData{})
+		signed, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
 		require.NoError(t, err)
 
 		ok, err := isFinalizerRole(signed.ArkTx, []int{0}, svc.signerPubKeys, svc.arkdPubKey)
@@ -431,7 +431,7 @@ func TestIsFinalizerRole(t *testing.T) {
 
 	t.Run("another signer comes after us", func(t *testing.T) {
 		svc, tx, _ := newTestService(t, false)
-		signed, err := svc.Service.SubmitTx(t.Context(), tx, emulator.OffchainData{})
+		signed, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
 		require.NoError(t, err)
 
 		ok, err := isFinalizerRole(signed.ArkTx, []int{0}, svc.signerPubKeys, svc.arkdPubKey)
@@ -700,11 +700,11 @@ func TestSubmitFinalizationRejectsUnknownCommitmentTx(t *testing.T) {
 	// nil Service: reaching the signer would panic
 	idx := &testIndexer{commitmentTxErr: fmt.Errorf("batch not found")}
 	svc := &service{indexer: idx}
-	_, err = svc.SubmitFinalization(t.Context(), emulator.BatchFinalization{CommitmentTx: commitmentTx})
+	_, err = svc.SubmitFinalization(t.Context(), emulator.BatchFinalization{CommitmentTx: commitmentTx}, nil)
 	require.ErrorContains(t, err, "not known to arkd indexer")
 	require.Equal(t, 2, idx.commitmentCalls)
 
-	_, err = svc.SubmitFinalization(t.Context(), emulator.BatchFinalization{})
+	_, err = svc.SubmitFinalization(t.Context(), emulator.BatchFinalization{}, nil)
 	require.ErrorContains(t, err, "commitment tx is required")
 }
 
@@ -761,13 +761,9 @@ func TestClose(t *testing.T) {
 	signerKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 	idx := &testIndexer{}
-	lib, err := emulator.New(
-		signerKey, nil, nil, []byte{txscript.OP_TRUE}, []byte{txscript.OP_TRUE},
-		arkade.DefaultComputeLimits(),
-	)
-	require.NoError(t, err)
+	lib := emulator.New(arkade.DefaultComputeLimits())
 	arkd := &fakeArkd{}
-	svc := &service{Service: lib, arkd: arkd, indexer: idx}
+	svc := &service{lib: lib, signer: signer{signerKey}, arkd: arkd, indexer: idx}
 
 	svc.Close()
 	require.Equal(t, 1, idx.closeCalls)
@@ -864,11 +860,7 @@ func newTestServiceWithCheckpoints(
 		require.NoError(t, txutils.SetArkPsbtField(arkPtx, i, arkade.PrevArkTxField, *prevArkTxs[i]))
 	}
 
-	lib, err := emulator.New(
-		emulatorKey, nil, nil, unrollScript, []byte{txscript.OP_TRUE},
-		arkade.DefaultComputeLimits(),
-	)
-	require.NoError(t, err)
+	lib := emulator.New(arkade.DefaultComputeLimits())
 
 	// a cooperative arkd echoes the tx it was asked to countersign
 	arkd := &fakeArkd{
@@ -876,11 +868,13 @@ func newTestServiceWithCheckpoints(
 		finalArkTx: encodePacket(t, arkPtx),
 	}
 	svc := &service{
-		Service:       lib,
-		arkd:          arkd,
-		indexer:       &testIndexer{},
-		arkdPubKey:    arkdKey.PubKey(),
-		signerPubKeys: []*btcec.PublicKey{emulatorKey.PubKey()},
+		lib:                 lib,
+		signer:              signer{emulatorKey},
+		arkdForfeitPkScript: []byte{txscript.OP_TRUE},
+		arkd:                arkd,
+		indexer:             &testIndexer{},
+		arkdPubKey:          arkdKey.PubKey(),
+		signerPubKeys:       []*btcec.PublicKey{emulatorKey.PubKey()},
 	}
 
 	return svc, emulator.OffchainTx{
@@ -1082,4 +1076,39 @@ func encodePacket(t *testing.T, ptx *psbt.Packet) string {
 	encoded, err := ptx.B64Encode()
 	require.NoError(t, err)
 	return encoded
+}
+
+func TestSignTxDeprecatedKey(t *testing.T) {
+	newDeprecated := func(t *testing.T, validUntil time.Time) (*service, emulator.OffchainTx) {
+		svc, tx, _ := newTestServiceWithCheckpoints(t, true, 2)
+		currentKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+		svc.deprecatedSigners = []signer{svc.signer}
+		svc.signer = signer{currentKey}
+		svc.deprecatedKeysValidUntil = &validUntil
+		return svc, tx
+	}
+
+	t.Run("before cutoff signs ark and checkpoint inputs", func(t *testing.T) {
+		svc, tx := newDeprecated(t, time.Now().Add(time.Hour))
+		signed, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
+		require.NoError(t, err)
+
+		tweaked := arkade.ComputeArkadeScriptPublicKey(
+			svc.deprecatedSigners[0].secretKey.PubKey(), arkade.ArkadeScriptHash([]byte{txscript.OP_TRUE}),
+		)
+		for i := range signed.ArkTx.Inputs {
+			require.True(t, signedBy(signed.ArkTx.Inputs[i].TaprootScriptSpendSig, tweaked))
+		}
+		for _, checkpoint := range signed.Checkpoints {
+			require.True(t, signedBy(checkpoint.Inputs[0].TaprootScriptSpendSig, tweaked))
+		}
+		require.NoError(t, verifyNonArkdCheckpointSignatures(signed.Checkpoints, svc.arkdPubKey))
+	})
+
+	t.Run("after cutoff matches nothing", func(t *testing.T) {
+		svc, tx := newDeprecated(t, time.Now().Add(-time.Hour))
+		_, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
+		require.ErrorContains(t, err, "failed to find any valid input/entry pairs")
+	})
 }

@@ -1,97 +1,207 @@
 package emulator
 
 import (
-	"context"
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
-	"time"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
-	signerKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	arkdKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	checkpointTapscript := testArkdCheckpointTapscript(t, arkdKey.PubKey())
-	forfeitPkScript := []byte{0x51}
-
-	t.Run("nil signer key", func(t *testing.T) {
-		_, err := New(nil, nil, nil, checkpointTapscript, forfeitPkScript, arkade.ComputeLimits{})
-		require.ErrorContains(t, err, "current signer key is required")
-	})
-
-	t.Run("missing arkd checkpoint tapscript", func(t *testing.T) {
-		_, err := New(signerKey, nil, nil, nil, forfeitPkScript, arkade.ComputeLimits{})
-		require.ErrorContains(t, err, "arkd checkpoint tapscript is required")
-	})
-
-	t.Run("missing arkd forfeit script", func(t *testing.T) {
-		_, err := New(signerKey, nil, nil, checkpointTapscript, nil, arkade.ComputeLimits{})
-		require.ErrorContains(t, err, "arkd forfeit script is required")
-	})
+// fixtures are deterministic PSBTs built from fixed keys, see testdata/*.json
+type fixtureFile struct {
+	Valid   []fixtureCase `json:"valid"`
+	Invalid []fixtureCase `json:"invalid"`
 }
 
-func TestGetInfo(t *testing.T) {
-	signerKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	deprecatedKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-	arkdKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
-
-	svc, err := New(
-		signerKey, []*btcec.PrivateKey{deprecatedKey}, nil,
-		testArkdCheckpointTapscript(t, arkdKey.PubKey()), []byte{0x51}, arkade.ComputeLimits{},
-	)
-	require.NoError(t, err)
-
-	info, err := svc.GetInfo(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, hex.EncodeToString(signerKey.PubKey().SerializeCompressed()), info.SignerPublicKey)
-	require.Equal(t,
-		[]string{hex.EncodeToString(deprecatedKey.PubKey().SerializeCompressed())},
-		info.DeprecatedSignerPublicKeys,
-	)
-
-	// GetInfo returns a defensive copy: mutating the result must not leak into
-	// the service's own deprecated keys.
-	info.DeprecatedSignerPublicKeys[0] = "mutated"
-	info2, err := svc.GetInfo(context.Background())
-	require.NoError(t, err)
-	require.NotEqual(t, "mutated", info2.DeprecatedSignerPublicKeys[0])
+type fixtureCase struct {
+	Name            string           `json:"name"`
+	ArkTx           string           `json:"arkTx,omitempty"`
+	Checkpoints     []string         `json:"checkpoints,omitempty"`
+	Proof           string           `json:"proof,omitempty"`
+	Message         string           `json:"message,omitempty"`
+	Tx              string           `json:"tx,omitempty"`
+	Intents         []string         `json:"intents,omitempty"`
+	Forfeits        []string         `json:"forfeits,omitempty"`
+	CommitmentTx    string           `json:"commitmentTx,omitempty"`
+	VtxoExpiries    map[string]int64 `json:"vtxoExpiries,omitempty"`
+	ExpiryOutpoints []string         `json:"expiryOutpoints,omitempty"`
+	Requests        []fixtureRequest `json:"requests,omitempty"`
+	ErrorContains   string           `json:"errorContains,omitempty"`
 }
 
-// A requester steers which key signs by choosing which tweaked key appears
-// in the tapscript it submits (resolveArkadeScriptSigner tries the current
-// key, then falls through to every deprecated key). Without a cutoff,
-// deprecated keys carry indefinite signing authority. These tests pin the
-// activeDeprecatedSigners cutoff behavior: unset means unbounded (today's
-// behavior, unchanged for deployments that don't opt in), set means the
-// deprecated keys stop being usable, for both fresh signing and
-// finalization, once the cutoff has passed.
-func TestActiveDeprecatedSigners(t *testing.T) {
-	key, err := btcec.NewPrivateKey()
+type fixtureRequest struct {
+	Txid           string   `json:"txid"`
+	InputIndex     int      `json:"inputIndex"`
+	ScriptHash     string   `json:"scriptHash"`
+	ClosurePubKeys []string `json:"closurePubKeys"`
+}
+
+var testService = New(arkade.DefaultComputeLimits())
+
+func TestEmulateOffchainTx(t *testing.T) {
+	fix := loadFixtures(t, "offchain_tx.json")
+	for _, c := range fix.Valid {
+		t.Run(c.Name, func(t *testing.T) {
+			tx := offchainTx(t, c)
+			requests, err := testService.EmulateOffchainTx(t.Context(), tx, offchainData(t, c))
+			require.NoError(t, err)
+			assertRequests(t, c.Requests, requests)
+
+			outpoints, err := tx.ExpiryOutpoints()
+			require.NoError(t, err)
+			require.Equal(t, c.ExpiryOutpoints, outpointStrings(outpoints))
+		})
+	}
+	for _, c := range fix.Invalid {
+		t.Run(c.Name, func(t *testing.T) {
+			_, err := testService.EmulateOffchainTx(t.Context(), offchainTx(t, c), offchainData(t, c))
+			require.ErrorContains(t, err, c.ErrorContains)
+		})
+	}
+}
+
+func TestEmulateIntent(t *testing.T) {
+	fix := loadFixtures(t, "intent.json")
+	for _, c := range fix.Valid {
+		t.Run(c.Name, func(t *testing.T) {
+			intent := intentFixture(t, c.Proof, c.Message)
+			requests, err := testService.EmulateIntent(t.Context(), intent, offchainData(t, c))
+			require.NoError(t, err)
+			assertRequests(t, c.Requests, requests)
+
+			outpoints, err := intent.ExpiryOutpoints()
+			require.NoError(t, err)
+			require.Equal(t, c.ExpiryOutpoints, outpointStrings(outpoints))
+		})
+	}
+	for _, c := range fix.Invalid {
+		t.Run(c.Name, func(t *testing.T) {
+			_, err := testService.EmulateIntent(t.Context(), intentFixture(t, c.Proof, c.Message), offchainData(t, c))
+			require.ErrorContains(t, err, c.ErrorContains)
+		})
+	}
+}
+
+func TestEmulateOnchainTx(t *testing.T) {
+	fix := loadFixtures(t, "onchain_tx.json")
+	for _, c := range fix.Valid {
+		t.Run(c.Name, func(t *testing.T) {
+			requests, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: decodePSBT(t, c.Tx)})
+			require.NoError(t, err)
+			assertRequests(t, c.Requests, requests)
+		})
+	}
+	for _, c := range fix.Invalid {
+		t.Run(c.Name, func(t *testing.T) {
+			_, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: decodePSBT(t, c.Tx)})
+			require.ErrorContains(t, err, c.ErrorContains)
+		})
+	}
+}
+
+func TestEmulateBatchFinalization(t *testing.T) {
+	fix := loadFixtures(t, "batch_finalization.json")
+	for _, c := range fix.Valid {
+		t.Run(c.Name, func(t *testing.T) {
+			requests, err := testService.EmulateBatchFinalization(t.Context(), batchFinalization(t, c))
+			require.NoError(t, err)
+			assertRequests(t, c.Requests, requests)
+		})
+	}
+	for _, c := range fix.Invalid {
+		t.Run(c.Name, func(t *testing.T) {
+			_, err := testService.EmulateBatchFinalization(t.Context(), batchFinalization(t, c))
+			require.ErrorContains(t, err, c.ErrorContains)
+		})
+	}
+}
+
+func loadFixtures(t *testing.T, file string) fixtureFile {
+	data, err := os.ReadFile("testdata/" + file)
 	require.NoError(t, err)
-	deprecated := []signer{{secretKey: key}}
+	var fix fixtureFile
+	require.NoError(t, json.Unmarshal(data, &fix))
+	return fix
+}
 
-	t.Run("nil cutoff is unbounded", func(t *testing.T) {
-		svc := &service{deprecatedSigners: deprecated}
-		require.Equal(t, deprecated, svc.activeDeprecatedSigners())
-	})
+func assertRequests(t *testing.T, want []fixtureRequest, got []SignRequest) {
+	require.Len(t, got, len(want))
+	for i, req := range got {
+		require.Equal(t, want[i].Txid, req.Packet.UnsignedTx.TxID())
+		require.Equal(t, want[i].InputIndex, req.InputIndex)
+		require.Equal(t, want[i].ScriptHash, hex.EncodeToString(req.ScriptHash))
+		require.Equal(t, want[i].ClosurePubKeys, xonlyHex(req.ClosurePubKeys))
+	}
+}
 
-	t.Run("cutoff in the future still allows deprecated keys", func(t *testing.T) {
-		future := time.Now().Add(time.Hour)
-		svc := &service{deprecatedSigners: deprecated, deprecatedKeysValidUntil: &future}
-		require.Equal(t, deprecated, svc.activeDeprecatedSigners())
-	})
+func offchainTx(t *testing.T, c fixtureCase) OffchainTx {
+	var arkTx *psbt.Packet
+	if c.ArkTx != "" {
+		arkTx = decodePSBT(t, c.ArkTx)
+	}
+	return OffchainTx{ArkTx: arkTx, Checkpoints: decodePSBTs(t, c.Checkpoints)}
+}
 
-	t.Run("cutoff in the past rejects deprecated keys", func(t *testing.T) {
-		past := time.Now().Add(-time.Hour)
-		svc := &service{deprecatedSigners: deprecated, deprecatedKeysValidUntil: &past}
-		require.Empty(t, svc.activeDeprecatedSigners())
-	})
+func offchainData(t *testing.T, c fixtureCase) OffchainData {
+	data := OffchainData{VtxoExpiries: map[wire.OutPoint]int64{}}
+	for s, expiry := range c.VtxoExpiries {
+		outpoint, err := wire.NewOutPointFromString(s)
+		require.NoError(t, err)
+		data.VtxoExpiries[*outpoint] = expiry
+	}
+	return data
+}
+
+func intentFixture(t *testing.T, proof, message string) Intent {
+	return Intent{Proof: intent.Proof{Packet: *decodePSBT(t, proof)}, Message: message}
+}
+
+func batchFinalization(t *testing.T, c fixtureCase) BatchFinalization {
+	finalization := BatchFinalization{Forfeits: decodePSBTs(t, c.Forfeits)}
+	if c.CommitmentTx != "" {
+		finalization.CommitmentTx = decodePSBT(t, c.CommitmentTx)
+	}
+	for _, proof := range c.Intents {
+		finalization.Intents = append(finalization.Intents, intentFixture(t, proof, ""))
+	}
+	return finalization
+}
+
+func decodePSBT(t *testing.T, b64 string) *psbt.Packet {
+	ptx, err := psbt.NewFromRawBytes(strings.NewReader(b64), true)
+	require.NoError(t, err)
+	return ptx
+}
+
+func decodePSBTs(t *testing.T, b64s []string) []*psbt.Packet {
+	packets := make([]*psbt.Packet, 0, len(b64s))
+	for _, b64 := range b64s {
+		packets = append(packets, decodePSBT(t, b64))
+	}
+	return packets
+}
+
+func xonlyHex(keys []*btcec.PublicKey) []string {
+	var out []string
+	for _, key := range keys {
+		out = append(out, hex.EncodeToString(schnorr.SerializePubKey(key)))
+	}
+	return out
+}
+
+func outpointStrings(outpoints []wire.OutPoint) []string {
+	var out []string
+	for _, outpoint := range outpoints {
+		out = append(out, outpoint.String())
+	}
+	return out
 }

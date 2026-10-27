@@ -171,17 +171,18 @@ func (h *handler) SubmitFinalization(
 	}
 
 	batchFinalization := emulator.BatchFinalization{
-		Intent:       *intent,
+		Intents:      []emulator.Intent{*intent},
 		Forfeits:     forfeitPsbt,
 		CommitmentTx: commitmentPtx,
 	}
 
+	var connectorTxTree *tree.TxTree
 	if len(forfeitPsbt) > 0 {
 		if len(connectorTree) <= 0 {
 			return nil, status.Error(codes.InvalidArgument, "missing connector tree")
 		}
 
-		connectorTxTree, err := parseTxTree(connectorTree)
+		connectorTxTree, err = parseTxTree(connectorTree)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid connector tree: %v", err))
 		}
@@ -190,10 +191,9 @@ func (h *handler) SubmitFinalization(
 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid connector tree: %v", err))
 		}
 
-		batchFinalization.ConnectorTree = connectorTxTree
 	}
 
-	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
+	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization, connectorTxTree)
 	if err != nil {
 		log.WithError(err).Error("failed to process finalization")
 		return nil, status.Error(codes.Internal, internalErrMsg)
