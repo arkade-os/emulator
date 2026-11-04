@@ -230,9 +230,11 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 	if err := cache.checkPrevouts(spendingTx, prevOutFetcher); err != nil {
 		return err
 	}
-	engine.inputAmount = prevOutFetcher.FetchPrevOutput(
-		spendingTx.TxIn[inputIndex].PreviousOutPoint,
-	).Value
+	prevOut := prevOutFetcher.FetchPrevOutput(spendingTx.TxIn[inputIndex].PreviousOutPoint)
+	if prevOut == nil {
+		return fmt.Errorf("no prevout found for input %d", inputIndex)
+	}
+	engine.inputAmount = prevOut.Value
 	engine.hashCache = cache.txSigHashes(spendingTx, prevOutFetcher)
 
 	assetPacket, assetWork, packet, err := cache.packets(spendingTx)
