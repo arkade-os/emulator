@@ -61,6 +61,24 @@ func DefaultComputeLimits() ComputeLimits {
 // fraction of the per-input caps.
 const requestInputBudget = 4
 
+const (
+	// maxInputWork caps the work one input's evaluation may spend in opcodes
+	// whose cost grows with the transaction rather than with their 520-byte
+	// stack operands: asset packet walks, emulator packet lookups and the
+	// hashing of scripts, witnesses, scriptPubKeys and metadata. A unit is
+	// about one byte hashed, so the cap is ~8 MB of hashing per input and a
+	// request may spend requestInputBudget times as much across its inputs.
+	//
+	// ponytail: flat byte-equivalent weights rather than measured per-opcode
+	// costs; fold these opcodes into a weighted compute budget alongside
+	// ComputeLimits if finer pricing is ever needed.
+	maxInputWork = 8 << 20
+
+	// entryWork is the work charged per packet entry walked: an asset group,
+	// asset input or output, or emulator packet entry.
+	entryWork = 32
+)
+
 // AggregateComputeLimits returns the per-request caps matching the per-input
 // caps in c, that is c scaled by requestInputBudget. Callers running with
 // configured per-input limits should derive their request budget from the same
@@ -98,6 +116,7 @@ type ComputeBudget struct {
 	mtx      sync.Mutex
 	limits   ComputeLimits
 	opCounts map[byte]int
+	work     int
 }
 
 // NewComputeBudget returns a request-wide budget carrying the canonical
@@ -147,6 +166,26 @@ func (b *ComputeBudget) charge(op byte) error {
 		return scriptError(txscript.ErrScriptTooBig,
 			fmt.Sprintf("opcode %s exceeded request execution limit of %d",
 				opcodeArray[op].name, limit))
+	}
+	return nil
+}
+
+// chargeWork counts n units of data-proportional work against the request-wide
+// budget and returns an error once the request exceeds requestInputBudget
+// inputs' worth of maxInputWork. A nil budget is never charged.
+func (b *ComputeBudget) chargeWork(n int) error {
+	if b == nil {
+		return nil
+	}
+
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	const limit = maxInputWork * requestInputBudget
+	b.work += n
+	if b.work > limit {
+		return scriptError(txscript.ErrScriptTooBig,
+			fmt.Sprintf("request exceeded work limit of %d", limit))
 	}
 	return nil
 }

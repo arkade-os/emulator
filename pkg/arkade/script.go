@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	scriptlib "github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -205,26 +204,13 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 }
 
 func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOutFetcher, inputIndex int, opts ...ExecuteOption) error {
-	// fail closed when the fetcher misses: the sighash midstates commit to every
-	// input's amount and script, so a miss is either signed as a fabricated zero
-	// value the introspection opcodes also see, or panics while hashing them
-	for i, txIn := range spendingTx.TxIn {
-		if prevOutFetcher.FetchPrevOutput(txIn.PreviousOutPoint) == nil {
-			return fmt.Errorf("no prevout found for input %d", i)
-		}
-	}
-
-	inputAmount := prevOutFetcher.FetchPrevOutput(
-		spendingTx.TxIn[inputIndex].PreviousOutPoint,
-	).Value
-
 	engine, err := NewEngine(
 		s.script,
 		spendingTx,
 		inputIndex,
 		txscript.NewSigCache(100),
-		txscript.NewTxSigHashes(spendingTx, prevOutFetcher),
-		inputAmount,
+		nil,
+		0,
 		prevOutFetcher,
 	)
 	if err != nil {
@@ -237,25 +223,33 @@ func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOut
 		opt(engine)
 	}
 
-	// Parse asset packet from transaction extension if present
-	ext, err := extension.NewExtensionFromTx(spendingTx)
+	cache := engine.txCache()
+	if err := cache.bind(spendingTx); err != nil {
+		return err
+	}
+	if err := cache.checkPrevouts(spendingTx, prevOutFetcher); err != nil {
+		return err
+	}
+	engine.inputAmount = prevOutFetcher.FetchPrevOutput(
+		spendingTx.TxIn[inputIndex].PreviousOutPoint,
+	).Value
+	engine.hashCache = cache.txSigHashes(spendingTx, prevOutFetcher)
+
+	assetPacket, assetWork, packet, err := cache.packets(spendingTx)
 	if err != nil {
-		if !errors.Is(err, extension.ErrExtensionNotFound) {
-			return fmt.Errorf("failed to parse extension: %w", err)
+		return err
+	}
+	engine.assetPacket, engine.assetWork = assetPacket, assetWork
+	engine.emulatorPacket = packet
+
+	// as in BIP342, witness items obey the push size limit; the opcodes are
+	// priced on that assumption
+	for i, item := range s.witness {
+		if len(item) > txscript.MaxScriptElementSize {
+			return fmt.Errorf("witness item %d size %d exceeds max allowed size %d",
+				i, len(item), txscript.MaxScriptElementSize)
 		}
-	} else if ap := ext.GetAssetPacket(); ap != nil {
-		engine.SetAssetPacket(ap)
 	}
-
-	// Parse & set emulator packet from transaction outputs if present
-	packet, err := FindEmulatorPacket(spendingTx)
-	if err != nil {
-		return fmt.Errorf("failed to parse emulator packet: %w", err)
-	}
-	if packet != nil {
-		engine.SetEmulatorPacket(packet)
-	}
-
 	if len(s.witness) > 0 {
 		engine.SetStack(s.witness)
 	}

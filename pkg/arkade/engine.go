@@ -12,12 +12,14 @@
 package arkade
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/txscript/v2"
 	"github.com/btcsuite/btcd/wire/v2"
@@ -53,6 +55,9 @@ type taprootExecutionCtx struct {
 	// opCounts tracks how many times each limited opcode has executed for this
 	// input. It is allocated lazily on the first charge.
 	opCounts map[byte]int
+
+	// work is the data-proportional work charged so far for this input.
+	work int
 }
 
 // newTaprootExecutionCtx returns a fresh instance of the taproot execution
@@ -105,6 +110,7 @@ type Engine struct {
 	hashCache      *txscript.TxSigHashes
 	prevOutFetcher ArkPrevOutFetcher
 	assetPacket    asset.Packet
+	assetWork      int
 	emulatorPacket EmulatorPacket
 	expiry         *int64
 	currentTime    BigNum
@@ -154,9 +160,13 @@ type Engine struct {
 	limits ComputeLimits
 	budget *ComputeBudget
 
-	// memoized: the tx is immutable and may weigh ~1 MB
-	txHash *chainhash.Hash
-	masked *maskedTx
+	// cache memoizes the work derived from tx alone. It may be shared with the
+	// engines of the other inputs of the same request via WithTxCache.
+	cache *TxCache
+
+	// singleOutputHash memoizes the SIGHASH_SINGLE digest of the output at
+	// txIdx, which unlike the cache depends on the input being evaluated.
+	singleOutputHash []byte
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -189,6 +199,7 @@ type StepInfo struct {
 // SetAssetPacket sets the asset packet on the engine for script introspection.
 func (vm *Engine) SetAssetPacket(packet asset.Packet) {
 	vm.assetPacket = packet
+	vm.assetWork = assetPacketWork(packet)
 }
 
 // SetEmulatorPacket sets the emulator packet on the engine for
@@ -347,6 +358,22 @@ func (vm *Engine) chargeOpcode(op byte) error {
 	return vm.budget.charge(op)
 }
 
+// chargeWork counts n units of data-proportional work and returns an error
+// once the input exceeds maxInputWork or, when the engine was given a shared
+// ComputeBudget, the request exceeds its aggregate. Executions outside a
+// tapscript context are never charged.
+func (vm *Engine) chargeWork(n int) error {
+	if vm.taprootCtx == nil {
+		return nil
+	}
+	vm.taprootCtx.work += n
+	if vm.taprootCtx.work > maxInputWork {
+		return scriptError(txscript.ErrScriptTooBig,
+			fmt.Sprintf("input exceeded work limit of %d", maxInputWork))
+	}
+	return vm.budget.chargeWork(n)
+}
+
 // checkValidPC returns an error if the current script position is not valid for
 // execution.
 func (vm *Engine) checkValidPC() error {
@@ -501,7 +528,7 @@ func (vm *Engine) Step() (done bool, err error) {
 
 	// The element count alone does not bound memory, so the combination of the
 	// data and alt stacks must also stay within the aggregate byte budget.
-	combinedStackBytes := stackByteSize(&vm.dstack) + stackByteSize(&vm.astack)
+	combinedStackBytes := vm.dstack.bytes + vm.astack.bytes
 	if combinedStackBytes > maxCombinedStackByteSize {
 		str := fmt.Sprintf("combined stack size %d bytes > max allowed %d bytes",
 			combinedStackBytes, maxCombinedStackByteSize)
@@ -542,16 +569,6 @@ func (vm *Engine) Step() (done bool, err error) {
 	}
 
 	return false, nil
-}
-
-// stackByteSize returns the total number of bytes held by the elements of the
-// provided stack.
-func stackByteSize(stack *stack) int {
-	var total int
-	for _, item := range stack.stk {
-		total += len(item)
-	}
-	return total
 }
 
 // copyStack makes a deep copy of the provided slice.
@@ -657,6 +674,8 @@ func (vm *Engine) GetStack() [][]byte {
 
 // SetStack sets the contents of the primary stack to the contents of the
 // provided array where the last item in the array will be the top of the stack.
+// Items are not size-checked; callers must keep them within
+// txscript.MaxScriptElementSize, as ArkadeScript.Execute does.
 func (vm *Engine) SetStack(data [][]byte) {
 	setStack(&vm.dstack, data)
 }
@@ -669,6 +688,8 @@ func (vm *Engine) GetAltStack() [][]byte {
 
 // SetAltStack sets the contents of the alternate stack to the contents of the
 // provided array where the last item in the array will be the top of the stack.
+// Items are not size-checked; callers must keep them within
+// txscript.MaxScriptElementSize.
 func (vm *Engine) SetAltStack(data [][]byte) {
 	setStack(&vm.astack, data)
 }
@@ -705,6 +726,7 @@ func NewEngine(scriptPubKey []byte, tx *wire.MsgTx, txIdx int,
 		inputAmount:    inputAmount,
 		prevOutFetcher: prevOutFetcher,
 		limits:         DefaultComputeLimits(),
+		cache:          &TxCache{tx: tx},
 		currentTime:    BigNumFromInt64(time.Now().Unix()),
 	}
 
@@ -778,9 +800,216 @@ func checkScriptParses(scriptVersion uint16, script []byte) error {
 }
 
 func (vm *Engine) txID() chainhash.Hash {
-	if vm.txHash == nil {
+	c := vm.txCache()
+	if c.txHash == nil {
 		h := vm.tx.TxHash()
-		vm.txHash = &h
+		c.txHash = &h
 	}
-	return *vm.txHash
+	return *c.txHash
+}
+
+// txCache returns the engine's cache, allocating a private one for engines not
+// built by NewEngine.
+func (vm *Engine) txCache() *TxCache {
+	if vm.cache == nil {
+		vm.cache = &TxCache{}
+	}
+	return vm.cache
+}
+
+// TxCache memoizes the work derived from a transaction alone: sighash
+// midstates, extension packets, the masked outputs digest, the txid and the
+// stripped size. Each costs O(transaction) to compute, so recomputing it per
+// input or per opcode call lets a single request multiply that cost by its
+// input count or script length.
+//
+// Share one cache via WithTxCache across the executions of every input of a
+// single transaction evaluated with a single prevout fetcher. A cache binds to
+// the first transaction it is used with. It is not safe for concurrent use.
+type TxCache struct {
+	tx *wire.MsgTx
+
+	prevoutsChecked bool
+	sigHashes       *txscript.TxSigHashes
+	txHash          *chainhash.Hash
+	strippedSize    int
+
+	packetsParsed  bool
+	packetsErr     error
+	assetPacket    asset.Packet
+	assetWork      int
+	emulatorPacket EmulatorPacket
+
+	maskedDone bool
+	masked     *maskedTx
+	maskedErr  error
+
+	txPackets    *packetSet
+	inputPackets map[wire.OutPoint]*packetSet
+}
+
+// NewTxCache returns an empty cache, to be shared via WithTxCache.
+func NewTxCache() *TxCache {
+	return &TxCache{}
+}
+
+// WithTxCache shares the per-transaction cache with this execution. The same
+// cache must only be passed to executions of the same transaction with the
+// same prevout fetcher. A nil cache means the execution memoizes on its own.
+func WithTxCache(c *TxCache) ExecuteOption {
+	return func(engine *Engine) {
+		if c != nil {
+			engine.cache = c
+		}
+	}
+}
+
+// bind ties the cache to tx, failing if it already serves another transaction.
+func (c *TxCache) bind(tx *wire.MsgTx) error {
+	if c.tx == nil {
+		c.tx = tx
+	}
+	if c.tx != tx {
+		return fmt.Errorf("tx cache is bound to a different transaction")
+	}
+	return nil
+}
+
+// checkPrevouts fails closed when the fetcher misses any input: the sighash
+// midstates commit to every input's amount and script, so a miss is either
+// signed as a fabricated zero value the introspection opcodes also see, or
+// panics while hashing them.
+func (c *TxCache) checkPrevouts(tx *wire.MsgTx, fetcher ArkPrevOutFetcher) error {
+	if c.prevoutsChecked {
+		return nil
+	}
+	for i, txIn := range tx.TxIn {
+		if fetcher.FetchPrevOutput(txIn.PreviousOutPoint) == nil {
+			return fmt.Errorf("no prevout found for input %d", i)
+		}
+	}
+	c.prevoutsChecked = true
+	return nil
+}
+
+func (c *TxCache) txSigHashes(tx *wire.MsgTx, fetcher ArkPrevOutFetcher) *txscript.TxSigHashes {
+	if c.sigHashes == nil {
+		c.sigHashes = txscript.NewTxSigHashes(tx, fetcher)
+	}
+	return c.sigHashes
+}
+
+func (c *TxCache) txStrippedSize(tx *wire.MsgTx) int {
+	if c.strippedSize == 0 {
+		c.strippedSize = tx.SerializeSizeStripped()
+	}
+	return c.strippedSize
+}
+
+// packets returns the asset packet, its walk cost and the emulator packet
+// carried by tx's extension, either of which may be nil.
+func (c *TxCache) packets(tx *wire.MsgTx) (asset.Packet, int, EmulatorPacket, error) {
+	if !c.packetsParsed {
+		c.packetsParsed = true
+		c.packetsErr = c.parsePackets(tx)
+	}
+	return c.assetPacket, c.assetWork, c.emulatorPacket, c.packetsErr
+}
+
+func (c *TxCache) parsePackets(tx *wire.MsgTx) error {
+	ext, err := extension.NewExtensionFromTx(tx)
+	if err != nil {
+		if !errors.Is(err, extension.ErrExtensionNotFound) {
+			return fmt.Errorf("failed to parse extension: %w", err)
+		}
+	} else if ap := ext.GetAssetPacket(); ap != nil {
+		c.assetPacket = ap
+		c.assetWork = assetPacketWork(ap)
+	}
+
+	packet, err := FindEmulatorPacket(tx)
+	if err != nil {
+		return fmt.Errorf("failed to parse emulator packet: %w", err)
+	}
+	c.emulatorPacket = packet
+	return nil
+}
+
+func (c *TxCache) txPacket(tx *wire.MsgTx, packetType uint8) ([]byte, error) {
+	if c.txPackets == nil {
+		c.txPackets = newPacketSet(tx)
+	}
+	return c.txPackets.get(packetType)
+}
+
+// inputPacket looks up a packet of prevTx, the previous ark transaction of the
+// input spending outpoint. The fetcher is fixed per cache, so the outpoint
+// identifies prevTx.
+func (c *TxCache) inputPacket(outpoint wire.OutPoint, prevTx *wire.MsgTx, packetType uint8) ([]byte, error) {
+	set, ok := c.inputPackets[outpoint]
+	if !ok {
+		if c.inputPackets == nil {
+			c.inputPackets = make(map[wire.OutPoint]*packetSet)
+		}
+		set = newPacketSet(prevTx)
+		c.inputPackets[outpoint] = set
+	}
+	return set.get(packetType)
+}
+
+// packetSet holds the serialized content of every packet of one transaction's
+// extension, keyed by type.
+type packetSet struct {
+	byType map[uint8]extPacket
+	err    error
+}
+
+// extPacket is a packet's serialized content, or why it failed to serialize.
+type extPacket struct {
+	content []byte
+	err     error
+}
+
+func newPacketSet(tx *wire.MsgTx) *packetSet {
+	ext, err := extension.NewExtensionFromTx(tx)
+	if err != nil {
+		if errors.Is(err, extension.ErrExtensionNotFound) {
+			return &packetSet{}
+		}
+		return &packetSet{err: fmt.Errorf("failed to parse extension: %w", err)}
+	}
+	set := &packetSet{byType: make(map[uint8]extPacket, len(ext))}
+	for _, pkt := range ext {
+		// the first packet of a type wins
+		if _, ok := set.byType[pkt.Type()]; ok {
+			continue
+		}
+		content, err := pkt.Serialize()
+		if err != nil {
+			err = fmt.Errorf("failed to serialize packet type %d: %w", pkt.Type(), err)
+		} else if content == nil {
+			content = []byte{}
+		}
+		set.byType[pkt.Type()] = extPacket{content: content, err: err}
+	}
+	return set
+}
+
+// get returns the serialized packet of the given type, nil if absent.
+func (s *packetSet) get(packetType uint8) ([]byte, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	p := s.byType[packetType]
+	return p.content, p.err
+}
+
+// assetPacketWork is the work charged for one walk over every group, input and
+// output of packet.
+func assetPacketWork(packet asset.Packet) int {
+	n := len(packet)
+	for _, group := range packet {
+		n += len(group.Inputs) + len(group.Outputs)
+	}
+	return n * entryWork
 }
