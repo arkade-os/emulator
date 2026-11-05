@@ -104,6 +104,9 @@ func opcodeFindAssetGroupByAssetId(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
 	}
+	if err := vm.chargeWork(vm.assetWork); err != nil {
+		return err
+	}
 
 	searchTxid, searchGidx, err := popAssetID(vm)
 	if err != nil {
@@ -144,6 +147,14 @@ func opcodeInspectAssetGroupMetadataHash(op *opcode, data []byte, vm *Engine) er
 	}
 
 	group := vm.assetPacket[int(k)]
+
+	work := len(group.Metadata) * entryWork
+	for _, md := range group.Metadata {
+		work += len(md.Key) + len(md.Value)
+	}
+	if err := vm.chargeWork(work); err != nil {
+		return err
+	}
 
 	hash, err := computeMetadataMerkleRoot(group.Metadata)
 	if err != nil {
@@ -275,6 +286,10 @@ func opcodeInspectAssetGroupSum(op *opcode, data []byte, vm *Engine) error {
 
 	group := vm.assetPacket[int(k)]
 
+	if err := vm.chargeWork((len(group.Inputs) + len(group.Outputs)) * entryWork); err != nil {
+		return err
+	}
+
 	switch source {
 	case 0:
 		return pushBigIntAsBigNum(vm, safeSumInputs(group.Inputs))
@@ -305,6 +320,9 @@ func opcodeInspectOutAssetCount(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
 	}
+	if err := vm.chargeWork(vm.assetWork); err != nil {
+		return err
+	}
 
 	o, err := vm.dstack.PopInt()
 	if err != nil {
@@ -329,6 +347,9 @@ func opcodeInspectOutAssetCount(op *opcode, data []byte, vm *Engine) error {
 func opcodeInspectOutAssetAt(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
+	}
+	if err := vm.chargeWork(vm.assetWork); err != nil {
+		return err
 	}
 
 	t, err := vm.dstack.PopInt()
@@ -379,6 +400,9 @@ func opcodeInspectOutAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
 	}
+	if err := vm.chargeWork(vm.assetWork); err != nil {
+		return err
+	}
 
 	searchTxid, searchGidx, err := popAssetID(vm)
 	if err != nil {
@@ -424,6 +448,9 @@ func opcodeInspectInAssetCount(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
 	}
+	if err := vm.chargeWork(vm.assetWork); err != nil {
+		return err
+	}
 
 	i, err := vm.dstack.PopInt()
 	if err != nil {
@@ -450,6 +477,9 @@ func opcodeInspectInAssetCount(op *opcode, data []byte, vm *Engine) error {
 func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
+	}
+	if err := vm.chargeWork(vm.assetWork); err != nil {
+		return err
 	}
 
 	t, err := vm.dstack.PopInt()
@@ -501,6 +531,9 @@ func opcodeInspectInAssetAt(op *opcode, data []byte, vm *Engine) error {
 func opcodeInspectInAssetLookup(op *opcode, data []byte, vm *Engine) error {
 	if vm.assetPacket == nil {
 		return scriptError(txscript.ErrInvalidStackOperation, "no asset packet")
+	}
+	if err := vm.chargeWork(vm.assetWork); err != nil {
+		return err
 	}
 
 	searchTxid, searchGidx, err := popAssetID(vm)

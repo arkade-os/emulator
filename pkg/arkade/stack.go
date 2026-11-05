@@ -36,6 +36,8 @@ func fromBool(v bool) []byte {
 type stack struct {
 	stk               [][]byte
 	verifyMinimalData bool
+	// bytes is the total length of the elements of stk.
+	bytes int
 }
 
 // Depth returns the number of items on the stack.
@@ -48,6 +50,7 @@ func (s *stack) Depth() int32 {
 // Stack transformation: [... x1 x2] -> [... x1 x2 data]
 func (s *stack) PushByteArray(so []byte) {
 	s.stk = append(s.stk, so)
+	s.bytes += len(so)
 }
 
 // PushInt converts the provided scriptNum to a suitable byte array then pushes
@@ -186,6 +189,7 @@ func (s *stack) nipN(idx int32) ([]byte, error) {
 	}
 
 	so := s.stk[sz-idx-1]
+	s.bytes -= len(so)
 	if idx == 0 {
 		s.stk = s.stk[:sz-1]
 	} else if idx == sz-1 {
@@ -374,7 +378,9 @@ func (s *stack) PutN(n int32, so []byte) error {
 	if _, err := s.PeekByteArray(n); err != nil {
 		return err
 	}
-	s.stk[len(s.stk)-int(n)-1] = so
+	i := len(s.stk) - int(n) - 1
+	s.bytes += len(so) - len(s.stk[i])
+	s.stk[i] = so
 
 	return nil
 }

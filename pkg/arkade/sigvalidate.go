@@ -226,6 +226,9 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 		if prevOut == nil {
 			return nil, fmt.Errorf("no prevout for input %d", idx)
 		}
+		if err := vm.chargeWork(len(prevOut.PkScript)); err != nil {
+			return nil, err
+		}
 		if err := wire.WriteTxOut(&sigMsg, 0, 0, prevOut); err != nil {
 			return nil, err
 		}
@@ -259,7 +262,7 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 		if err != nil {
 			return nil, fmt.Errorf("arkade single-output rewrite: %w", err)
 		}
-		if m.singleOutputHash == nil {
+		if vm.singleOutputHash == nil {
 			out := tx.TxOut[idx]
 			if m.idx == idx {
 				out = m.out
@@ -268,9 +271,9 @@ func buildArkadeSigMsg(vm *Engine, hashType txscript.SigHashType) ([]byte, error
 			if err := wire.WriteTxOut(h, 0, 0, out); err != nil {
 				return nil, err
 			}
-			m.singleOutputHash = h.Sum(nil)
+			vm.singleOutputHash = h.Sum(nil)
 		}
-		sigMsg.Write(m.singleOutputHash)
+		sigMsg.Write(vm.singleOutputHash)
 	}
 
 	// 10. BIP342 tapscript extension (ext_flag = 1).
@@ -336,14 +339,10 @@ func maskExtensionOutput(tx *wire.MsgTx) (*wire.TxOut, int, error) {
 	return nil, -1, nil
 }
 
-// arkadeOutputsHash mirrors BIP342's sha_outputs but substitutes the single
-// emulator-packet OP_RETURN (if any) with its witness-masked form before
-// hashing. Every other output is hashed exactly as it appears in the tx.
-func arkadeOutputsHash(tx *wire.MsgTx) ([]byte, error) {
-	masked, maskedIdx, err := maskExtensionOutput(tx)
-	if err != nil {
-		return nil, err
-	}
+// arkadeOutputsHash mirrors BIP342's sha_outputs but substitutes masked, the
+// witness-masked form of the emulator-packet OP_RETURN at maskedIdx (if any),
+// before hashing. Every other output is hashed exactly as it appears in the tx.
+func arkadeOutputsHash(tx *wire.MsgTx, masked *wire.TxOut, maskedIdx int) ([]byte, error) {
 	h := sha256.New()
 	for i, out := range tx.TxOut {
 		if i == maskedIdx {
@@ -445,22 +444,25 @@ type maskedTx struct {
 	out         *wire.TxOut
 	idx         int
 	outputsHash []byte
-	// lazily set: SIGHASH_SINGLE digest of the output at vm.txIdx
-	singleOutputHash []byte
 }
 
 func (vm *Engine) maskedTx() (*maskedTx, error) {
-	if vm.masked != nil {
-		return vm.masked, nil
+	c := vm.txCache()
+	if !c.maskedDone {
+		c.maskedDone = true
+		c.masked, c.maskedErr = newMaskedTx(&vm.tx)
 	}
-	out, idx, err := maskExtensionOutput(&vm.tx)
+	return c.masked, c.maskedErr
+}
+
+func newMaskedTx(tx *wire.MsgTx) (*maskedTx, error) {
+	out, idx, err := maskExtensionOutput(tx)
 	if err != nil {
 		return nil, err
 	}
-	outputsHash, err := arkadeOutputsHash(&vm.tx)
+	outputsHash, err := arkadeOutputsHash(tx, out, idx)
 	if err != nil {
 		return nil, err
 	}
-	vm.masked = &maskedTx{out: out, idx: idx, outputsHash: outputsHash}
-	return vm.masked, nil
+	return &maskedTx{out: out, idx: idx, outputsHash: outputsHash}, nil
 }

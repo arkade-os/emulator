@@ -42,6 +42,8 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	txCache := arkade.NewTxCache()
+	sigHashes := txscript.NewTxSigHashes(arkPtx.UnsignedTx, prevOutFetcher)
 
 	var nSigned = 0
 	for _, entry := range packet {
@@ -83,13 +85,14 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithTxCache(txCache),
 			arkade.WithExpiry(expiry),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}
 		log.Debugf("execution of %x succeeded", script.Script())
 
-		if err := matchedSigner.signInput(arkPtx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
+		if err := matchedSigner.signInput(arkPtx, inputIndex, script.Hash(), sigHashes); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
@@ -98,7 +101,10 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData
 			return nil, fmt.Errorf("failed to create prevout fetcher for checkpoint: %w", err)
 		}
 
-		if err := matchedSigner.signInput(checkpointPtx, 0, script.Hash(), checkpointPrevoutFetcher); err != nil {
+		if err := matchedSigner.signInput(
+			checkpointPtx, 0, script.Hash(),
+			txscript.NewTxSigHashes(checkpointPtx.UnsignedTx, checkpointPrevoutFetcher),
+		); err != nil {
 			return nil, fmt.Errorf("failed to sign checkpoint input %d: %w", inputIndex, err)
 		}
 

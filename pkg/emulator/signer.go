@@ -15,7 +15,7 @@ type signer struct {
 	secretKey *btcec.PrivateKey
 }
 
-func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevoutFetcher txscript.PrevOutputFetcher) error {
+func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, txSigHashes *txscript.TxSigHashes) error {
 	if len(ptx.Inputs) <= inputIndex || len(ptx.UnsignedTx.TxIn) <= inputIndex {
 		return fmt.Errorf("input index out of range, cannot sign")
 	}
@@ -61,7 +61,6 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 	}
 
 	tapLeaf := txscript.NewBaseTapLeaf(input.TaprootLeafScript[0].Script)
-	txSigHashes := txscript.NewTxSigHashes(ptx.UnsignedTx, prevoutFetcher)
 
 	signature, err := txscript.RawTxInTapscriptSignature(
 		ptx.UnsignedTx, txSigHashes, inputIndex, input.WitnessUtxo.Value,
