@@ -69,9 +69,6 @@ const (
 	// about one byte hashed, so the cap is ~8 MB of hashing per input and a
 	// request may spend requestInputBudget times as much across its inputs.
 	//
-	// ponytail: flat byte-equivalent weights rather than measured per-opcode
-	// costs; fold these opcodes into a weighted compute budget alongside
-	// ComputeLimits if finer pricing is ever needed.
 	maxInputWork = 8 << 20
 
 	// entryWork is the work charged per packet entry walked: an asset group,
