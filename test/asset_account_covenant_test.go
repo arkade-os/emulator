@@ -130,7 +130,12 @@ func TestAssetAccountCovenant(t *testing.T) {
 		checkpointScript,
 	)
 	addAssetPacketToTx(t, mintTx, createIssuanceAssetPacket(t, 0, solverAliceUSDT))
+	// FinalizeTx saves the event and returns while the projection goroutine is
+	// still inserting the VTXO. The next SubmitTx reads that table and gets
+	// VTXO_NOT_FOUND until the indexer event fired by that insert arrives.
+	waitMint := watchForPreconfirmedVtxos(t, indexerSvc, mintTx, 0)
 	submitWithArkd(t, ctx, mintTx, mintCps, aliceWallet, grpcAlice)
+	waitMint()
 
 	mintTxHash := mintTx.UnsignedTx.TxHash()
 	aliceAccountInput := vtxoInputFromScriptOutput(
@@ -149,7 +154,9 @@ func TestAssetAccountCovenant(t *testing.T) {
 	)
 	require.NoError(t, err)
 	addAssetPacketToTx(t, lockTx, createTransferAssetPacket(t, mintTxHash, 0, 0, 0, solverAliceUSDT))
+	waitLock := watchForPreconfirmedVtxos(t, indexerSvc, lockTx, 0)
 	submitWithArkd(t, ctx, lockTx, lockCps, aliceWallet, grpcAlice)
+	waitLock()
 
 	solverContractInput := vtxoInputFromScriptOutput(
 		t, lockTx.UnsignedTx, 0, solverContract, onlyForfeitScript(t, solverContract),
