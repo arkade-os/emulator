@@ -1,4 +1,4 @@
-// Package application wraps the pkg/emulator signer with arkd submit/finalize.
+// Package application signs what pkg/emulator executes, submitting to arkd.
 package application
 
 import (
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
+	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client"
 	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer"
@@ -28,23 +29,37 @@ type arkdClient interface {
 	Close()
 }
 
+type Info struct {
+	SignerPublicKey            string
+	DeprecatedSignerPublicKeys []string
+}
+
+type SignedBatchFinalization struct {
+	Forfeits     []*psbt.Packet
+	CommitmentTx *psbt.Packet
+}
+
 // Service is the emulator signer backed by arkd: it fetches the offchain data
 // the signer needs itself. Close releases the arkd clients.
 type Service interface {
-	GetInfo(context.Context) (*emulator.Info, error)
+	GetInfo(context.Context) (*Info, error)
 	SubmitTx(context.Context, emulator.OffchainTx) (*emulator.OffchainTx, error)
 	SubmitIntent(context.Context, emulator.Intent) (*psbt.Packet, error)
-	SubmitFinalization(context.Context, emulator.BatchFinalization) (*emulator.SignedBatchFinalization, error)
+	SubmitFinalization(context.Context, emulator.BatchFinalization, *tree.TxTree) (*SignedBatchFinalization, error)
 	SubmitOnchainTx(context.Context, emulator.OnchainTx) (*psbt.Packet, error)
 	Close()
 }
 
 type service struct {
-	emulator.Service
-	arkd          arkdClient
-	indexer       clientlib.Indexer
-	arkdPubKey    *btcec.PublicKey
-	signerPubKeys []*btcec.PublicKey
+	lib                      emulator.Service
+	signer                   signer
+	deprecatedSigners        []signer
+	deprecatedKeysValidUntil *time.Time
+	arkdForfeitPkScript      []byte
+	arkd                     arkdClient
+	indexer                  clientlib.Indexer
+	arkdPubKey               *btcec.PublicKey
+	signerPubKeys            []*btcec.PublicKey
 }
 
 // New connects to arkd and builds the emulator service.
@@ -53,6 +68,17 @@ func New(
 	secretKey *btcec.PrivateKey, deprecatedKeys []*btcec.PrivateKey, deprecatedKeysValidUntil *time.Time,
 	arkdURL, arkdIndexerURL string, computeLimits arkade.ComputeLimits,
 ) (Service, error) {
+	if secretKey == nil {
+		return nil, fmt.Errorf("current signer key is required")
+	}
+	deprecatedSigners := make([]signer, 0, len(deprecatedKeys))
+	for i, deprecatedKey := range deprecatedKeys {
+		if deprecatedKey == nil {
+			return nil, fmt.Errorf("deprecated signer key #%d is required", i)
+		}
+		deprecatedSigners = append(deprecatedSigners, signer{deprecatedKey})
+	}
+
 	clientVersion := "emulator/" + version
 
 	arkd, err := grpcclient.NewClient(arkdURL, clientVersion)
@@ -104,10 +130,6 @@ func New(
 		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
 	}
 
-	checkpointTapscript, err := hex.DecodeString(info.CheckpointTapscript)
-	if err != nil {
-		return nil, fmt.Errorf("invalid arkd checkpoint tapscript: %w", err)
-	}
 	network := clientlib.ToBitcoinNetwork(clientlib.NetworkFromString(info.Network))
 	forfeitAddr, err := arklib.DecodeBitcoinAddress(info.ForfeitAddress, &network)
 	if err != nil {
@@ -118,14 +140,7 @@ func New(
 		return nil, fmt.Errorf("failed to build arkd forfeit script: %w", err)
 	}
 
-	lib, err := emulator.New(
-		secretKey, deprecatedKeys, deprecatedKeysValidUntil,
-		checkpointTapscript, forfeitPkScript, computeLimits,
-		emulator.WithTrustedCommitmentTx(),
-	)
-	if err != nil {
-		return nil, err
-	}
+	lib := emulator.New(computeLimits)
 	handedOff = true
 
 	signerPubKeys := []*btcec.PublicKey{secretKey.PubKey()}
@@ -133,12 +148,39 @@ func New(
 		signerPubKeys = append(signerPubKeys, k.PubKey())
 	}
 	return &service{
-		Service:       lib,
-		arkd:          arkd,
-		indexer:       versionedIndexer{indexerClient, clientVersion},
-		arkdPubKey:    arkdPubKey,
-		signerPubKeys: signerPubKeys,
+		lib:                      lib,
+		signer:                   signer{secretKey},
+		deprecatedSigners:        deprecatedSigners,
+		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
+		arkdForfeitPkScript:      forfeitPkScript,
+		arkd:                     arkd,
+		indexer:                  versionedIndexer{indexerClient, clientVersion},
+		arkdPubKey:               arkdPubKey,
+		signerPubKeys:            signerPubKeys,
 	}, nil
+}
+
+func (s *service) GetInfo(context.Context) (*Info, error) {
+	deprecated := make([]string, 0, len(s.deprecatedSigners))
+	for _, d := range s.deprecatedSigners {
+		deprecated = append(deprecated, hex.EncodeToString(d.secretKey.PubKey().SerializeCompressed()))
+	}
+	return &Info{
+		SignerPublicKey:            hex.EncodeToString(s.signer.secretKey.PubKey().SerializeCompressed()),
+		DeprecatedSignerPublicKeys: deprecated,
+	}, nil
+}
+
+// signTx executes and signs the arkade script inputs of tx in place, even on error: do not reuse it across calls.
+func (s *service) signTx(ctx context.Context, tx emulator.OffchainTx, data emulator.OffchainData) (*emulator.OffchainTx, error) {
+	requests, err := s.lib.EmulateOffchainTx(ctx, tx, data)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.signRequests(requests); err != nil {
+		return nil, err
+	}
+	return &emulator.OffchainTx{ArkTx: tx.ArkTx, Checkpoints: tx.Checkpoints}, nil
 }
 
 // SubmitTx executes and signs arkade script for offchain tx
@@ -152,7 +194,7 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		}
 	}
 
-	outpoints, err := tx.RequiredVtxos()
+	outpoints, err := tx.ExpiryOutpoints()
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +203,7 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		return nil, err
 	}
 
-	signed, err := s.Service.SubmitTx(ctx, tx, data)
+	signed, err := s.signTx(ctx, tx, data)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +324,10 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 
 // SubmitIntent executes and signs arkade script for intent tx
 func (s *service) SubmitIntent(ctx context.Context, intent emulator.Intent) (*psbt.Packet, error) {
-	outpoints, err := intent.RequiredVtxos()
+	if err := validateIntentMessageCommitment(intent); err != nil {
+		return nil, fmt.Errorf("intent message is not committed by the proof: %w", err)
+	}
+	outpoints, err := intent.ExpiryOutpoints()
 	if err != nil {
 		return nil, err
 	}
@@ -290,13 +335,32 @@ func (s *service) SubmitIntent(ctx context.Context, intent emulator.Intent) (*ps
 	if err != nil {
 		return nil, err
 	}
-	return s.Service.SubmitIntent(ctx, intent, data)
+	requests, err := s.lib.EmulateIntent(ctx, intent, data)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.signRequests(requests); err != nil {
+		return nil, err
+	}
+	return requests[0].Packet, nil
+}
+
+// SubmitOnchainTx executes and signs arkade script for a plain Bitcoin PSBT
+func (s *service) SubmitOnchainTx(ctx context.Context, tx emulator.OnchainTx) (*psbt.Packet, error) {
+	requests, err := s.lib.EmulateOnchainTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.signRequests(requests); err != nil {
+		return nil, err
+	}
+	return tx.Tx, nil
 }
 
 // SubmitFinalization executes and sign arkade script for batch session finalization phase
 func (s *service) SubmitFinalization(
-	ctx context.Context, finalization emulator.BatchFinalization,
-) (*emulator.SignedBatchFinalization, error) {
+	ctx context.Context, finalization emulator.BatchFinalization, connectorTree *tree.TxTree,
+) (*SignedBatchFinalization, error) {
 	if finalization.CommitmentTx == nil {
 		return nil, fmt.Errorf("commitment tx is required")
 	}
@@ -312,7 +376,7 @@ func (s *service) SubmitFinalization(
 			"commitment tx %s not known to arkd indexer: %w", commitmentTxid, err,
 		)
 	}
-	return s.Service.SubmitFinalization(ctx, finalization)
+	return s.signFinalization(ctx, finalization, connectorTree)
 }
 
 func (s *service) Close() {

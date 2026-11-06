@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
+	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/psbt/v2"
 	"github.com/stretchr/testify/require"
@@ -21,7 +23,7 @@ const leakyDetail = "/opt/signer/keys/secret.db: deprecated key #3 rejected sigh
 // failingService returns an error carrying leakyDetail from every signing call.
 type failingService struct{}
 
-func (failingService) GetInfo(context.Context) (*emulator.Info, error) {
+func (failingService) GetInfo(context.Context) (*application.Info, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }
 
@@ -38,8 +40,8 @@ func (failingService) SubmitIntent(
 }
 
 func (failingService) SubmitFinalization(
-	context.Context, emulator.BatchFinalization,
-) (*emulator.SignedBatchFinalization, error) {
+	context.Context, emulator.BatchFinalization, *tree.TxTree,
+) (*application.SignedBatchFinalization, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }
 
