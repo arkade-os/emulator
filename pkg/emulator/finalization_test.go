@@ -863,8 +863,7 @@ func signedFinalizationIntent(
 	prevoutFetcher, err := computePrevoutFetcher(ptx)
 	require.NoError(t, err)
 	require.NoError(t, (signer{emulatorKey}).signInput(
-		ptx, 1, arkade.ArkadeScriptHash(arkadeScript),
-		txscript.NewTxSigHashes(ptx.UnsignedTx, prevoutFetcher),
+		ptx, 1, arkade.ArkadeScriptHash(arkadeScript), prevoutFetcher,
 	))
 
 	return Intent{Proof: arkintent.Proof{Packet: *ptx}}

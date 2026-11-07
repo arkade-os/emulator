@@ -10,7 +10,6 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/psbt/v2"
-	"github.com/btcsuite/btcd/txscript/v2"
 	"github.com/btcsuite/btcd/wire/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -50,7 +49,6 @@ func (s *service) SubmitIntent(
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
 	txCache := arkade.NewTxCache()
-	sigHashes := txscript.NewTxSigHashes(ptx.UnsignedTx, prevOutFetcher)
 
 	var nSigned = 0
 	for _, entry := range packet {
@@ -92,7 +90,7 @@ func (s *service) SubmitIntent(
 			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
 		}
 
-		if err := matchedSigner.signInput(ptx, inputIndex, script.Hash(), sigHashes); err != nil {
+		if err := matchedSigner.signInput(ptx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
@@ -107,7 +105,7 @@ func (s *service) SubmitIntent(
 				return nil, fmt.Errorf("message input script does not match input 1 script")
 			}
 
-			if err := matchedSigner.signInput(ptx, 0, script.Hash(), sigHashes); err != nil {
+			if err := matchedSigner.signInput(ptx, 0, script.Hash(), prevOutFetcher); err != nil {
 				return nil, fmt.Errorf("failed to sign fake message input: %w", err)
 			}
 		}

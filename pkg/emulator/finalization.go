@@ -96,8 +96,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 				return nil, err
 			}
 			if err := association.signer.signInput(
-				forfeit, inputIndex, association.script.Hash(),
-				txscript.NewTxSigHashes(forfeit.UnsignedTx, prevoutFetcher),
+				forfeit, inputIndex, association.script.Hash(), prevoutFetcher,
 			); err != nil {
 				return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 			}
@@ -120,7 +119,6 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 		return nil, fmt.Errorf("failed to create prevout fetcher for commitment tx: %w", err)
 	}
 
-	sigHashes := txscript.NewTxSigHashes(finalization.CommitmentTx.UnsignedTx, prevoutFetcher)
 	signed := false
 
 	for inputIndex, input := range finalization.CommitmentTx.UnsignedTx.TxIn {
@@ -135,7 +133,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 		}
 
 		if err := association.signer.signInput(
-			finalization.CommitmentTx, inputIndex, association.script.Hash(), sigHashes,
+			finalization.CommitmentTx, inputIndex, association.script.Hash(), prevoutFetcher,
 		); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}

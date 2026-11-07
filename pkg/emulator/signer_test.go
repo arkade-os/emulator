@@ -172,7 +172,7 @@ func TestSignInputRejectsUncommittedTaprootLeaf(t *testing.T) {
 	t.Run("committed leaf is signed", func(t *testing.T) {
 		ptx, fetcher := newSignableInput(t, signerKey, arkadeScript)
 
-		err := signer{signerKey}.signInput(ptx, 0, tweak, txscript.NewTxSigHashes(ptx.UnsignedTx, fetcher))
+		err := signer{signerKey}.signInput(ptx, 0, tweak, fetcher)
 		require.NoError(t, err)
 		require.Len(t, ptx.Inputs[0].TaprootScriptSpendSig, 1)
 	})
@@ -191,7 +191,7 @@ func TestSignInputRejectsUncommittedTaprootLeaf(t *testing.T) {
 		require.NoError(t, err)
 		ptx.Inputs[0].TaprootLeafScript[0].Script = forgedScript
 
-		err = signer{signerKey}.signInput(ptx, 0, tweak, txscript.NewTxSigHashes(ptx.UnsignedTx, fetcher))
+		err = signer{signerKey}.signInput(ptx, 0, tweak, fetcher)
 		require.ErrorContains(t, err, "not committed")
 		require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
 	})
@@ -200,7 +200,7 @@ func TestSignInputRejectsUncommittedTaprootLeaf(t *testing.T) {
 		ptx, fetcher := newSignableInput(t, signerKey, arkadeScript)
 		ptx.Inputs[0].TaprootLeafScript[0].ControlBlock = nil
 
-		err := signer{signerKey}.signInput(ptx, 0, tweak, txscript.NewTxSigHashes(ptx.UnsignedTx, fetcher))
+		err := signer{signerKey}.signInput(ptx, 0, tweak, fetcher)
 		require.ErrorContains(t, err, "control block")
 		require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
 	})
@@ -233,7 +233,7 @@ func TestSignInputRejectsPartialSighashTypes(t *testing.T) {
 			ptx, fetcher := newSignableInput(t, signerKey, arkadeScript)
 			ptx.Inputs[0].SighashType = sigHashType
 
-			err := signer{signerKey}.signInput(ptx, 0, tweak, txscript.NewTxSigHashes(ptx.UnsignedTx, fetcher))
+			err := signer{signerKey}.signInput(ptx, 0, tweak, fetcher)
 			require.NoError(t, err)
 			require.Len(t, ptx.Inputs[0].TaprootScriptSpendSig, 1)
 		})
@@ -244,7 +244,7 @@ func TestSignInputRejectsPartialSighashTypes(t *testing.T) {
 			ptx, fetcher := newSignableInput(t, signerKey, arkadeScript)
 			ptx.Inputs[0].SighashType = sigHashType
 
-			err := signer{signerKey}.signInput(ptx, 0, tweak, txscript.NewTxSigHashes(ptx.UnsignedTx, fetcher))
+			err := signer{signerKey}.signInput(ptx, 0, tweak, fetcher)
 			require.ErrorContains(t, err, "sighash type")
 			require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
 		})
@@ -418,7 +418,7 @@ func TestSignInputRejectsUnsafeSighashTypes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ptx := newPacket(t, tc.sighashType)
 
-			err := signer{key}.signInput(ptx, 0, nil, txscript.NewTxSigHashes(ptx.UnsignedTx, prevoutFetcher))
+			err := signer{key}.signInput(ptx, 0, nil, prevoutFetcher)
 
 			if tc.accepted {
 				require.NoError(t, err)

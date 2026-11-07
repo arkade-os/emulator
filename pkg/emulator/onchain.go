@@ -7,7 +7,6 @@ import (
 
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/psbt/v2"
-	"github.com/btcsuite/btcd/txscript/v2"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -32,7 +31,6 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
 	txCache := arkade.NewTxCache()
-	sigHashes := txscript.NewTxSigHashes(ptx.UnsignedTx, prevOutFetcher)
 
 	nSigned := 0
 
@@ -60,7 +58,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 		}
 		log.Debugf("execution of %x succeeded", script.Script())
 
-		if err := matchedSigner.signInput(ptx, inputIndex, script.Hash(), sigHashes); err != nil {
+		if err := matchedSigner.signInput(ptx, inputIndex, script.Hash(), prevOutFetcher); err != nil {
 			return nil, fmt.Errorf("failed to sign input %d: %w", inputIndex, err)
 		}
 
