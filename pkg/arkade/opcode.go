@@ -19,11 +19,11 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
@@ -225,7 +225,8 @@ const (
 	OP_CHECKLOCKTIMEVERIFY = 0xb1 // 177 - AKA OP_NOP2
 	OP_NOP3                = 0xb2 // 178
 	OP_CHECKSEQUENCEVERIFY = 0xb2 // 178 - AKA OP_NOP3
-	OP_MERKLEBRANCHVERIFY  = 0xb3 // 179
+	OP_MERKLEBRANCHROOT    = 0xb3 // 179
+	OP_MERKLEBRANCHVERIFY  = OP_MERKLEBRANCHROOT
 	OP_NOP5                = 0xb4 // 180
 	OP_NOP6                = 0xb5 // 181
 	OP_NOP7                = 0xb6 // 182
@@ -281,7 +282,7 @@ const (
 	OP_REVERSEBYTES                  = 0xd9 // 217
 	OP_MODEXP                        = 0xda // 218
 	OP_PUSHEXPIRY                    = 0xdb // 219
-	OP_CHECKTIMEVERIFY               = 0xdc // 220
+	OP_CHECKTIME                     = 0xdc // 220
 	OP_UNKNOWN221                    = 0xdd // 221
 	OP_UNKNOWN222                    = 0xde // 222
 	OP_UNKNOWN223                    = 0xdf // 223
@@ -524,14 +525,14 @@ var opcodeArray = [256]opcode{
 	OP_CHECKSIGADD:         {OP_CHECKSIGADD, "OP_CHECKSIGADD", 1, opcodeCheckSigAdd},
 
 	// Reserved opcodes.
-	OP_NOP1:               {OP_NOP1, "OP_NOP1", 1, opcodeNop},
-	OP_MERKLEBRANCHVERIFY: {OP_MERKLEBRANCHVERIFY, "OP_MERKLEBRANCHVERIFY", 1, opcodeMerkleBranchVerify},
-	OP_NOP5:               {OP_NOP5, "OP_NOP5", 1, opcodeNop},
-	OP_NOP6:               {OP_NOP6, "OP_NOP6", 1, opcodeNop},
-	OP_NOP7:               {OP_NOP7, "OP_NOP7", 1, opcodeNop},
-	OP_NOP8:               {OP_NOP8, "OP_NOP8", 1, opcodeNop},
-	OP_NOP9:               {OP_NOP9, "OP_NOP9", 1, opcodeNop},
-	OP_NOP10:              {OP_NOP10, "OP_NOP10", 1, opcodeNop},
+	OP_NOP1:             {OP_NOP1, "OP_NOP1", 1, opcodeNop},
+	OP_MERKLEBRANCHROOT: {OP_MERKLEBRANCHROOT, "OP_MERKLEBRANCHROOT", 1, opcodeMerkleBranchRoot},
+	OP_NOP5:             {OP_NOP5, "OP_NOP5", 1, opcodeNop},
+	OP_NOP6:             {OP_NOP6, "OP_NOP6", 1, opcodeNop},
+	OP_NOP7:             {OP_NOP7, "OP_NOP7", 1, opcodeNop},
+	OP_NOP8:             {OP_NOP8, "OP_NOP8", 1, opcodeNop},
+	OP_NOP9:             {OP_NOP9, "OP_NOP9", 1, opcodeNop},
+	OP_NOP10:            {OP_NOP10, "OP_NOP10", 1, opcodeNop},
 
 	OP_PUT: {OP_PUT, "OP_PUT", 1, opcodePut},
 
@@ -583,7 +584,7 @@ var opcodeArray = [256]opcode{
 	OP_REVERSEBYTES:                  {OP_REVERSEBYTES, "OP_REVERSEBYTES", 1, opcodeReverseBytes},
 	OP_MODEXP:                        {OP_MODEXP, "OP_MODEXP", 1, opcodeModexp},
 	OP_PUSHEXPIRY:                    {OP_PUSHEXPIRY, "OP_PUSHEXPIRY", 1, opcodePushExpiry},
-	OP_CHECKTIMEVERIFY:               {OP_CHECKTIMEVERIFY, "OP_CHECKTIMEVERIFY", 1, opcodeCheckTimeVerify},
+	OP_CHECKTIME:                     {OP_CHECKTIME, "OP_CHECKTIME", 1, opcodeCheckTime},
 	OP_UNKNOWN221:                    {OP_UNKNOWN221, "OP_UNKNOWN221", 1, opcodeInvalid},
 	OP_UNKNOWN222:                    {OP_UNKNOWN222, "OP_UNKNOWN222", 1, opcodeInvalid},
 	OP_UNKNOWN223:                    {OP_UNKNOWN223, "OP_UNKNOWN223", 1, opcodeInvalid},
@@ -979,10 +980,10 @@ func opcodeCheckLockTimeVerify(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeCheckTimeVerify checks that the Unix timestamp on top of the data
-// stack is not later than the emulator's current time.
-// Stack transformation: [... timestamp] -> [...]
-func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
+// opcodeCheckTime checks whether the Unix timestamp on top of the data stack
+// is not later than the emulator's current time.
+// Stack transformation: [... timestamp] -> [... bool]
+func opcodeCheckTime(_ *opcode, _ []byte, vm *Engine) error {
 	n, err := vm.dstack.PopBigNum()
 	if err != nil {
 		return err
@@ -991,11 +992,7 @@ func opcodeCheckTimeVerify(_ *opcode, _ []byte, vm *Engine) error {
 		return scriptError(txscript.ErrNegativeLockTime,
 			fmt.Sprintf("negative timestamp: %s", n.BigInt().Text(10)))
 	}
-	if n.Cmp(vm.currentTime) > 0 {
-		return scriptError(txscript.ErrUnsatisfiedLockTime,
-			fmt.Sprintf("timestamp is later than emulator time: %s > %s",
-				n.BigInt().Text(10), vm.currentTime.BigInt().Text(10)))
-	}
+	vm.dstack.PushBool(n.Cmp(vm.currentTime) <= 0)
 	return nil
 }
 
@@ -2012,10 +2009,7 @@ func opcodeCheckMultiSigVerify(op *opcode, data []byte, vm *Engine) error {
 var OpcodeByName = make(map[string]byte)
 
 func init() {
-	// Initialize the opcode name to value map using the contents of the
-	// opcode array.  Also add entries for "OP_FALSE", "OP_TRUE", and
-	// "OP_NOP2" since they are aliases for "OP_0", "OP_1",
-	// and "OP_CHECKLOCKTIMEVERIFY" respectively.
+	// Initialize the opcode name to value map, including aliases.
 	for _, op := range opcodeArray {
 		OpcodeByName[op.name] = op.value
 	}
@@ -2023,6 +2017,7 @@ func init() {
 	OpcodeByName["OP_TRUE"] = OP_TRUE
 	OpcodeByName["OP_NOP2"] = OP_CHECKLOCKTIMEVERIFY
 	OpcodeByName["OP_NOP3"] = OP_CHECKSEQUENCEVERIFY
+	OpcodeByName["OP_MERKLEBRANCHVERIFY"] = OP_MERKLEBRANCHROOT
 }
 
 // opcodeInspectInputOutpoint pops the input index from the stack and pushes the outpoint of the current input onto the stack.
@@ -2888,7 +2883,7 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 	return nil
 }
 
-// opcodeMerkleBranchVerify computes a Merkle root from a leaf and proof
+// opcodeMerkleBranchRoot computes a Merkle root from a leaf and proof
 // path using BIP-341 tagged hashes with lexicographic sibling ordering.
 //
 // Stack inputs (top to bottom): leaf_data, proof, branch_tag, leaf_tag
@@ -2900,7 +2895,7 @@ func opcodeSha256Finalize(op *opcode, _ []byte, vm *Engine) error {
 //
 // At each proof step, siblings are sorted lexicographically before
 // hashing: tagged_hash(branch_tag, min || max).
-func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
+func opcodeMerkleBranchRoot(op *opcode, data []byte, vm *Engine) error {
 	// Pop leaf_data
 	leafData, err := vm.dstack.PopByteArray()
 	if err != nil {
@@ -2970,7 +2965,7 @@ func opcodeMerkleBranchVerify(op *opcode, data []byte, vm *Engine) error {
 // opcodeTxId pushes the hash of the current transaction onto the stack.
 // Stack transformation: [...] -> [... txid]
 func opcodeTxId(op *opcode, data []byte, vm *Engine) error {
-	txHash := vm.tx.TxHash()
+	txHash := vm.txID()
 	vm.dstack.PushByteArray(txHash[:])
 	return nil
 }

@@ -2,7 +2,7 @@ name: Release Binaries and Docker Build
 
 on:
   release:
-    types: [released]
+    types: [released, prereleased]
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
         with:
-          go-version: 1.26.6
+          go-version-file: go.mod
 
       - name: Build binaries
         run: make build-all

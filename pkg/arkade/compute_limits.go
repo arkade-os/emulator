@@ -5,7 +5,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 )
 
 // ComputeLimits maps an opcode to the maximum number of times it may execute

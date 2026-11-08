@@ -2,7 +2,7 @@ package test
 
 import (
 	"encoding/hex"
-	arksdk "github.com/arkade-os/go-sdk"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"strings"
 	"testing"
 
@@ -11,13 +11,12 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,10 +144,10 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 
 	fundingPkScript, err := script.P2TRScript(fundingTapKey)
 	require.NoError(t, err)
-	spendableVtxos, _, err := alice.ListVtxos(ctx, arksdk.WithSpendableOnly())
+	spendableVtxos, _, err := alice.ListVtxos(ctx)
 	require.NoError(t, err)
 
-	var fundingVtxo types.Vtxo
+	var fundingVtxo clientlib.Vtxo
 	for _, vtxo := range spendableVtxos {
 		if vtxo.Script == hex.EncodeToString(fundingPkScript) {
 			fundingVtxo = vtxo
@@ -228,11 +227,12 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 	readerAddr, err := readerAddress.EncodeV0()
 	require.NoError(t, err)
 
-	readerTxid, err := alice.SendOffChain(
+	readerTxidRes, err := alice.SendOffChain(
 		ctx,
-		[]types.Receiver{{To: readerAddr, Amount: 10000}},
+		[]clientlib.Receiver{{To: readerAddr, Amount: 10000}},
 	)
 	require.NoError(t, err)
+	readerTxid := readerTxidRes.Txid
 	require.NotEmpty(t, readerTxid)
 
 	readerTxs, err := indexerSvc.GetVirtualTxs(ctx, []string{readerTxid})

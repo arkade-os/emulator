@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	batchsessionhandler "github.com/arkade-os/arkd/pkg/client-lib/batch-session/handler"
 	"testing"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
@@ -11,18 +13,13 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
-	"github.com/arkade-os/arkd/pkg/client-lib/client"
-	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
-	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
-	"github.com/arkade-os/arkd/pkg/client-lib/identity"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,15 +133,13 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := types.VtxoWithTapTree{
-		Vtxo: types.Vtxo{
-			Outpoint: types.Outpoint{
-				Txid: deployTx.UnsignedTx.TxHash().String(),
-				VOut: 0,
-			},
-			Script: hex.EncodeToString(counterTapscript),
-			Amount: uint64(counterVtxoAmount),
+	vtxo := clientlib.Vtxo{
+		Outpoint: clientlib.Outpoint{
+			Txid: deployTx.UnsignedTx.TxHash().String(),
+			VOut: 0,
 		},
+		Script:     hex.EncodeToString(counterTapscript),
+		Amount:     uint64(counterVtxoAmount),
 		Tapscripts: counterRevealedTapscripts,
 	}
 
@@ -152,7 +147,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		delegateBatchEventsHandler: &delegateBatchEventsHandler{
 			intentId:       intentId,
 			intent:         signedIntent,
-			vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
+			vtxosToForfeit: []clientlib.Vtxo{vtxo},
 			signerSession:  signerSession,
 			emulatorClient: emulatorClient,
 			wallet:         aliceWallet,
@@ -161,8 +156,8 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		},
 	}
 
-	topics := clientlib.GetEventStreamTopics(
-		[]types.Outpoint{vtxo.Outpoint},
+	topics := getEventStreamTopics(
+		[]clientlib.Outpoint{vtxo.Outpoint},
 		[]tree.SignerSession{signerSession},
 	)
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
@@ -171,7 +166,7 @@ func TestCounterContractBatchContinuation(t *testing.T) {
 		stop()
 	})
 
-	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, batchHandler)
+	commitmentTxid, _, _, _, _, err := batchsessionhandler.JoinBatchSession(ctx, eventStream, batchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 	require.NotNil(t, batchHandler.vtxoTree)
@@ -224,7 +219,7 @@ type capturingBatchEventsHandler struct {
 
 func (h *capturingBatchEventsHandler) OnBatchFinalization(
 	ctx context.Context,
-	event client.BatchFinalizationEvent,
+	event clientlib.BatchFinalizationEvent,
 	vtxoTree, connectorTree *tree.TxTree,
 ) ([]string, error) {
 	h.vtxoTree = vtxoTree
@@ -325,8 +320,8 @@ func buildCounterIncrementIntent(
 func signAndSubmitCounterIntent(
 	t *testing.T,
 	ctx context.Context,
-	walletSvc identity.Identity,
-	explorerSvc explorer.Explorer,
+	walletSvc clientlib.Identity,
+	explorerSvc clientlib.Explorer,
 	emulatorClient emulatorclient.TransportClient,
 	intentPtx *psbt.Packet,
 	message string,

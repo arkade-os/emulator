@@ -5,8 +5,8 @@ import (
 	"maps"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
 )
 
 const (
@@ -89,7 +89,7 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 	}
 	if flags&TunnelAssets != 0 {
 		if err := tunnelAssets(
-			vm.tx.TxHash(), vm.assetPacket, vm.txIdx, int(outputIndex), exceptions,
+			vm.txID(), vm.assetPacket, vm.txIdx, int(outputIndex), exceptions,
 		); err != nil {
 			return err
 		}

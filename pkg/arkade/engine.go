@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 const (
@@ -153,6 +153,10 @@ type Engine struct {
 	// default, in which case only the per-input limits apply.
 	limits ComputeLimits
 	budget *ComputeBudget
+
+	// memoized: the tx is immutable and may weigh ~1 MB
+	txHash *chainhash.Hash
+	masked *maskedTx
 
 	// stepCallback is an optional function that will be called every time
 	// a step has been performed during script execution.
@@ -771,4 +775,12 @@ func checkScriptParses(scriptVersion uint16, script []byte) error {
 		// Nothing to do.
 	}
 	return tokenizer.Err()
+}
+
+func (vm *Engine) txID() chainhash.Hash {
+	if vm.txHash == nil {
+		h := vm.tx.TxHash()
+		vm.txHash = &h
+	}
+	return *vm.txHash
 }

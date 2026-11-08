@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/txscript/v2"
 	gnarkbn254 "github.com/consensys/gnark-crypto/ecc/bn254"
 	gnarkbn254fp "github.com/consensys/gnark-crypto/ecc/bn254/fp"
 	gnarksecp256k1 "github.com/consensys/gnark-crypto/ecc/secp256k1"
@@ -118,7 +118,7 @@ func TestECPairingOutOfFieldG2Coordinate(t *testing.T) {
 	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
 	mod := gnarkbn254fp.Modulus()
 	cases := []struct {
-		name                       string
+		name               string
 		xC0, xC1, yC0, yC1 *big.Int
 	}{
 		{"g2_x_c0_eq_mod", mod, g2xC1, g2yC0, g2yC1},
@@ -151,7 +151,7 @@ func TestECPairingNegativeG2Coordinate(t *testing.T) {
 	g2xC0, g2xC1, g2yC0, g2yC1 := bn254G2Gen()
 	negOne := []byte{0x81} // canonical minimal encoding of -1
 	cases := []struct {
-		name string
+		name               string
 		xC0, xC1, yC0, yC1 []byte
 	}{
 		{"g2_x_c0_negative", negOne, bnBytes(g2xC1), bnBytes(g2yC0), bnBytes(g2yC1)},

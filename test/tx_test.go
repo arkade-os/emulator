@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	batchsessionhandler "github.com/arkade-os/arkd/pkg/client-lib/batch-session/handler"
 	"io"
 	"log"
 	"net/http"
@@ -23,26 +25,22 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
-	"github.com/arkade-os/arkd/pkg/client-lib/client"
-	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client/grpc"
-	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
-	"github.com/arkade-os/arkd/pkg/client-lib/identity"
-	singlekeywallet "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey"
-	inmemorystore "github.com/arkade-os/arkd/pkg/client-lib/identity/singlekey/store/inmemory"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer/grpc"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	grpcindexer "github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	clientwallet "github.com/arkade-os/arkd/pkg/client-wallet"
+	singlekeywallet "github.com/arkade-os/arkd/pkg/client-wallet/identity"
+	inmemorystore "github.com/arkade-os/arkd/pkg/client-wallet/identity/store/inmemory"
+	walletstore "github.com/arkade-os/arkd/pkg/client-wallet/store/inmemory"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	arksdk "github.com/arkade-os/go-sdk"
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -166,8 +164,9 @@ func TestSubmitOffchain(t *testing.T) {
 	t.Run("single_input_invalid_script", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 10000)
 
-		txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: bobPaysAliceContractAddrStr, Amount: 10000}})
+		txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: bobPaysAliceContractAddrStr, Amount: 10000}})
 		require.NoError(t, err)
+		txid := txidRes.Txid
 
 		fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 		require.NoError(t, err)
@@ -225,8 +224,9 @@ func TestSubmitOffchain(t *testing.T) {
 	t.Run("single_input_missing_checkpoint_signature", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 10000)
 
-		txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: bobPaysAliceContractAddrStr, Amount: 10000}})
+		txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: bobPaysAliceContractAddrStr, Amount: 10000}})
 		require.NoError(t, err)
+		txid := txidRes.Txid
 
 		fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 		require.NoError(t, err)
@@ -280,8 +280,9 @@ func TestSubmitOffchain(t *testing.T) {
 	t.Run("single_input_success", func(t *testing.T) {
 		fundAndSettleAlice(t, ctx, alice, 10000)
 
-		txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: bobPaysAliceContractAddrStr, Amount: 10000}})
+		txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: bobPaysAliceContractAddrStr, Amount: 10000}})
 		require.NoError(t, err)
+		txid := txidRes.Txid
 
 		fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 		require.NoError(t, err)
@@ -343,8 +344,9 @@ func TestSubmitOffchain(t *testing.T) {
 		require.NoError(t, err)
 		addrBStr, err := addrB.EncodeV0()
 		require.NoError(t, err)
-		txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
+		txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
 		require.NoError(t, err)
+		txid := txidRes.Txid
 		fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 		require.NoError(t, err)
 		redeemPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTx.Txs[0]), true)
@@ -400,8 +402,9 @@ func TestSubmitOffchain(t *testing.T) {
 		require.NoError(t, err)
 		addrBStr, err := addrB.EncodeV0()
 		require.NoError(t, err)
-		txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
+		txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
 		require.NoError(t, err)
+		txid := txidRes.Txid
 		fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 		require.NoError(t, err)
 		redeemPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTx.Txs[0]), true)
@@ -453,8 +456,9 @@ func TestSubmitOffchain(t *testing.T) {
 		require.NoError(t, err)
 		addrBStr, err := addrB.EncodeV0()
 		require.NoError(t, err)
-		txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
+		txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
 		require.NoError(t, err)
+		txid := txidRes.Txid
 		fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 		require.NoError(t, err)
 		redeemPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTx.Txs[0]), true)
@@ -512,8 +516,9 @@ func TestSubmitOffchain(t *testing.T) {
 		require.NoError(t, err)
 		addrBStr, err := addrB.EncodeV0()
 		require.NoError(t, err)
-		txid, err := alice.SendOffChain(ctx, []types.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
+		txidRes, err := alice.SendOffChain(ctx, []clientlib.Receiver{{To: addrAStr, Amount: 10000}, {To: addrBStr, Amount: 10000}})
 		require.NoError(t, err)
+		txid := txidRes.Txid
 		fundingTx, err := indexerSvc.GetVirtualTxs(ctx, []string{txid})
 		require.NoError(t, err)
 		redeemPtx, err := psbt.NewFromRawBytes(strings.NewReader(fundingTx.Txs[0]), true)
@@ -624,10 +629,11 @@ func TestSettlement(t *testing.T) {
 	contractAddressStr, err := contractAddress.EncodeV0()
 	require.NoError(t, err)
 
-	txid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: contractAddressStr, Amount: sendAmount}},
+	txidRes, err := alice.SendOffChain(
+		ctx, []clientlib.Receiver{{To: contractAddressStr, Amount: sendAmount}},
 	)
 	require.NoError(t, err)
+	txid := txidRes.Txid
 	require.NotEmpty(t, txid)
 
 	indexerSvc := setupIndexer(t)
@@ -738,36 +744,34 @@ func TestSettlement(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := types.VtxoWithTapTree{
-		Vtxo: types.Vtxo{
-			Outpoint: types.Outpoint{
-				Txid: redeemPtx.UnsignedTx.TxHash().String(),
-				VOut: contractOutputIndex,
-			},
-			Script: hex.EncodeToString(arkadeTapscript),
-			Amount: uint64(contractOutput.Value),
+	vtxo := clientlib.Vtxo{
+		Outpoint: clientlib.Outpoint{
+			Txid: redeemPtx.UnsignedTx.TxHash().String(),
+			VOut: contractOutputIndex,
 		},
+		Script:     hex.EncodeToString(arkadeTapscript),
+		Amount:     uint64(contractOutput.Value),
 		Tapscripts: tapscripts,
 	}
 
 	emulatorBatchHandler := &delegateBatchEventsHandler{
 		intentId:       intentId,
 		intent:         signedIntent,
-		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
+		vtxosToForfeit: []clientlib.Vtxo{vtxo},
 		signerSession:  treeSignerSession,
 		emulatorClient: emulatorClient,
 		wallet:         bobWallet,
 		client:         grpcClient,
 	}
 
-	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
+	topics := getEventStreamTopics([]clientlib.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		stop()
 	})
 
-	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
+	commitmentTxid, _, _, _, _, err := batchsessionhandler.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }
@@ -788,7 +792,7 @@ func TestBoarding(t *testing.T) {
 	bobWallet, err := singlekeywallet.NewIdentity(walletStore)
 	require.NoError(t, err)
 
-	_, err = bobWallet.Create(ctx, chaincfg.RegressionNetParams, password, hex.EncodeToString(bobPrivKey.Serialize()))
+	_, err = bobWallet.Create(ctx, arklib.BitcoinRegTest, password, hex.EncodeToString(bobPrivKey.Serialize()))
 	require.NoError(t, err)
 
 	_, err = bobWallet.Unlock(ctx, password)
@@ -870,7 +874,7 @@ func TestBoarding(t *testing.T) {
 	require.NoError(t, err)
 
 	// compute the P2TR bitcoin address for the contract
-	contractBtcAddr, err := btcutil.NewAddressTaproot(
+	contractBtcAddr, err := address.NewAddressTaproot(
 		schnorr.SerializePubKey(vtxoTapKey), &chaincfg.RegressionNetParams,
 	)
 	require.NoError(t, err)
@@ -999,15 +1003,13 @@ func TestBoarding(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := types.VtxoWithTapTree{
-		Vtxo: types.Vtxo{
-			Outpoint: types.Outpoint{
-				Txid: faucetMsgTx.TxHash().String(),
-				VOut: contractOutputIndex,
-			},
-			Script: hex.EncodeToString(arkadeTapscript),
-			Amount: uint64(contractOutput.Value),
+	vtxo := clientlib.Vtxo{
+		Outpoint: clientlib.Outpoint{
+			Txid: faucetMsgTx.TxHash().String(),
+			VOut: contractOutputIndex,
 		},
+		Script:     hex.EncodeToString(arkadeTapscript),
+		Amount:     uint64(contractOutput.Value),
 		Tapscripts: tapscripts,
 	}
 
@@ -1024,14 +1026,14 @@ func TestBoarding(t *testing.T) {
 		boardingVtxo: vtxo,
 	}
 
-	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
+	topics := getEventStreamTopics([]clientlib.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		stop()
 	})
 
-	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
+	commitmentTxid, _, _, _, _, err := batchsessionhandler.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }
@@ -1100,10 +1102,11 @@ func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 	bobAddrStr, err := bobAddr.EncodeV0()
 	require.NoError(t, err)
 
-	txid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: bobAddrStr, Amount: sendAmount}},
+	txidRes, err := alice.SendOffChain(
+		ctx, []clientlib.Receiver{{To: bobAddrStr, Amount: sendAmount}},
 	)
 	require.NoError(t, err)
+	txid := txidRes.Txid
 	require.NotEmpty(t, txid)
 
 	indexerSvc := setupIndexer(t)
@@ -1271,9 +1274,12 @@ func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 	}
 }
 
-const password = "password"
+const (
+	password         = "password"
+	e2eClientVersion = "emulator-e2e"
+)
 
-func setupIndexer(t *testing.T) indexer.Indexer {
+func setupIndexer(t *testing.T) clientlib.Indexer {
 	svc, err := grpcindexer.NewClient("localhost:7070")
 	require.NoError(t, err)
 	return &recordingIndexer{Indexer: svc}
@@ -1281,7 +1287,7 @@ func setupIndexer(t *testing.T) indexer.Indexer {
 
 func setupArkSDKwithPublicKey(
 	t *testing.T,
-) (arksdk.Wallet, identity.Identity, *btcec.PublicKey, client.Client) {
+) (clientwallet.Wallet, clientlib.Identity, *btcec.PublicKey, clientlib.Client) {
 	walletStore, err := inmemorystore.NewStore()
 	require.NoError(t, err)
 
@@ -1291,30 +1297,33 @@ func setupArkSDKwithPublicKey(
 	privkey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
 
-	client, err := arksdk.NewWallet(t.TempDir(), arksdk.WithIdentity(wallet))
+	store, err := walletstore.NewStore()
+	require.NoError(t, err)
+
+	client, err := clientwallet.NewWallet(
+		store, clientwallet.WithIdentity(wallet), clientwallet.WithClientVersion(e2eClientVersion),
+	)
 	require.NoError(t, err)
 	t.Cleanup(client.Stop)
 
-	err = client.Init(
-		t.Context(), "localhost:7070", hex.EncodeToString(privkey.Serialize()), password,
-		arksdk.WithExplorerURL("http://localhost:3000"),
-	)
+	err = client.Init(t.Context(), clientwallet.InitArgs{
+		ServerUrl:   "localhost:7070",
+		Seed:        hex.EncodeToString(privkey.Serialize()),
+		Password:    password,
+		ExplorerURL: "http://localhost:3000",
+	})
 	require.NoError(t, err)
 
 	err = client.Unlock(t.Context(), password)
 	require.NoError(t, err)
 
-	synced := <-client.IsSynced(t.Context())
-	require.NoError(t, synced.Err)
-	require.True(t, synced.Synced)
-
-	grpcClient, err := grpcclient.NewClient("localhost:7070", arksdk.HeaderVersion)
+	grpcClient, err := grpcclient.NewClient("localhost:7070", e2eClientVersion)
 	require.NoError(t, err)
 
 	return client, wallet, privkey.PubKey(), grpcClient
 }
 
-func setupArkSDK(t *testing.T) (arksdk.Wallet, client.Client) {
+func setupArkSDK(t *testing.T) (clientwallet.Wallet, clientlib.Client) {
 	alice, _, _, grpcAlice := setupArkSDKwithPublicKey(t)
 	return alice, grpcAlice
 }

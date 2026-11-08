@@ -179,5 +179,8 @@ func parsePrivateKey(keyHex, name string) (*btcec.PrivateKey, error) {
 }
 
 func (c *Config) AppService(ctx context.Context, version string) (application.Service, error) {
-	return application.New(ctx, version, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil, c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits)
+	return application.New(
+		ctx, version, c.CurrentKey, c.DeprecatedKeys, c.DeprecatedKeysValidUntil,
+		c.ArkdURL, c.ArkdIndexerURL, c.ComputeLimits,
+	)
 }

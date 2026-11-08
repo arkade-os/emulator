@@ -1,5 +1,6 @@
 # Emulator
 
+[![Go version](https://img.shields.io/github/go-mod/go-version/arkade-os/emulator?filename=go.mod)](go.mod)
 [![test](https://github.com/arkade-os/emulator/actions/workflows/test.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/test.yaml)
 [![quality](https://github.com/arkade-os/emulator/actions/workflows/quality.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/quality.yaml)
 [![Trivy Security Scan](https://github.com/arkade-os/emulator/actions/workflows/trivy.yaml/badge.svg)](https://github.com/arkade-os/emulator/actions/workflows/trivy.yaml)
@@ -71,10 +72,10 @@ When the emulator receives a transaction, it:
 Renewing a VTXO through every Arkade batch settlement without the owner — permanent delegation — is expressed with `OP_TUNNEL`:
 
 ```
-<output_index> <flags> OP_TUNNEL
+<output_index> <flags> 0 OP_TUNNEL
 ```
 
-`OP_TUNNEL` succeeds when the output at `output_index` preserves the fields of the current input selected by `flags` (`1` scriptPubKey, `2` value, `4` assets — combinable). See the [opcode table](#transaction-introspection-transaction) for the full stack signature.
+`OP_TUNNEL` succeeds when the output at `output_index` preserves the fields of the current input selected by `flags` (`1` scriptPubKey, `2` value, `4` assets — combinable). The trailing `0` specifies no asset exceptions. See the [opcode table](#transaction-introspection-transaction) for the full stack signature.
 
 ### Arkade Script examples
 
@@ -197,8 +198,6 @@ Conditionally signs forfeit and/or boarding inputs during batch finalization. On
 
 Validates and signs the inputs of a plain Bitcoin transaction whose tapscripts contain the emulator's tweaked key (e.g. a VTXO unrolled on-chain). Each input may carry an optional `PrevoutTxField` PSBT unknown field (key `"prevouttx"`) holding the raw previous transaction, required only by Arkade opcodes that introspect it.
 
-Inputs whose tapscript closure also contains the `arkd` signer pubkey are rejected — those must go through [`SubmitTx`](#submittx) so checkpoint and forfeit checks are enforced.
-
 **Endpoint**: `POST /v1/onchain-tx`
 
 **Request**:
@@ -271,7 +270,7 @@ The service can be configured using environment variables:
 | `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
 | `EMULATOR_ARKD_INDEXER_URL` | URL of the `arkd` indexer used to verify commitment txs in [`SubmitFinalization`](#submitfinalization) | `EMULATOR_ARKD_URL` |
 | `EMULATOR_COMPUTE_LIMITS` | Comma-separated `OPCODE=limit` overrides for per-input opcode execution caps, for example `OP_ECPAIRING=8,OP_MODEXP=128`. Overrides are applied on top of defaults; use an empty value such as `OP_ECADD=` to remove a default cap. | Default compute limits |
-| `EMULATOR_OTEL_TOKEN` | Bearer token for the OTLP collector. Traces, metrics and logs are exported only when a token is set. | `ENCLAVE_RUNTIME_TOKEN`, only when `EMULATOR_OTEL_ENDPOINT` is unset |
+| `EMULATOR_OTEL_TOKEN` | Bearer token for the OTLP collector. Traces and logs are exported only when a token is set. | `ENCLAVE_RUNTIME_TOKEN`, only when `EMULATOR_OTEL_ENDPOINT` is unset |
 | `EMULATOR_OTEL_ENDPOINT` | `host:port` of the OTLP/HTTP collector, without a scheme; anything else fails startup. Exports are sent without TLS, so keep it on loopback. | `127.0.0.1:` + `ENCLAVE_PROXY_PORT`, else `127.0.0.1:8080` |
 | `EMULATOR_OTEL_SERVICE_NAME` | `service.name` on exported telemetry | `emulator` |
 | `EMULATOR_OTEL_ENVIRONMENT` | `deployment.environment` on exported telemetry | `enclave` |
@@ -365,6 +364,15 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 | OP_SIGHASH | 246 | 0xf6 | hashType | sighash | Pops a sighash flag and pushes the 32-byte [Arkade tapscript signature hash](#sighash-non-standard) of the currently executing input under that flag. The pushed digest is identical to the message `OP_CHECKSIG` verifies in the same context, but it is **not** the BIP342 digest — see the Sighash section above. The flag must be a minimally encoded scriptNum in `[0,255]` and one of `{0x00, 0x01, 0x02, 0x03, 0x81, 0x82, 0x83}`; `SIGHASH_SINGLE` additionally requires a matching output at the input's index. |
 | OP_TUNNEL | 247 | 0xf7 | output_index flags [asset_txid asset_gidx]... exception_count | True/fail | Requires the selected output to preserve fields from the current input. `flags` is a bitmask: `1` preserves the logical VTXO scriptPubKey, `2` preserves the directly spent output's value, and `4` preserves input-local asset IDs and amounts. Asset IDs listed before `exception_count` are excluded from the asset check and require flag `4`. Flags must be nonzero and may be combined. |
 
+### Time and VTXO expiry
+
+| Word | Opcode | Hex | Input | Output | Description |
+|------|--------|-----|-------|--------|-------------|
+| OP_PUSHEXPIRY | 219 | 0xdb | Nothing | expiry | Pushes the current input VTXO's Unix expiry timestamp. The service obtains it from the indexer for `SubmitTx` and `SubmitIntent`. Fails when expiry is unavailable, including in `SubmitOnchainTx`. |
+| OP_CHECKTIME | 220 | 0xdc | timestamp | bool | Pops a minimally encoded BigNum Unix timestamp and pushes whether it is less than or equal to the emulator's current Unix time. Negative timestamps fail. A future timestamp pushes false. |
+
+Use `<timestamp> OP_CHECKTIME OP_VERIFY` to enforce a time threshold, or combine the boolean with other conditions. These are emulator-time checks, not Bitcoin block-time checks. For example, `OP_PUSHEXPIRY <seconds> OP_SUB OP_CHECKTIME OP_VERIFY` permits execution starting that many seconds before expiry. `OP_CHECKTIME` replaces the former `OP_CHECKTIMEVERIFY` name and has a boolean result rather than failing on a future timestamp.
+
 ### Packet Introspection
 
 | Word | Opcode | Hex | Input | Output | Description |
@@ -414,7 +422,7 @@ Arithmetic operands and results use the VM's minimally encoded BigNum format and
 |------|--------|-----|-------|--------|-------------|
 | OP_DIGEST | 195 | 0xc3 | data hash_type | hash | Pushes the digest of `data` under the algorithm selected by `hash_type`: `1`=SHA-256, `2`=SHA-1, `3`=RIPEMD-160, `4`=Keccak-256 (legacy/Ethereum, distinct from NIST SHA3), `5`=SHA3-256 (NIST). Any other `hash_type` fails the script. |
 | OP_CHECKSIGFROMSTACK | 204 | 0xcc | sig message pubkey | True/false | Verifies a 64-byte compact signature against the message and public key popped from the stack. Public keys are either legacy 32-byte x-only Schnorr/secp256k1 keys, `0x10 \|\| compressed secp256k1` for ECDSA/secp256k1, or `0x11 \|\| compressed P-256` for ECDSA/P-256. ECDSA messages must be 32-byte digests. If signature is empty, pushes empty vector. |
-| OP_MERKLEBRANCHVERIFY | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. |
+| OP_MERKLEBRANCHROOT | 179 | 0xb3 | leaf_tag branch_tag proof leaf_data | computed_root | Computes a Merkle root using BIP-341 tagged hashes. If leaf_tag is empty, leaf_data (32 bytes) is used as a raw hash; otherwise computes `tagged_hash(leaf_tag, leaf_data)`. Walks the proof path with lexicographic sibling ordering. Pushes the 32-byte computed root. Use with `OP_EQUALVERIFY` to verify against an expected root. `OP_MERKLEBRANCHVERIFY` is an alias. |
 
 ### Elliptic Curve Operations
 

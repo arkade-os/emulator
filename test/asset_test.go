@@ -3,6 +3,8 @@ package test
 import (
 	"bytes"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
+	batchsessionhandler "github.com/arkade-os/arkd/pkg/client-lib/batch-session/handler"
 	"strings"
 	"testing"
 
@@ -14,15 +16,13 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 )
@@ -89,10 +89,11 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	bobAddrStr, err := bobAddr.EncodeV0()
 	require.NoError(t, err)
 
-	txid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: bobAddrStr, Amount: sendAmount}},
+	txidRes, err := alice.SendOffChain(
+		ctx, []clientlib.Receiver{{To: bobAddrStr, Amount: sendAmount}},
 	)
 	require.NoError(t, err)
+	txid := txidRes.Txid
 	require.NotEmpty(t, txid)
 
 	indexerSvc := setupIndexer(t)
@@ -253,10 +254,11 @@ func TestSettlementWithAsset(t *testing.T) {
 	require.NoError(t, err)
 
 	// Alice sends to the mint contract address
-	txid, err := alice.SendOffChain(
-		ctx, []types.Receiver{{To: mintContractAddressStr, Amount: sendAmount}},
+	txidRes, err := alice.SendOffChain(
+		ctx, []clientlib.Receiver{{To: mintContractAddressStr, Amount: sendAmount}},
 	)
 	require.NoError(t, err)
+	txid := txidRes.Txid
 	require.NotEmpty(t, txid)
 
 	indexerSvc := setupIndexer(t)
@@ -472,36 +474,34 @@ func TestSettlementWithAsset(t *testing.T) {
 	intentId, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 
-	vtxo := types.VtxoWithTapTree{
-		Vtxo: types.Vtxo{
-			Outpoint: types.Outpoint{
-				Txid: mintResultPtx.UnsignedTx.TxHash().String(),
-				VOut: settleVtxoOutputIndex,
-			},
-			Script: hex.EncodeToString(settleArkadeTapscript),
-			Amount: uint64(settleVtxoOutput.Value),
+	vtxo := clientlib.Vtxo{
+		Outpoint: clientlib.Outpoint{
+			Txid: mintResultPtx.UnsignedTx.TxHash().String(),
+			VOut: settleVtxoOutputIndex,
 		},
+		Script:     hex.EncodeToString(settleArkadeTapscript),
+		Amount:     uint64(settleVtxoOutput.Value),
 		Tapscripts: settleTapscripts,
 	}
 
 	emulatorBatchHandler := &delegateBatchEventsHandler{
 		intentId:       intentId,
 		intent:         signedIntent,
-		vtxosToForfeit: []types.VtxoWithTapTree{vtxo},
+		vtxosToForfeit: []clientlib.Vtxo{vtxo},
 		signerSession:  treeSignerSession,
 		emulatorClient: emulatorClient,
 		wallet:         bobWallet,
 		client:         grpcClient,
 	}
 
-	topics := clientlib.GetEventStreamTopics([]types.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
+	topics := getEventStreamTopics([]clientlib.Outpoint{vtxo.Outpoint}, []tree.SignerSession{treeSignerSession})
 	eventStream, stop, err := grpcClient.GetEventStream(ctx, topics)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		stop()
 	})
 
-	commitmentTxid, _, _, _, _, err := clientlib.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
+	commitmentTxid, _, _, _, _, err := batchsessionhandler.JoinBatchSession(ctx, eventStream, emulatorBatchHandler)
 	require.NoError(t, err)
 	require.NotEmpty(t, commitmentTxid)
 }

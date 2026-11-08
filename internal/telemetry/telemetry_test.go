@@ -16,14 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
-	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
@@ -313,7 +310,6 @@ func TestSetupWithoutTokenExportsNothing(t *testing.T) {
 
 	ctx, span := otel.Tracer(t.Name()).Start(context.Background(), "startup")
 	log.WithContext(ctx).Info("startup")
-	CountSignature()
 	span.End()
 	require.NoError(t, shutdown(context.Background()))
 
@@ -336,21 +332,17 @@ func TestSetupExportsTelemetryOnShutdown(t *testing.T) {
 	require.Subset(t, otel.GetTextMapPropagator().Fields(), propagation.TraceContext{}.Fields())
 
 	const logMessage = "startup failed"
-	// More than one, to check the per-call counter lookups add up.
-	const signatureCount = 2
 	ctx, span := otel.Tracer(t.Name()).Start(context.Background(), "startup")
 	log.WithContext(ctx).Info(logMessage)
-	for range signatureCount {
-		CountSignature()
-	}
 	span.End()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, shutdown(shutdownCtx))
 
-	received := make(map[string]exportRequest, 3)
-	for range 3 {
+	// One export each for traces and logs.
+	received := make(map[string]exportRequest, 2)
+	for range 2 {
 		select {
 		case req := <-requests:
 			received[req.path] = req
@@ -369,20 +361,6 @@ func TestSetupExportsTelemetryOnShutdown(t *testing.T) {
 	unmarshalExport(t, received, defaultTraceEndpointPath, &traces)
 	require.NotEmpty(t, traces.GetResourceSpans())
 	require.Equal(t, wantResource, resourceAttributes(traces.GetResourceSpans()[0].GetResource()))
-
-	var metrics colmetricspb.ExportMetricsServiceRequest
-	unmarshalExport(t, received, defaultMetricEndpointPath, &metrics)
-	require.NotEmpty(t, metrics.GetResourceMetrics())
-	require.Equal(t, wantResource, resourceAttributes(metrics.GetResourceMetrics()[0].GetResource()))
-	// The signature total is the only metric.
-	scopeMetrics := metrics.GetResourceMetrics()[0].GetScopeMetrics()
-	require.Len(t, scopeMetrics, 1)
-	require.Len(t, scopeMetrics[0].GetMetrics(), 1)
-	signatures := scopeMetrics[0].GetMetrics()[0]
-	require.Equal(t, signaturesMetricName, signatures.GetName())
-	require.True(t, signatures.GetSum().GetIsMonotonic())
-	require.Len(t, signatures.GetSum().GetDataPoints(), 1)
-	require.EqualValues(t, signatureCount, signatures.GetSum().GetDataPoints()[0].GetAsInt())
 
 	var logs collogspb.ExportLogsServiceRequest
 	unmarshalExport(t, received, defaultLogEndpointPath, &logs)
@@ -407,20 +385,18 @@ func TestShutdownIsNotHeldUpByOneSignal(t *testing.T) {
 
 	_, span := otel.Tracer(t.Name()).Start(context.Background(), "startup")
 	log.Info("startup")
-	CountSignature()
 	span.End()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	require.Error(t, shutdown(shutdownCtx), "the stalled log export should time out")
 
-	// The other signals are flushed despite the stalled logs.
+	// Traces are flushed despite the stalled logs.
 	received := map[string]bool{}
 	for len(requests) > 0 {
 		received[(<-requests).path] = true
 	}
 	require.True(t, received[defaultTraceEndpointPath], "traces not flushed")
-	require.True(t, received[defaultMetricEndpointPath], "metrics not flushed")
 }
 
 func TestSpansJoinParentTrace(t *testing.T) {
@@ -471,24 +447,4 @@ func TestSpansJoinParentTrace(t *testing.T) {
 		require.Equal(t, client.SpanContext().SpanID(), server.Parent().SpanID())
 		require.Equal(t, parentTraceID, server.SpanContext().TraceID().String())
 	})
-}
-
-// TestInstrumentationRecordsNoMetrics: only the signature total is exported.
-func TestInstrumentationRecordsNoMetrics(t *testing.T) {
-	reader := sdkmetric.NewManualReader()
-	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	otel.SetMeterProvider(provider)
-	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
-	srv := newTracedServer(t)
-
-	// Also drives the gateway's loopback gRPC call.
-	resp, err := http.Get(srv.URL)
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	srv.Close()
-
-	var collected metricdata.ResourceMetrics
-	require.NoError(t, reader.Collect(context.Background(), &collected))
-	require.Empty(t, collected.ScopeMetrics)
 }

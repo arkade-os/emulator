@@ -7,10 +7,10 @@ import (
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
-	"github.com/arkade-os/emulator/internal/application"
+	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/btcutil/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
 )
 
 func parsePsbt(b64 string) (*psbt.Packet, error) {
@@ -27,7 +27,7 @@ func parsePsbt(b64 string) (*psbt.Packet, error) {
 // parseIntent decodes the proof and intent message. The emulator takes every
 // intent type through one endpoint, so it sniffs `BaseMessage.Type` then decodes
 // the matching concrete struct.
-func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
+func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Intent, error) {
 	proof := fromProto.GetProof()
 	message := fromProto.GetMessage()
 
@@ -50,7 +50,7 @@ func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
 	}
 
 	// pick the concrete struct for that type
-	var decoded application.IntentMessage
+	var decoded emulator.IntentMessage
 	switch base.Type {
 	case intent.IntentMessageTypeRegister:
 		decoded = &intent.RegisterMessage{}
@@ -72,7 +72,7 @@ func parseIntent(fromProto *emulatorv1.Intent) (*application.Intent, error) {
 		return nil, fmt.Errorf("invalid %s message: %w", base.Type, err)
 	}
 
-	return &application.Intent{
+	return &emulator.Intent{
 		Proof:   intent.Proof{Packet: *proofPsbt},
 		Message: decoded,
 	}, nil

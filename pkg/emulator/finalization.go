@@ -1,51 +1,39 @@
-package application
+package emulator
 
 import (
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"time"
+	"slices"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 // SubmitFinalization doesn't execute arkade scripts, it only signs the forfeits and the commitment tx
 // if and only if the intent proof contains the signer's signature (it means we executed the arkade script in the past)
 // before signing the forfeits, we also verify that is it part of the commitment tx
 func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFinalization) (*SignedBatchFinalization, error) {
-	// Sign nothing unless the commitment tx is an arkd-built artifact: a
-	// client-chosen commitment tx (e.g. an ark tx spending a pending
-	// checkpoint outpoint) would let a replayed proof bypass the arkade
-	// script execution that justified it. arkd indexes its commitment txs
-	// on round finalization; the write may lag the RoundFinalizationStarted
-	// event, so retry.
+	// Callers must check the commitment tx is known to arkd before calling:
+	// a client-chosen commitment tx would let a replayed proof bypass the
+	// arkade script execution that justified it.
 	if finalization.CommitmentTx == nil {
 		return nil, fmt.Errorf("commitment tx is required")
 	}
-	if s.indexerClient == nil {
-		return nil, fmt.Errorf("arkd indexer client is not configured")
-	}
-	commitmentTxid := finalization.CommitmentTx.UnsignedTx.TxID()
-	err := retryWithBackoff(ctx, commitmentTxRetryConfig,
-		func() error {
-			_, err := s.indexerClient.GetCommitmentTx(
-				withClientVersion(ctx, s.clientVersion), commitmentTxid,
-			)
-			return err
-		}, nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"commitment tx %s not known to arkd indexer: %w", commitmentTxid, err,
-		)
+	if !s.trustedCommitmentTx {
+		if err := validateBatchPaysIntent(
+			finalization.Intent, finalization.CommitmentTx, finalization.VtxoTree,
+		); err != nil {
+			return nil, fmt.Errorf("batch does not pay the intent: %w", err)
+		}
 	}
 
 	signedInputs, err := getSignedInputAssociations(
@@ -80,7 +68,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			if !ok {
 				continue
 			}
-			if err := association.validateFinalizationInput(forfeit, inputIndex, s.arkdPubKey); err != nil {
+			if err := association.validateFinalizationInput(forfeit, inputIndex); err != nil {
 				return nil, err
 			}
 
@@ -95,7 +83,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			// vtxo: without this the requester can reuse a vtxo input we signed in
 			// the past and redirect its value anywhere
 			if err := validateForfeitOutputs(
-				forfeit, inputIndex, &association.prevout, connectorOutput,
+				forfeit, inputIndex, &association.prevout, connectorOutput, s.arkdForfeitPkScript,
 			); err != nil {
 				return nil, fmt.Errorf(
 					"malformed forfeit %s: %w", forfeit.UnsignedTx.TxID(), err,
@@ -139,7 +127,7 @@ func (s *service) SubmitFinalization(ctx context.Context, finalization BatchFina
 			continue
 		}
 		if err := association.validateFinalizationInput(
-			finalization.CommitmentTx, inputIndex, s.arkdPubKey,
+			finalization.CommitmentTx, inputIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -166,11 +154,8 @@ type signedInputAssociation struct {
 }
 
 func (a signedInputAssociation) validateFinalizationInput(
-	ptx *psbt.Packet, inputIndex int, arkdPubKey *btcec.PublicKey,
+	ptx *psbt.Packet, inputIndex int,
 ) error {
-	if !containsPubKey(a.script.ClosurePubKeys(), arkdPubKey) {
-		return fmt.Errorf("input %d: finalization leaf does not require the arkd signer", inputIndex)
-	}
 	if len(ptx.Inputs) <= inputIndex {
 		return fmt.Errorf("input %d: PSBT input index out of range", inputIndex)
 	}
@@ -294,12 +279,13 @@ func getSignedInputAssociations(
 
 // validateForfeitOutputs checks the output side of a forfeit against the two
 // prevouts it spends. tree.BuildForfeitTx, which arkd itself replays to accept a
-// forfeit, collects the vtxo and the connector into a single output followed by
-// the anchor, so everything but the destination script is determined by data the
-// emulator can trust: the vtxo prevout is committed by the intent proof
-// signature and the connector output comes from the connector tree.
+// forfeit, collects the vtxo and the connector into a single output paying
+// arkd's forfeit script, followed by the anchor, so the whole output side is
+// determined by data the emulator can trust: the intent proof signature commits
+// the vtxo prevout, the connector comes from the tree, the destination from GetInfo.
 func validateForfeitOutputs(
 	forfeit *psbt.Packet, vtxoIndex int, vtxoPrevout, connectorOutput *wire.TxOut,
+	forfeitPkScript []byte,
 ) error {
 	if vtxoPrevout == nil {
 		return fmt.Errorf("missing vtxo prevout for input %d", vtxoIndex)
@@ -345,17 +331,11 @@ func validateForfeitOutputs(
 			forfeit.UnsignedTx.TxOut[0].Value, expectedValue,
 		)
 	}
+	if !bytes.Equal(forfeit.UnsignedTx.TxOut[0].PkScript, forfeitPkScript) {
+		return fmt.Errorf("output 0 does not pay the arkd forfeit script")
+	}
 
 	return nil
-}
-
-var commitmentTxRetryConfig = retryConfig{
-	MinAttempts:  5,
-	MaxAttempts:  8,
-	InitialDelay: 200 * time.Millisecond,
-	MaxDelay:     2 * time.Second,
-	Multiplier:   2.0,
-	Jitter:       0.2,
 }
 
 // leafOutput returns the output spent by outpoint if it is a non-anchor output
@@ -387,4 +367,74 @@ func leafOutput(tree *tree.TxTree, outpoint wire.OutPoint) *wire.TxOut {
 	}
 
 	return output
+}
+
+// validateBatchPaysIntent checks the batch pays every output of the register
+// intent proof, the outputs its arkade scripts were executed against: onchain
+// ones in the commitment tx, offchain ones in a leaf of the vtxo tree rooted in it.
+func validateBatchPaysIntent(
+	request Intent, commitmentTx *psbt.Packet, vtxoTree *tree.TxTree,
+) error {
+	message, ok := request.Message.(*intent.RegisterMessage)
+	if !ok {
+		return fmt.Errorf("expected a register intent message, got %T", request.Message)
+	}
+	encodedMessage, err := message.Encode()
+	if err != nil {
+		return fmt.Errorf("failed to encode intent message: %w", err)
+	}
+	if err := validateIntentMessageCommitment(request, encodedMessage); err != nil {
+		return fmt.Errorf("intent message is not committed by the proof: %w", err)
+	}
+	onchain := countTxOuts(commitmentTx.UnsignedTx.TxOut)
+	offchain := make(map[txOutKey]int)
+	if vtxoTree != nil {
+		if vtxoTree.Root == nil || len(vtxoTree.Root.UnsignedTx.TxIn) != 1 {
+			return fmt.Errorf("invalid vtxo tree root")
+		}
+		root := vtxoTree.Root.UnsignedTx.TxIn[0].PreviousOutPoint
+		if root.Hash != commitmentTx.UnsignedTx.TxHash() ||
+			int(root.Index) >= len(commitmentTx.UnsignedTx.TxOut) {
+			return fmt.Errorf("vtxo tree is not rooted in the commitment tx")
+		}
+		for _, leaf := range vtxoTree.Leaves() {
+			for key, n := range countTxOuts(leaf.UnsignedTx.TxOut) {
+				offchain[key] += n
+			}
+		}
+	}
+
+	for i, out := range request.Proof.UnsignedTx.TxOut {
+		// the extension and the placeholder of a proof without outputs pay no one
+		if extension.IsExtension(out.PkScript) ||
+			(out.Value == 0 && bytes.Equal(out.PkScript, []byte{txscript.OP_RETURN})) {
+			continue
+		}
+		paid := offchain
+		if slices.Contains(message.OnchainOutputIndexes, i) {
+			paid = onchain
+		}
+		key := txOutKey{out.Value, string(out.PkScript)}
+		if paid[key] == 0 {
+			return fmt.Errorf("output %d is not paid", i)
+		}
+		paid[key]--
+	}
+	return nil
+}
+
+type txOutKey struct {
+	value    int64
+	pkScript string
+}
+
+func countTxOuts(outs []*wire.TxOut) map[txOutKey]int {
+	counts := make(map[txOutKey]int, len(outs))
+	for _, out := range outs {
+		if bytes.Equal(out.PkScript, txutils.ANCHOR_PKSCRIPT) {
+			continue
+		}
+		counts[txOutKey{out.Value, string(out.PkScript)}]++
+	}
+	return counts
 }

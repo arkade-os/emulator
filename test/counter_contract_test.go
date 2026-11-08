@@ -3,20 +3,18 @@ package test
 import (
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"testing"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/client"
-	"github.com/arkade-os/arkd/pkg/client-lib/identity"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
+	clientwallet "github.com/arkade-os/arkd/pkg/client-wallet"
 	"github.com/arkade-os/emulator/pkg/arkade"
-	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -150,10 +148,10 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 func deployCounterFromWallet(
 	t *testing.T,
 	ctx context.Context,
-	alice arksdk.Wallet,
-	aliceWallet identity.Identity,
-	grpcClient client.Client,
-	indexerSvc indexer.Indexer,
+	alice clientwallet.Wallet,
+	aliceWallet clientlib.Identity,
+	grpcClient clientlib.Client,
+	indexerSvc clientlib.Indexer,
 	alicePubKey *btcec.PublicKey,
 	serverSigner *btcec.PublicKey,
 	unilateralExitDelay uint32,

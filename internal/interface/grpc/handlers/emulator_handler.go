@@ -7,7 +7,8 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/emulator/internal/application"
-	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/arkade-os/emulator/pkg/emulator"
+	"github.com/btcsuite/btcd/psbt/v2"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -72,7 +73,7 @@ func (h *handler) SubmitTx(
 		checkpointPsbt = append(checkpointPsbt, checkpointPtx)
 	}
 
-	offchainTx := application.OffchainTx{
+	offchainTx := emulator.OffchainTx{
 		ArkTx:       arkPtx,
 		Checkpoints: checkpointPsbt,
 	}
@@ -169,7 +170,7 @@ func (h *handler) SubmitFinalization(
 		forfeitPsbt = append(forfeitPsbt, forfeitPtx)
 	}
 
-	batchFinalization := application.BatchFinalization{
+	batchFinalization := emulator.BatchFinalization{
 		Intent:       *intent,
 		Forfeits:     forfeitPsbt,
 		CommitmentTx: commitmentPtx,
@@ -235,7 +236,7 @@ func (h *handler) SubmitOnchainTx(
 		return nil, status.Error(codes.InvalidArgument, "invalid tx")
 	}
 
-	signed, err := h.svc.SubmitOnchainTx(ctx, application.OnchainTx{Tx: ptx})
+	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
 		log.WithError(err).Error("failed to process onchain tx")
 		return nil, status.Error(codes.Internal, internalErrMsg)
@@ -251,9 +252,6 @@ func (h *handler) SubmitOnchainTx(
 }
 
 func verifyTreeRelatedToCommitment(commitmentPtx *psbt.Packet, txTree *tree.TxTree) error {
-	if len(txTree.Root.Inputs) != len(commitmentPtx.UnsignedTx.TxIn) {
-		return fmt.Errorf("invalid number of inputs")
-	}
 	if len(txTree.Root.UnsignedTx.TxIn) != 1 {
 		return fmt.Errorf("invalid tx tree root")
 	}

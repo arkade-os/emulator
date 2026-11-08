@@ -1,4 +1,4 @@
-package application
+package emulator
 
 import (
 	"bytes"
@@ -14,10 +14,10 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -284,8 +284,6 @@ func TestPrevOutFetcherForArkTxReconcilesCheckpointWitnessUtxo(t *testing.T) {
 func TestSubmitOnchainTxRejectsAnyOneCanPayPrevoutLie(t *testing.T) {
 	emulatorKey, err := btcec.NewPrivateKey()
 	require.NoError(t, err)
-	arkdKey, err := btcec.NewPrivateKey()
-	require.NoError(t, err)
 
 	const (
 		signedAmount        = int64(10_000)
@@ -346,7 +344,6 @@ func TestSubmitOnchainTxRejectsAnyOneCanPayPrevoutLie(t *testing.T) {
 
 	service := &service{
 		signer:        signer{secretKey: emulatorKey},
-		arkdPubKey:    arkdKey.PubKey(),
 		computeLimits: arkade.DefaultComputeLimits(),
 	}
 	_, err = service.SubmitOnchainTx(context.Background(), OnchainTx{Tx: packet})

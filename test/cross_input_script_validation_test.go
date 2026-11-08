@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"strings"
 	"testing"
 
@@ -11,20 +12,15 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/arkade-os/arkd/pkg/ark-lib/offchain"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/client"
-	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
-	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
-	"github.com/arkade-os/arkd/pkg/client-lib/identity"
-	"github.com/arkade-os/arkd/pkg/client-lib/indexer"
-	"github.com/arkade-os/arkd/pkg/client-lib/types"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer"
+	clientwallet "github.com/arkade-os/arkd/pkg/client-wallet"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	emulatorclient "github.com/arkade-os/emulator/pkg/client"
-	arksdk "github.com/arkade-os/go-sdk"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 )
@@ -315,11 +311,12 @@ func TestCrossInputScriptValidation(t *testing.T) {
 		require.NoError(t, err)
 
 		const amount = uint64(10000)
-		fundingTxid, err := env.alice.SendOffChain(
+		fundingTxidRes, err := env.alice.SendOffChain(
 			env.ctx,
-			[]types.Receiver{{To: aliceAddrStr, Amount: amount}, {To: bobAddrStr, Amount: amount}},
+			[]clientlib.Receiver{{To: aliceAddrStr, Amount: amount}, {To: bobAddrStr, Amount: amount}},
 		)
 		require.NoError(t, err)
+		fundingTxid := fundingTxidRes.Txid
 
 		fundingTxs, err := env.indexerSvc.GetVirtualTxs(env.ctx, []string{fundingTxid})
 		require.NoError(t, err)
@@ -357,16 +354,16 @@ func TestCrossInputScriptValidation(t *testing.T) {
 // crossInputTestEnv bundles the services and common fixtures used by the test.
 type crossInputTestEnv struct {
 	ctx                   context.Context
-	alice                 arksdk.Wallet
-	bobWallet             identity.Identity
+	alice                 clientwallet.Wallet
+	bobWallet             clientlib.Identity
 	bobPubKey             *btcec.PublicKey
-	grpcBob               client.Client
+	grpcBob               clientlib.Client
 	aliceAddr             *arklib.Address
 	emulatorClient        emulatorclient.TransportClient
 	emulatorPubKey        *btcec.PublicKey
 	checkpointScriptBytes []byte
-	indexerSvc            indexer.Indexer
-	explorer              explorer.Explorer
+	indexerSvc            clientlib.Indexer
+	explorer              clientlib.Explorer
 	recipientPkScript     []byte
 }
 
@@ -794,11 +791,12 @@ func (env *crossInputTestEnv) buildFinalizedPacketChain(
 	addressBStr, err := addressB.EncodeV0()
 	require.NoError(t, err)
 
-	fundingTxid, err := env.alice.SendOffChain(
+	fundingTxidRes, err := env.alice.SendOffChain(
 		env.ctx,
-		[]types.Receiver{{To: addressAStr, Amount: uint64(inputAmount)}, {To: addressBStr, Amount: uint64(inputAmount)}},
+		[]clientlib.Receiver{{To: addressAStr, Amount: uint64(inputAmount)}, {To: addressBStr, Amount: uint64(inputAmount)}},
 	)
 	require.NoError(t, err)
+	fundingTxid := fundingTxidRes.Txid
 
 	fundingTxs, err := env.indexerSvc.GetVirtualTxs(env.ctx, []string{fundingTxid})
 	require.NoError(t, err)
@@ -876,11 +874,12 @@ func (env *crossInputTestEnv) buildTwoInputSpend(
 	addressBStr, err := addressB.EncodeV0()
 	require.NoError(t, err)
 
-	fundingTxid, err := env.alice.SendOffChain(
+	fundingTxidRes, err := env.alice.SendOffChain(
 		env.ctx,
-		[]types.Receiver{{To: addressAStr, Amount: uint64(inputAmount)}, {To: addressBStr, Amount: uint64(inputAmount)}},
+		[]clientlib.Receiver{{To: addressAStr, Amount: uint64(inputAmount)}, {To: addressBStr, Amount: uint64(inputAmount)}},
 	)
 	require.NoError(t, err)
+	fundingTxid := fundingTxidRes.Txid
 
 	fundingTxs, err := env.indexerSvc.GetVirtualTxs(env.ctx, []string{fundingTxid})
 	require.NoError(t, err)

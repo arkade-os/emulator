@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	"strings"
 	"testing"
 	"time"
@@ -11,17 +12,16 @@ import (
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
-	"github.com/arkade-os/arkd/pkg/client-lib/explorer"
-	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer/mempool"
+	mempoolexplorer "github.com/arkade-os/arkd/pkg/client-lib/explorer"
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chaincfg/v2"
+	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,7 +87,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 	// --- Derive regtest P2TR address for the tweaked taproot key ---
 	regtestParams := getRegtestParams(t)
-	tapAddr, err := btcutil.NewAddressTaproot(
+	tapAddr, err := address.NewAddressTaproot(
 		schnorr.SerializePubKey(vtxoTapKey), regtestParams,
 	)
 	require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestSubmitOnchainTx(t *testing.T) {
 
 		// Fund the exit-shaped tapscript address (simulates a fully
 		// unrolled VTXO sitting onchain under this tapscript).
-		exitAddr, err := btcutil.NewAddressTaproot(
+		exitAddr, err := address.NewAddressTaproot(
 			schnorr.SerializePubKey(exitTapKey), regtestParams,
 		)
 		require.NoError(t, err)
@@ -493,8 +493,8 @@ func getRegtestParams(t *testing.T) *chaincfg.Params {
 // waitForUtxo polls the explorer until at least one UTXO appears at the
 // given address, then returns it. Fails the test on timeout.
 func waitForUtxo(
-	t *testing.T, explorerSvc explorer.Explorer, addr string, timeout time.Duration,
-) explorer.Utxo {
+	t *testing.T, explorerSvc clientlib.Explorer, addr string, timeout time.Duration,
+) clientlib.ExplorerUtxo {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
@@ -507,5 +507,5 @@ func waitForUtxo(
 	}
 
 	t.Fatalf("timed out waiting for UTXO at %s", addr)
-	return explorer.Utxo{}
+	return clientlib.ExplorerUtxo{}
 }

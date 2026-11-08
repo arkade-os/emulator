@@ -1,0 +1,205 @@
+package application
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+
+	"github.com/arkade-os/arkd/pkg/ark-lib/script"
+	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
+	log "github.com/sirupsen/logrus"
+)
+
+func isFinalizerRole(arkPtx *psbt.Packet, sigsBefore []int, signerPubKeys []*btcec.PublicKey, arkdPubKey *btcec.PublicKey) (bool, error) {
+	packet, err := arkade.FindEmulatorPacket(arkPtx.UnsignedTx)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse emulator packet: %w", err)
+	}
+
+	acc := newFinalizerAccumulator(arkdPubKey)
+	for _, entry := range packet {
+		for _, pubKey := range signerPubKeys {
+			arkadeScript, err := arkade.ReadArkadeScript(arkPtx, pubKey, entry)
+			if errors.Is(err, arkade.ErrTweakedArkadePubKeyNotFound) {
+				continue
+			}
+			if err != nil {
+				return false, fmt.Errorf("failed to read arkade script: %w vin=%d", err, entry.Vin)
+			}
+			added := arkPtx.Inputs[entry.Vin].TaprootScriptSpendSig[sigsBefore[entry.Vin]:]
+			if signedBy(added, arkadeScript.PubKey()) {
+				if err := acc.checkScript(entry.Vin, arkadeScript); err != nil {
+					return false, err
+				}
+			}
+			break
+		}
+	}
+	return acc.isFinalizer()
+}
+
+func signedBy(sigs []*psbt.TaprootScriptSpendSig, pubKey *btcec.PublicKey) bool {
+	xOnly := schnorr.SerializePubKey(pubKey)
+	for _, sig := range sigs {
+		if bytes.Equal(sig.XOnlyPubKey, xOnly) {
+			return true
+		}
+	}
+	return false
+}
+
+// carriesTapscriptSigs reports whether got holds every signature in want, matched
+// on pubkey, leaf hash and signature bytes. An empty want is never carried.
+func carriesTapscriptSigs(got, want []*psbt.TaprootScriptSpendSig) bool {
+	if len(want) == 0 {
+		return false
+	}
+	for _, w := range want {
+		carried := slices.ContainsFunc(got, func(g *psbt.TaprootScriptSpendSig) bool {
+			return g.EqualKey(w) && bytes.Equal(g.Signature, w.Signature)
+		})
+		if !carried {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeTapscriptSigs adds the entries of extra whose (pubkey, leaf hash) key is
+// not in sigs yet: psbt refuses to decode a repeated key.
+func mergeTapscriptSigs(sigs, extra []*psbt.TaprootScriptSpendSig) []*psbt.TaprootScriptSpendSig {
+	for _, e := range extra {
+		if !slices.ContainsFunc(sigs, e.EqualKey) {
+			sigs = append(sigs, e)
+		}
+	}
+	return sigs
+}
+
+func (s *service) retryFinalize(ctx context.Context, txid string, checkpoints []string) error {
+	return retryWithBackoff(ctx, finalizeRetryConfig,
+		func() error { return s.arkd.FinalizeTx(ctx, txid, checkpoints) },
+		func(attempt int, err error) {
+			log.WithField("txid", txid).WithField("attempt", attempt).Errorf("finalizing tx failed: %s", err)
+		},
+	)
+}
+
+type finalizerAccumulator struct {
+	arkdPubKeyXonly []byte
+	isLastByVin     map[uint16]bool
+	vins            []uint16
+}
+
+func newFinalizerAccumulator(arkdPubKey *btcec.PublicKey) *finalizerAccumulator {
+	arkdPubKeyXonly := schnorr.SerializePubKey(arkdPubKey)
+	return &finalizerAccumulator{
+		arkdPubKeyXonly: arkdPubKeyXonly,
+		isLastByVin:     make(map[uint16]bool),
+	}
+}
+
+func (a *finalizerAccumulator) checkScript(vin uint16, script *arkade.ArkadeScript) error {
+	a.vins = append(a.vins, vin)
+
+	nClosurePubKeys := len(script.ClosurePubKeys())
+	tweakedSignerPublicKeyXOnly := schnorr.SerializePubKey(script.PubKey())
+	if nClosurePubKeys < 2 {
+		// the script should always have a forfeit closure with at least arkd + tweaked key
+		return fmt.Errorf("malformed script %x", script.Script())
+	}
+
+	lastSigner := script.ClosurePubKeys()[nClosurePubKeys-1]
+	lastSignerXOnly := schnorr.SerializePubKey(lastSigner)
+
+	// if arkd is the last signer, check the second-to-last
+	if bytes.Equal(lastSignerXOnly, a.arkdPubKeyXonly) {
+		lastNonArkdSigner := script.ClosurePubKeys()[nClosurePubKeys-2]
+		lastNonArkdSignerXonly := schnorr.SerializePubKey(lastNonArkdSigner)
+		a.isLastByVin[vin] = bytes.Equal(lastNonArkdSignerXonly, tweakedSignerPublicKeyXOnly)
+		return nil
+	}
+
+	a.isLastByVin[vin] = bytes.Equal(lastSignerXOnly, tweakedSignerPublicKeyXOnly)
+	return nil
+}
+
+func (a *finalizerAccumulator) isFinalizer() (bool, error) {
+	if len(a.vins) == 0 {
+		return false, nil
+	}
+	referenceVin := a.vins[0]
+	referenceIsLast, ok := a.isLastByVin[referenceVin]
+	if !ok {
+		return false, fmt.Errorf("missing finalizer state for input %d", referenceVin)
+	}
+	for _, vin := range a.vins[1:] {
+		isLast, ok := a.isLastByVin[vin]
+		if !ok {
+			return false, fmt.Errorf("missing finalizer state for input %d", vin)
+		}
+		if isLast != referenceIsLast {
+			return false, fmt.Errorf("input %d has a different finalizer", vin)
+		}
+	}
+	return referenceIsLast, nil
+}
+
+func verifyNonArkdCheckpointSignatures(checkpoints []*psbt.Packet, arkdPubKey *btcec.PublicKey) error {
+	for checkpointIndex, ptx := range checkpoints {
+		if len(ptx.Inputs) == 0 || len(ptx.UnsignedTx.TxIn) == 0 {
+			return fmt.Errorf("checkpoint %d: missing input 0", checkpointIndex)
+		}
+		// VerifyTapscriptSigs silently skips inputs without exactly one leaf script
+		if len(ptx.Inputs[0].TaprootLeafScript) != 1 {
+			return fmt.Errorf(
+				"checkpoint %d input 0: missing taproot leaf script (want exactly 1, got %d)",
+				checkpointIndex, len(ptx.Inputs[0].TaprootLeafScript),
+			)
+		}
+		prevoutFetcher, err := computePrevoutFetcher(ptx)
+		if err != nil {
+			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
+		}
+		// it also skips non-taproot and note inputs without erroring
+		verified, err := script.VerifyTapscriptSigs(
+			ptx, prevoutFetcher, script.WithSkipPublicKeys(arkdPubKey),
+		)
+		if err != nil {
+			return fmt.Errorf("checkpoint %d: %w", checkpointIndex, err)
+		}
+		if !slices.Contains(verified, 0) {
+			return fmt.Errorf(
+				"checkpoint %d input 0: signatures were not verified", checkpointIndex,
+			)
+		}
+	}
+	return nil
+}
+
+// computePrevoutFetcher is a copy of pkg/emulator's private helper.
+func computePrevoutFetcher(ptx *psbt.Packet) (txscript.PrevOutputFetcher, error) {
+	prevouts := make(map[wire.OutPoint]*wire.TxOut)
+
+	for index, input := range ptx.Inputs {
+		if input.WitnessUtxo == nil {
+			return nil, fmt.Errorf("witness utxo is nil")
+		}
+
+		if len(ptx.UnsignedTx.TxIn) <= index {
+			return nil, fmt.Errorf("input index out of range")
+		}
+
+		outpoint := ptx.UnsignedTx.TxIn[index].PreviousOutPoint
+		prevouts[outpoint] = input.WitnessUtxo
+	}
+
+	return txscript.NewMultiPrevOutFetcher(prevouts), nil
+}
