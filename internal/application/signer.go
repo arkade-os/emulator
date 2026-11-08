@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/arkade-os/emulator/internal/telemetry"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -79,6 +80,8 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 		LeafHash:    leafHash[:],
 		SigHash:     input.SighashType,
 	})
+	// TODO: Decide if it worth keeping
+	telemetry.CountSignature()
 
 	return nil
 }

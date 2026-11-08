@@ -271,6 +271,10 @@ The service can be configured using environment variables:
 | `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
 | `EMULATOR_ARKD_INDEXER_URL` | URL of the `arkd` indexer used to verify commitment txs in [`SubmitFinalization`](#submitfinalization) | `EMULATOR_ARKD_URL` |
 | `EMULATOR_COMPUTE_LIMITS` | Comma-separated `OPCODE=limit` overrides for per-input opcode execution caps, for example `OP_ECPAIRING=8,OP_MODEXP=128`. Overrides are applied on top of defaults; use an empty value such as `OP_ECADD=` to remove a default cap. | Default compute limits |
+| `EMULATOR_OTEL_TOKEN` | Bearer token for the OTLP collector. Traces, metrics and logs are exported only when a token is set. | `ENCLAVE_RUNTIME_TOKEN`, only when `EMULATOR_OTEL_ENDPOINT` is unset |
+| `EMULATOR_OTEL_ENDPOINT` | `host:port` of the OTLP/HTTP collector, without a scheme; anything else fails startup. Exports are sent without TLS, so keep it on loopback. | `127.0.0.1:` + `ENCLAVE_PROXY_PORT`, else `127.0.0.1:8080` |
+| `EMULATOR_OTEL_SERVICE_NAME` | `service.name` on exported telemetry | `emulator` |
+| `EMULATOR_OTEL_ENVIRONMENT` | `deployment.environment` on exported telemetry | `enclave` |
 
 ---
 
