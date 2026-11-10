@@ -63,8 +63,17 @@ func TestEmulateOffchainTx(t *testing.T) {
 	}
 	for _, c := range fix.Invalid {
 		t.Run(c.Name, func(t *testing.T) {
-			_, err := testService.EmulateOffchainTx(t.Context(), offchainTx(t, c), offchainData(t, c))
+			tx := offchainTx(t, c)
+			_, err := testService.EmulateOffchainTx(t.Context(), tx, offchainData(t, c))
 			require.ErrorContains(t, err, c.ErrorContains)
+			var emulationErr *Error
+			require.ErrorAs(t, err, &emulationErr)
+			require.Equal(t, "emulate offchain tx", emulationErr.Operation)
+			require.Equal(t, "ark", emulationErr.TransactionRole)
+			if tx.ArkTx != nil {
+				require.ErrorContains(t, err, "ark_txid="+tx.ArkTx.UnsignedTx.TxID())
+				require.Equal(t, tx.ArkTx.UnsignedTx.TxID(), emulationErr.TxID)
+			}
 		})
 	}
 }
@@ -85,8 +94,14 @@ func TestEmulateIntent(t *testing.T) {
 	}
 	for _, c := range fix.Invalid {
 		t.Run(c.Name, func(t *testing.T) {
-			_, err := testService.EmulateIntent(t.Context(), intentFixture(t, c.Proof, c.Message), offchainData(t, c))
+			intent := intentFixture(t, c.Proof, c.Message)
+			_, err := testService.EmulateIntent(t.Context(), intent, offchainData(t, c))
 			require.ErrorContains(t, err, c.ErrorContains)
+			var emulationErr *Error
+			require.ErrorAs(t, err, &emulationErr)
+			require.Equal(t, "proof", emulationErr.TransactionRole)
+			require.Equal(t, intent.Proof.Packet.UnsignedTx.TxID(), emulationErr.TxID)
+			require.ErrorContains(t, err, "proof_txid="+intent.Proof.Packet.UnsignedTx.TxID())
 		})
 	}
 }
@@ -102,8 +117,14 @@ func TestEmulateOnchainTx(t *testing.T) {
 	}
 	for _, c := range fix.Invalid {
 		t.Run(c.Name, func(t *testing.T) {
-			_, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: decodePSBT(t, c.Tx)})
+			tx := decodePSBT(t, c.Tx)
+			_, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: tx})
 			require.ErrorContains(t, err, c.ErrorContains)
+			var emulationErr *Error
+			require.ErrorAs(t, err, &emulationErr)
+			require.Equal(t, "onchain", emulationErr.TransactionRole)
+			require.Equal(t, tx.UnsignedTx.TxID(), emulationErr.TxID)
+			require.ErrorContains(t, err, "txid="+tx.UnsignedTx.TxID())
 		})
 	}
 }
@@ -121,6 +142,11 @@ func TestEmulateBatchFinalization(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			_, err := testService.EmulateBatchFinalization(t.Context(), batchFinalization(t, c))
 			require.ErrorContains(t, err, c.ErrorContains)
+			var emulationErr *Error
+			require.ErrorAs(t, err, &emulationErr)
+			require.Equal(t, "emulate batch finalization", emulationErr.Operation)
+			require.Contains(t, []string{"proof", "forfeit", "commitment"}, emulationErr.TransactionRole)
+			require.NotEmpty(t, emulationErr.TxID)
 		})
 	}
 }

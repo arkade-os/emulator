@@ -32,10 +32,17 @@ func (s *service) EmulateOffchainTx(
 	ctx context.Context, tx OffchainTx, data OffchainData,
 ) ([]SignRequest, error) {
 	arkPtx := tx.ArkTx
+	txid := ""
+
+	if arkPtx == nil || arkPtx.UnsignedTx == nil {
+		return nil, offchainTxError(txid, fmt.Errorf("missing transaction (ark tx)"))
+	}
+
+	txid = arkPtx.UnsignedTx.TxID()
 
 	scripts, err := packetScripts(arkPtx)
 	if err != nil {
-		return nil, err
+		return nil, offchainTxError(txid, err)
 	}
 	if len(scripts) == 0 {
 		return nil, nil
@@ -43,12 +50,12 @@ func (s *service) EmulateOffchainTx(
 
 	indexedCheckpoints, err := indexCheckpoints(arkPtx, tx.Checkpoints)
 	if err != nil {
-		return nil, err
+		return nil, offchainTxError(txid, err)
 	}
 
 	prevOutFetcher, err := prevOutFetcherForArkTx(arkPtx, tx.Checkpoints)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
+		return nil, offchainTxError(txid, fmt.Errorf("failed to create prevout fetcher: %w", err))
 	}
 
 	opts := s.executeOptions()
@@ -62,38 +69,39 @@ func (s *service) EmulateOffchainTx(
 		if err := validateCheckpoint(
 			arkPtx, inputIndex, checkpointPtx, prevOutFetcher.fetchVtxoPrevOut(arkOutpoint), script.TapLeaf(),
 		); err != nil {
-			return nil, fmt.Errorf("invalid checkpoint for input %d: %w", inputIndex, err)
+			return nil, offchainTxError(txid, fmt.Errorf("invalid checkpoint for ark input %d checkpoint_txid=%s: %w", inputIndex, inputTxid, err))
 		}
 		prevArkTx := prevOutFetcher.FetchPrevOutArkTx(arkOutpoint)
 		if prevArkTx == nil {
-			return nil, fmt.Errorf("prevout ark tx not found for input %d", inputIndex)
+			return nil, offchainTxError(txid, fmt.Errorf("prevout ark tx not found for input %d", inputIndex))
 		}
 		vtxoOutpoint := wire.OutPoint{
 			Hash: prevArkTx.TxHash(), Index: prevOutFetcher.prevOutIdxs[arkOutpoint],
 		}
 		expiry, err := expiryForScript(script.Script(), vtxoOutpoint, data.VtxoExpiries)
 		if err != nil {
-			return nil, err
+			return nil, offchainTxError(txid, fmt.Errorf("input %d: expiry: %w", inputIndex, err))
 		}
 
-		log.Debugf("executing arkade script: %x", script.Script())
+		logger := log.WithFields(log.Fields{"ark_txid": arkPtx.UnsignedTx.TxID(), "input_index": inputIndex})
+		logger.Debugf("executing arkade script: %x", script.Script())
 		if err := script.Execute(
 			arkPtx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
 			append(opts, arkade.WithExpiry(expiry))...,
 		); err != nil {
-			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
+			return nil, offchainTxError(txid, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex))
 		}
-		log.Debugf("execution of %x succeeded", script.Script())
+		logger.Debugf("execution of %x succeeded", script.Script())
 
 		arkReq, err := newSignRequest(arkPtx, inputIndex, script)
 		if err != nil {
-			return nil, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err)
+			return nil, offchainTxError(txid, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err))
 		}
 		cpReq, err := newSignRequest(checkpointPtx, 0, script)
 		if err != nil {
-			return nil, fmt.Errorf("cannot request signature for checkpoint input %d: %w", inputIndex, err)
+			return nil, offchainTxError(txid, fmt.Errorf("cannot request signature for checkpoint input 0 (checkpoint_txid=%s, ark input %d): %w", inputTxid, inputIndex, err))
 		}
 		requests = append(requests, arkReq, cpReq)
 	}
@@ -103,10 +111,16 @@ func (s *service) EmulateOffchainTx(
 // EmulateOnchainTx runs every emulator packet script on a plain Bitcoin PSBT and returns one request per entry.
 func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignRequest, error) {
 	ptx := tx.Tx
+	txid := ""
+	if ptx == nil || ptx.UnsignedTx == nil {
+		return nil, onchainTxError(txid, fmt.Errorf("missing transaction"))
+	}
+
+	txid = ptx.UnsignedTx.TxID()
 
 	scripts, err := packetScripts(ptx)
 	if err != nil {
-		return nil, err
+		return nil, onchainTxError(txid, err)
 	}
 	if len(scripts) == 0 {
 		return nil, nil
@@ -114,7 +128,7 @@ func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignReq
 
 	prevOutFetcher, err := prevOutFetcherForOnchainTx(ptx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
+		return nil, onchainTxError(txid, fmt.Errorf("failed to create prevout fetcher: %w", err))
 	}
 
 	opts := s.executeOptions()
@@ -122,20 +136,21 @@ func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignReq
 	requests := make([]SignRequest, 0, len(scripts))
 	for _, rs := range scripts {
 		inputIndex, script := rs.vin, rs.script
-		log.Debugf("executing arkade script: %x", script.Script())
+		logger := log.WithFields(log.Fields{"txid": ptx.UnsignedTx.TxID(), "input_index": inputIndex})
+		logger.Debugf("executing arkade script: %x", script.Script())
 		if err := script.Execute(
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
 			opts...,
 		); err != nil {
-			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
+			return nil, onchainTxError(txid, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex))
 		}
-		log.Debugf("execution of %x succeeded", script.Script())
+		logger.Debugf("execution of %x succeeded", script.Script())
 
 		req, err := newSignRequest(ptx, inputIndex, script)
 		if err != nil {
-			return nil, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err)
+			return nil, onchainTxError(txid, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err))
 		}
 		requests = append(requests, req)
 	}
@@ -147,10 +162,15 @@ func (s *service) EmulateIntent(
 	ctx context.Context, intent Intent, data OffchainData,
 ) ([]SignRequest, error) {
 	ptx := &intent.Proof.Packet
+	if ptx.UnsignedTx == nil {
+		return nil, intentError("", fmt.Errorf("missing intent proof transaction"))
+	}
+
+	txid := ptx.UnsignedTx.TxID()
 
 	scripts, err := packetScripts(ptx)
 	if err != nil {
-		return nil, err
+		return nil, intentError(txid, err)
 	}
 	if len(scripts) == 0 {
 		return nil, nil
@@ -158,13 +178,13 @@ func (s *service) EmulateIntent(
 
 	prevOutFetcher, err := prevOutFetcherForIntent(ptx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create prevout fetcher: %w", err)
+		return nil, intentError(txid, fmt.Errorf("failed to create prevout fetcher: %w", err))
 	}
 
 	// input 0 is approved through input 1, whose script it carries
 	scripts = slices.DeleteFunc(scripts, func(rs packetScript) bool { return rs.vin == 0 })
 	if len(scripts) == 0 {
-		return nil, fmt.Errorf("no input to execute")
+		return nil, intentError(txid, fmt.Errorf("no input to execute"))
 	}
 
 	opts := s.executeOptions()
@@ -175,7 +195,7 @@ func (s *service) EmulateIntent(
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		expiry, err := expiryForScript(script.Script(), outpoint, data.VtxoExpiries)
 		if err != nil {
-			return nil, err
+			return nil, intentError(txid, fmt.Errorf("input %d: expiry: %w", inputIndex, err))
 		}
 
 		if err := script.Execute(
@@ -184,13 +204,13 @@ func (s *service) EmulateIntent(
 			inputIndex,
 			append(opts, arkade.WithIntentMessage(intent.Message), arkade.WithExpiry(expiry))...,
 		); err != nil {
-			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")
-			return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
+			log.WithError(err).WithFields(log.Fields{"proof_txid": ptx.UnsignedTx.TxID(), "input_index": inputIndex}).Error("arkade script execution failed")
+			return nil, intentError(txid, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err))
 		}
 
 		req, err := newSignRequest(ptx, inputIndex, script)
 		if err != nil {
-			return nil, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err)
+			return nil, intentError(txid, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err))
 		}
 		requests = append(requests, req)
 
@@ -202,12 +222,12 @@ func (s *service) EmulateIntent(
 			if !bytes.Equal(
 				ptx.Inputs[0].WitnessUtxo.PkScript, ptx.Inputs[1].WitnessUtxo.PkScript,
 			) {
-				return nil, fmt.Errorf("message input script does not match input 1 script")
+				return nil, intentError(txid, fmt.Errorf("message input script does not match input 1 script"))
 			}
 
 			msgReq, err := newSignRequest(ptx, 0, script)
 			if err != nil {
-				return nil, fmt.Errorf("cannot request signature for message input: %w", err)
+				return nil, intentError(txid, fmt.Errorf("cannot request signature for message input: %w", err))
 			}
 			requests = append(requests, msgReq)
 		}
@@ -226,7 +246,8 @@ func (s *service) EmulateBatchFinalization(
 	for i := range finalization.Intents {
 		inputs, err := approvedInputs(&finalization.Intents[i].Proof.Packet)
 		if err != nil {
-			return nil, fmt.Errorf("intent %d: %w", i, err)
+			proof := &finalization.Intents[i].Proof.Packet
+			return nil, batchFinalizationError("proof", proof.UnsignedTx.TxID(), fmt.Errorf("intent %d: %w", i, err))
 		}
 		for outpoint, input := range inputs {
 			approved[outpoint] = input
@@ -241,7 +262,11 @@ func (s *service) EmulateBatchFinalization(
 		txs = append(slices.Clone(txs), finalization.CommitmentTx)
 	}
 	requests := make([]SignRequest, 0, len(approved))
-	for _, ptx := range txs {
+	for txIndex, ptx := range txs {
+		role := "forfeit"
+		if txIndex >= len(finalization.Forfeits) {
+			role = "commitment"
+		}
 		for inputIndex, input := range ptx.UnsignedTx.TxIn {
 			outpoint := input.PreviousOutPoint
 			a, ok := approved[outpoint]
@@ -249,11 +274,12 @@ func (s *service) EmulateBatchFinalization(
 				continue
 			}
 			if err := a.validateInput(ptx, inputIndex, outpoint); err != nil {
-				return nil, fmt.Errorf("tx %s: %w", ptx.UnsignedTx.TxID(), err)
+				return nil, batchFinalizationError(role, ptx.UnsignedTx.TxID(), err)
 			}
 			req, err := newSignRequest(ptx, inputIndex, a.script)
 			if err != nil {
-				return nil, fmt.Errorf("tx %s: cannot request signature for input %d: %w", ptx.UnsignedTx.TxID(), inputIndex, err)
+				err = fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err)
+				return nil, batchFinalizationError(role, ptx.UnsignedTx.TxID(), err)
 			}
 			req.ClosurePubKeys = a.signers
 			requests = append(requests, req)
@@ -263,7 +289,6 @@ func (s *service) EmulateBatchFinalization(
 	}
 	return requests, nil
 }
-
 
 func (s *service) executeOptions() []arkade.ExecuteOption {
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
