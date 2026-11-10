@@ -32,8 +32,8 @@ func onchainTxError(txid string, err error) *Error {
 	return &Error{Operation: "emulate onchain tx", TransactionRole: "onchain", TxID: txid, Err: err}
 }
 
-func intentError(txid string, err error) *Error {
-	return &Error{Operation: "emulate intent", TransactionRole: "proof", TxID: txid, Err: err}
+func batchRegistrationError(txid string, err error) *Error {
+	return &Error{Operation: "emulate batch registration", TransactionRole: "proof", TxID: txid, Err: err}
 }
 
 func batchFinalizationError(role string, txid string, err error) *Error {

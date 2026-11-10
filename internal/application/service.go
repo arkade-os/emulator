@@ -44,7 +44,7 @@ type SignedBatchFinalization struct {
 type Service interface {
 	GetInfo(context.Context) (*Info, error)
 	SubmitTx(context.Context, emulator.OffchainTx) (*emulator.OffchainTx, error)
-	SubmitIntent(context.Context, emulator.Intent) (*psbt.Packet, error)
+	SubmitIntent(context.Context, emulator.Proof) (*psbt.Packet, error)
 	SubmitFinalization(context.Context, emulator.BatchFinalization, *tree.TxTree) (*SignedBatchFinalization, error)
 	SubmitOnchainTx(context.Context, emulator.OnchainTx) (*psbt.Packet, error)
 	Close()
@@ -323,7 +323,7 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 }
 
 // SubmitIntent executes and signs arkade script for intent tx
-func (s *service) SubmitIntent(ctx context.Context, intent emulator.Intent) (*psbt.Packet, error) {
+func (s *service) SubmitIntent(ctx context.Context, intent emulator.Proof) (*psbt.Packet, error) {
 	if err := validateIntentMessageCommitment(intent); err != nil {
 		return nil, fmt.Errorf("intent message is not committed by the proof: %w", err)
 	}
@@ -335,7 +335,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent emulator.Intent) (*ps
 	if err != nil {
 		return nil, err
 	}
-	requests, err := s.lib.EmulateIntent(ctx, intent, data)
+	requests, err := s.lib.EmulateBatchRegistration(ctx, intent, data)
 	if err != nil {
 		return nil, err
 	}

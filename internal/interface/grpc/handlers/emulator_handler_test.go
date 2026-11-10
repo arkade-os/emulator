@@ -34,7 +34,7 @@ func (failingService) SubmitTx(
 }
 
 func (failingService) SubmitIntent(
-	context.Context, emulator.Intent,
+	context.Context, emulator.Proof,
 ) (*psbt.Packet, error) {
 	return nil, fmt.Errorf("boom: %s", leakyDetail)
 }

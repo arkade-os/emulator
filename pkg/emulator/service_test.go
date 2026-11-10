@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
+	arkintent "github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -29,7 +29,7 @@ type fixtureCase struct {
 	Proof           string           `json:"proof,omitempty"`
 	Message         string           `json:"message,omitempty"`
 	Tx              string           `json:"tx,omitempty"`
-	Intents         []string         `json:"intents,omitempty"`
+	Proofs          []string         `json:"intents,omitempty"`
 	Forfeits        []string         `json:"forfeits,omitempty"`
 	CommitmentTx    string           `json:"commitmentTx,omitempty"`
 	VtxoExpiries    map[string]int64 `json:"vtxoExpiries,omitempty"`
@@ -78,30 +78,30 @@ func TestEmulateOffchainTx(t *testing.T) {
 	}
 }
 
-func TestEmulateIntent(t *testing.T) {
+func TestEmulateBatchRegistration(t *testing.T) {
 	fix := loadFixtures(t, "intent.json")
 	for _, c := range fix.Valid {
 		t.Run(c.Name, func(t *testing.T) {
-			intent := intentFixture(t, c.Proof, c.Message)
-			requests, err := testService.EmulateIntent(t.Context(), intent, offchainData(t, c))
+			registration := proofFixture(t, c.Proof, c.Message)
+			requests, err := testService.EmulateBatchRegistration(t.Context(), registration, offchainData(t, c))
 			require.NoError(t, err)
 			assertRequests(t, c.Requests, requests)
 
-			outpoints, err := intent.ExpiryOutpoints()
+			outpoints, err := registration.ExpiryOutpoints()
 			require.NoError(t, err)
 			require.Equal(t, c.ExpiryOutpoints, outpointStrings(outpoints))
 		})
 	}
 	for _, c := range fix.Invalid {
 		t.Run(c.Name, func(t *testing.T) {
-			intent := intentFixture(t, c.Proof, c.Message)
-			_, err := testService.EmulateIntent(t.Context(), intent, offchainData(t, c))
+			registration := proofFixture(t, c.Proof, c.Message)
+			_, err := testService.EmulateBatchRegistration(t.Context(), registration, offchainData(t, c))
 			require.ErrorContains(t, err, c.ErrorContains)
 			var emulationErr *Error
 			require.ErrorAs(t, err, &emulationErr)
 			require.Equal(t, "proof", emulationErr.TransactionRole)
-			require.Equal(t, intent.Proof.Packet.UnsignedTx.TxID(), emulationErr.TxID)
-			require.ErrorContains(t, err, "proof_txid="+intent.Proof.Packet.UnsignedTx.TxID())
+			require.Equal(t, registration.Proof.Packet.UnsignedTx.TxID(), emulationErr.TxID)
+			require.ErrorContains(t, err, "proof_txid="+registration.Proof.Packet.UnsignedTx.TxID())
 		})
 	}
 }
@@ -187,8 +187,8 @@ func offchainData(t *testing.T, c fixtureCase) OffchainData {
 	return data
 }
 
-func intentFixture(t *testing.T, proof, message string) Intent {
-	return Intent{Proof: intent.Proof{Packet: *decodePSBT(t, proof)}, Message: message}
+func proofFixture(t *testing.T, proof, message string) Proof {
+	return Proof{Proof: arkintent.Proof{Packet: *decodePSBT(t, proof)}, Message: message}
 }
 
 func batchFinalization(t *testing.T, c fixtureCase) BatchFinalization {
@@ -196,8 +196,8 @@ func batchFinalization(t *testing.T, c fixtureCase) BatchFinalization {
 	if c.CommitmentTx != "" {
 		finalization.CommitmentTx = decodePSBT(t, c.CommitmentTx)
 	}
-	for _, proof := range c.Intents {
-		finalization.Intents = append(finalization.Intents, intentFixture(t, proof, ""))
+	for _, proof := range c.Proofs {
+		finalization.Proofs = append(finalization.Proofs, proofFixture(t, proof, ""))
 	}
 	return finalization
 }

@@ -230,7 +230,7 @@
       "forfeits": [
         "cHNidP8BAIcCAAAAAqEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABoIYBAAAAAAAiUSB26bMshfm9y+1+ZAZoI+zwjFTeQkZcXtWPi8KZv3cHTAAAAAAAAQErAQAAAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrARSDSMcF5tIWlduMD0OTnQF2/U9FuopbAkDD3EQRE4MDPa60gTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2aswAABASvCAQAAAAAAACJRIHs+liirGUVW0kFVayFVkumx51GmadZ5HyWWAeXqJ3DxAAA="
       ],
-      "errorContains": "witness UTXO does not match intent proof"
+      "errorContains": "witness UTXO does not match proof"
     },
     {
       "name": "forfeit missing tapleaf",
@@ -250,7 +250,7 @@
       "forfeits": [
         "cHNidP8BAIcCAAAAAqEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABoIYBAAAAAAAiUSB26bMshfm9y+1+ZAZoI+zwjFTeQkZcXtWPi8KZv3cHTAAAAAAAAQEroIYBAAAAAAAiUSBW/7XFH100zRaaUphc1jSkdD5XSWJkN5SuInBNFPsKqiIVwFCSm3TBoElUt4tLYDXpel4HiloPKOyW1Ue/7prOgDrAIyBTH+YGgTRQPScjEzInyGesj6bIPFN+mkTDxb29yx/jN6zAAAEBK8IBAAAAAAAAIlEgez6WKKsZRVbSQVVrIVWS6bHnUaZp1nkfJZYB5eoncPEAAA=="
       ],
-      "errorContains": "taproot leaf script does not match intent proof"
+      "errorContains": "taproot leaf script does not match proof"
     },
     {
       "name": "forfeit tapleaf not committed",

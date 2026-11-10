@@ -3,7 +3,7 @@ package emulator
 import (
 	"fmt"
 
-	"github.com/arkade-os/arkd/pkg/ark-lib/intent"
+	arkintent "github.com/arkade-os/arkd/pkg/ark-lib/intent"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/psbt/v2"
@@ -44,17 +44,17 @@ func (t OffchainTx) ExpiryOutpoints() ([]wire.OutPoint, error) {
 	return outpoints, nil
 }
 
-// Intent is an unsigned intent proof and the message it commits to, as the
+// Proof is an unsigned proof and the message it commits to, as the
 // scripts read it with OP_INSPECTINTENTMESSAGE. The caller verifies the proof
 // commits to Message; the lib never parses it.
-type Intent struct {
-	Proof   intent.Proof
+type Proof struct {
+	Proof   arkintent.Proof
 	Message string
 }
 
-// ExpiryOutpoints returns the spent vtxos whose expiry EmulateIntent needs in OffchainData.VtxoExpiries:
+// ExpiryOutpoints returns the spent vtxos whose expiry EmulateBatchRegistration needs in OffchainData.VtxoExpiries:
 // those spent by inputs whose arkade script uses OP_PUSHEXPIRY.
-func (i Intent) ExpiryOutpoints() ([]wire.OutPoint, error) {
+func (i Proof) ExpiryOutpoints() ([]wire.OutPoint, error) {
 	ptx := &i.Proof.Packet
 	vins, err := pushExpiryVins(ptx.UnsignedTx)
 	if err != nil {
@@ -83,10 +83,10 @@ type OnchainTx struct {
 	Tx *psbt.Packet
 }
 
-// BatchFinalization is a batch to sign: the signed intent proofs it settles, its forfeits and commitment tx.
-// Intents[i].Message is unused.
+// BatchFinalization is a batch to sign: the signed proofs it settles, its forfeits and commitment tx.
+// Proofs[i].Message is unused.
 type BatchFinalization struct {
-	Intents      []Intent
+	Proofs       []Proof
 	Forfeits     []*psbt.Packet
 	CommitmentTx *psbt.Packet
 }

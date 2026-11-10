@@ -14,8 +14,8 @@ import (
 	"github.com/btcsuite/btcd/wire/v2"
 )
 
-// prevOutFetcherForIntent computes and validate prevouts for an intent tx
-func prevOutFetcherForIntent(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
+// prevOutFetcherForProof computes and validate prevouts for a proof transaction
+func prevOutFetcherForProof(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error) {
 	baseFetcher, err := computePrevoutFetcher(ptx)
 	if err != nil {
 		return nil, err
@@ -29,13 +29,13 @@ func prevOutFetcherForIntent(ptx *psbt.Packet) (arkade.ArkPrevOutFetcher, error)
 	prevOutArkTxs := make(map[wire.OutPoint]*wire.MsgTx, len(prevoutTxs))
 	prevOutIdxs := make(map[wire.OutPoint]uint32, len(prevoutTxs))
 	if len(ptx.Inputs) < 2 {
-		return nil, fmt.Errorf("intent proof must have at least 2 inputs")
+		return nil, fmt.Errorf("proof must have at least 2 inputs")
 	}
 	// Input 0 is always the BIP322 message input; its output carries zero value
 	// and mirrors the first real input script.
 	expected := &wire.TxOut{PkScript: ptx.Inputs[1].WitnessUtxo.PkScript}
 	if !equalTxOut(ptx.Inputs[0].WitnessUtxo, expected) {
-		return nil, fmt.Errorf("intent message input witness utxo is invalid")
+		return nil, fmt.Errorf("proof message input witness utxo is invalid")
 	}
 	outpoint := ptx.UnsignedTx.TxIn[0].PreviousOutPoint
 	prevOutArkTxs[outpoint] = &wire.MsgTx{TxOut: []*wire.TxOut{expected}}
@@ -515,7 +515,7 @@ func validateTaprootLeaf(input psbt.PInput, expectedLeaf txscript.TapLeaf) error
 	return nil
 }
 
-// approvedInput is an intent proof input carrying a valid tapscript signature of at least one closure key.
+// approvedInput is an proof input carrying a valid tapscript signature of at least one closure key.
 type approvedInput struct {
 	prevout wire.TxOut
 	script  *arkade.ArkadeScript
@@ -529,13 +529,13 @@ func (a approvedInput) validateInput(ptx *psbt.Packet, inputIndex int, outpoint 
 		return fmt.Errorf("input %d: PSBT input index out of range", inputIndex)
 	}
 	if ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint != outpoint {
-		return fmt.Errorf("input %d: outpoint does not match intent proof", inputIndex)
+		return fmt.Errorf("input %d: outpoint does not match proof", inputIndex)
 	}
 
 	input := ptx.Inputs[inputIndex]
 	if input.WitnessUtxo == nil || input.WitnessUtxo.Value != a.prevout.Value ||
 		!bytes.Equal(input.WitnessUtxo.PkScript, a.prevout.PkScript) {
-		return fmt.Errorf("input %d: witness UTXO does not match intent proof", inputIndex)
+		return fmt.Errorf("input %d: witness UTXO does not match proof", inputIndex)
 	}
 	if len(input.TaprootLeafScript) == 0 || input.TaprootLeafScript[0] == nil {
 		return fmt.Errorf("input %d: missing taproot leaf script", inputIndex)
@@ -544,7 +544,7 @@ func (a approvedInput) validateInput(ptx *psbt.Packet, inputIndex int, outpoint 
 	tapLeaf := input.TaprootLeafScript[0]
 	if txscript.NewTapLeaf(tapLeaf.LeafVersion, tapLeaf.Script).TapHash() !=
 		a.script.TapLeaf().TapHash() {
-		return fmt.Errorf("input %d: taproot leaf script does not match intent proof", inputIndex)
+		return fmt.Errorf("input %d: taproot leaf script does not match proof", inputIndex)
 	}
 
 	return nil
@@ -570,7 +570,7 @@ func approvedInputs(proof *psbt.Packet) (map[wire.OutPoint]approvedInput, error)
 	approved := make(map[wire.OutPoint]approvedInput)
 	for _, entry := range packet {
 		inputIndex := int(entry.Vin)
-		// in intent proof, input index 0 is the message input: no forfeit spends it
+		// in proof, input index 0 is the message input: no forfeit spends it
 		if inputIndex == 0 || inputIndex >= len(proof.Inputs) {
 			continue
 		}
@@ -626,4 +626,3 @@ func approvedInputs(proof *psbt.Packet) (map[wire.OutPoint]approvedInput, error)
 	}
 	return approved, nil
 }
-

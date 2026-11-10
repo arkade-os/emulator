@@ -171,7 +171,7 @@ func (h *handler) SubmitFinalization(
 	}
 
 	batchFinalization := emulator.BatchFinalization{
-		Intents:      []emulator.Intent{*intent},
+		Proofs:       []emulator.Proof{*intent},
 		Forfeits:     forfeitPsbt,
 		CommitmentTx: commitmentPtx,
 	}

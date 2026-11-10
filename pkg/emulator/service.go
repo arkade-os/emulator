@@ -14,7 +14,7 @@ import (
 
 type Service interface {
 	EmulateOffchainTx(context.Context, OffchainTx, OffchainData) ([]SignRequest, error)
-	EmulateIntent(context.Context, Intent, OffchainData) ([]SignRequest, error)
+	EmulateBatchRegistration(context.Context, Proof, OffchainData) ([]SignRequest, error)
 	EmulateOnchainTx(context.Context, OnchainTx) ([]SignRequest, error)
 	EmulateBatchFinalization(context.Context, BatchFinalization) ([]SignRequest, error)
 }
@@ -157,34 +157,34 @@ func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignReq
 	return requests, nil
 }
 
-// EmulateIntent runs every emulator packet script on an unsigned intent proof, before its registration.
-func (s *service) EmulateIntent(
-	ctx context.Context, intent Intent, data OffchainData,
+// EmulateBatchRegistration runs every emulator packet script on an unsigned proof, before its registration.
+func (s *service) EmulateBatchRegistration(
+	ctx context.Context, registration Proof, data OffchainData,
 ) ([]SignRequest, error) {
-	ptx := &intent.Proof.Packet
+	ptx := &registration.Proof.Packet
 	if ptx.UnsignedTx == nil {
-		return nil, intentError("", fmt.Errorf("missing intent proof transaction"))
+		return nil, batchRegistrationError("", fmt.Errorf("missing proof transaction"))
 	}
 
 	txid := ptx.UnsignedTx.TxID()
 
 	scripts, err := packetScripts(ptx)
 	if err != nil {
-		return nil, intentError(txid, err)
+		return nil, batchRegistrationError(txid, err)
 	}
 	if len(scripts) == 0 {
 		return nil, nil
 	}
 
-	prevOutFetcher, err := prevOutFetcherForIntent(ptx)
+	prevOutFetcher, err := prevOutFetcherForProof(ptx)
 	if err != nil {
-		return nil, intentError(txid, fmt.Errorf("failed to create prevout fetcher: %w", err))
+		return nil, batchRegistrationError(txid, fmt.Errorf("failed to create prevout fetcher: %w", err))
 	}
 
 	// input 0 is approved through input 1, whose script it carries
 	scripts = slices.DeleteFunc(scripts, func(rs packetScript) bool { return rs.vin == 0 })
 	if len(scripts) == 0 {
-		return nil, intentError(txid, fmt.Errorf("no input to execute"))
+		return nil, batchRegistrationError(txid, fmt.Errorf("no input to execute"))
 	}
 
 	opts := s.executeOptions()
@@ -195,26 +195,26 @@ func (s *service) EmulateIntent(
 		outpoint := ptx.UnsignedTx.TxIn[inputIndex].PreviousOutPoint
 		expiry, err := expiryForScript(script.Script(), outpoint, data.VtxoExpiries)
 		if err != nil {
-			return nil, intentError(txid, fmt.Errorf("input %d: expiry: %w", inputIndex, err))
+			return nil, batchRegistrationError(txid, fmt.Errorf("input %d: expiry: %w", inputIndex, err))
 		}
 
 		if err := script.Execute(
 			ptx.UnsignedTx,
 			prevOutFetcher,
 			inputIndex,
-			append(opts, arkade.WithIntentMessage(intent.Message), arkade.WithExpiry(expiry))...,
+			append(opts, arkade.WithIntentMessage(registration.Message), arkade.WithExpiry(expiry))...,
 		); err != nil {
 			log.WithError(err).WithFields(log.Fields{"proof_txid": ptx.UnsignedTx.TxID(), "input_index": inputIndex}).Error("arkade script execution failed")
-			return nil, intentError(txid, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err))
+			return nil, batchRegistrationError(txid, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err))
 		}
 
 		req, err := newSignRequest(ptx, inputIndex, script)
 		if err != nil {
-			return nil, intentError(txid, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err))
+			return nil, batchRegistrationError(txid, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err))
 		}
 		requests = append(requests, req)
 
-		// if input index 1 is valid, the intent message input (index 0) is approved with it
+		// if input index 1 is valid, the proof message input (index 0) is approved with it
 		if inputIndex == 1 {
 			// the message input is signed with input 1's script hash, so it must
 			// really carry input 1's script: the vm never executes input 0 on its
@@ -222,12 +222,12 @@ func (s *service) EmulateIntent(
 			if !bytes.Equal(
 				ptx.Inputs[0].WitnessUtxo.PkScript, ptx.Inputs[1].WitnessUtxo.PkScript,
 			) {
-				return nil, intentError(txid, fmt.Errorf("message input script does not match input 1 script"))
+				return nil, batchRegistrationError(txid, fmt.Errorf("message input script does not match input 1 script"))
 			}
 
 			msgReq, err := newSignRequest(ptx, 0, script)
 			if err != nil {
-				return nil, intentError(txid, fmt.Errorf("cannot request signature for message input: %w", err))
+				return nil, batchRegistrationError(txid, fmt.Errorf("cannot request signature for message input: %w", err))
 			}
 			requests = append(requests, msgReq)
 		}
@@ -235,7 +235,7 @@ func (s *service) EmulateIntent(
 	return requests, nil
 }
 
-// EmulateBatchFinalization executes no script: the intents were executed at registration.
+// EmulateBatchFinalization executes no script: the proofs were executed at registration.
 // It returns one request per forfeit or commitment input spending a vtxo approved
 // by a signed proof input, whose ClosurePubKeys are the keys that signed the proof.
 // A forfeit spending no approved vtxo gets no request.
@@ -243,11 +243,11 @@ func (s *service) EmulateBatchFinalization(
 	ctx context.Context, finalization BatchFinalization,
 ) ([]SignRequest, error) {
 	approved := make(map[wire.OutPoint]approvedInput)
-	for i := range finalization.Intents {
-		inputs, err := approvedInputs(&finalization.Intents[i].Proof.Packet)
+	for i := range finalization.Proofs {
+		inputs, err := approvedInputs(&finalization.Proofs[i].Proof.Packet)
 		if err != nil {
-			proof := &finalization.Intents[i].Proof.Packet
-			return nil, batchFinalizationError("proof", proof.UnsignedTx.TxID(), fmt.Errorf("intent %d: %w", i, err))
+			proof := &finalization.Proofs[i].Proof.Packet
+			return nil, batchFinalizationError("proof", proof.UnsignedTx.TxID(), fmt.Errorf("proof %d: %w", i, err))
 		}
 		for outpoint, input := range inputs {
 			approved[outpoint] = input

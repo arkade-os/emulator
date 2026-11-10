@@ -301,7 +301,7 @@ func TestSignFinalization(t *testing.T) {
 			arkdForfeitPkScript:      forfeitScript,
 		}
 		return svc.signFinalization(t.Context(), emulator.BatchFinalization{
-			Intents:      []emulator.Intent{signedFinalizationIntent(t, deprecatedKey, arkadeScript, leaf, vtxoPrevout, vtxoOutpoint)},
+			Proofs:       []emulator.Proof{signedFinalizationIntent(t, deprecatedKey, arkadeScript, leaf, vtxoPrevout, vtxoOutpoint)},
 			Forfeits:     forfeits,
 			CommitmentTx: commitmentPtx,
 		}, &tree.TxTree{Root: connectorPtx})
@@ -365,7 +365,7 @@ func signedFinalizationIntent(
 	tapLeaf *psbt.TaprootTapLeafScript,
 	prevout *wire.TxOut,
 	outpoint wire.OutPoint,
-) emulator.Intent {
+) emulator.Proof {
 	t.Helper()
 
 	tx := wire.NewMsgTx(2)
@@ -391,5 +391,5 @@ func signedFinalizationIntent(
 		ptx, 1, arkade.ArkadeScriptHash(arkadeScript), prevoutFetcher,
 	))
 
-	return emulator.Intent{Proof: arkintent.Proof{Packet: *ptx}}
+	return emulator.Proof{Proof: arkintent.Proof{Packet: *ptx}}
 }

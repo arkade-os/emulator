@@ -26,7 +26,7 @@ func TestValidateIntentMessageCommitment(t *testing.T) {
 	}}, nil)
 	require.NoError(t, err)
 
-	request := emulator.Intent{Proof: *proof, Message: encoded}
+	request := emulator.Proof{Proof: *proof, Message: encoded}
 	require.NoError(t, validateIntentMessageCommitment(request))
 
 	// a proof bound to non-canonical bytes fails the outpoint comparison
