@@ -11,11 +11,11 @@ replace github.com/arkade-os/emulator/pkg/emulator => ./pkg/emulator
 replace github.com/arkade-os/emulator/api-spec => ./api-spec
 
 require (
-	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20260901090427-f863e4847193
-	github.com/arkade-os/arkd/pkg/client-lib v0.0.0-20260901090427-f863e4847193
-	github.com/arkade-os/arkd/pkg/client-wallet v0.0.0-20260901090427-f863e4847193
-	github.com/arkade-os/arkd/pkg/errors v0.0.0-20260901090427-f863e4847193
-	github.com/arkade-os/arkd/pkg/macaroons v0.7.1-0.20260901090427-f863e4847193
+	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20261105114752-97386cb3d95c
+	github.com/arkade-os/arkd/pkg/client-lib v0.0.0-20261105114752-97386cb3d95c
+	github.com/arkade-os/arkd/pkg/client-wallet v0.0.0-20261105114752-97386cb3d95c
+	github.com/arkade-os/arkd/pkg/errors v0.0.0-20261105114752-97386cb3d95c
+	github.com/arkade-os/arkd/pkg/macaroons v0.7.1-0.20261105114752-97386cb3d95c
 	github.com/arkade-os/emulator/api-spec v0.1.0
 	github.com/arkade-os/emulator/pkg/arkade v0.1.0
 	github.com/arkade-os/emulator/pkg/client v0.1.0
@@ -46,8 +46,8 @@ require (
 	cel.dev/expr v0.25.2 // indirect
 	github.com/aead/siphash v1.0.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
-	github.com/arkade-os/arkd/api-spec v0.0.0-20260901090427-f863e4847193 // indirect
-	github.com/arkade-os/arkd/pkg/kvdb v0.7.1-0.20260901090427-f863e4847193 // indirect
+	github.com/arkade-os/arkd/api-spec v0.0.0-20261105114752-97386cb3d95c // indirect
+	github.com/arkade-os/arkd/pkg/kvdb v0.7.1-0.20261105114752-97386cb3d95c // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.20.0 // indirect
 	github.com/btcsuite/btcd/v2transport v1.1.0 // indirect
