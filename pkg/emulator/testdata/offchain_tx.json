@@ -112,6 +112,39 @@
       "checkpoints": [
         "cHNidP8BAGsCAAAAAcVlYw9TnJcdUA0TgqQC0aSIf6Ky2CX6269f9qveyPlFAAAAAAAAAAAAAogTAAAAAAAAIlEgVv+1xR9dNM0WmlKYXNY0pHQ+V0liZDeUriJwTRT7CqoAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIFb/tcUfXTTNFppSmFzWNKR0PldJYmQ3lK4icE0U+wqqIhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFINIxwXm0haV24wPQ5OdAXb9T0W6ilsCQMPcRBETgwM9rrSBNS2zRNhAyypvSrrnZAKpNRdnq2ArJQjN0xFGnJU0HZqzAAAAA"
       ]
+    },
+    {
+      "name": "inspect nonzero vtxo script and expiry through checkpoint",
+      "arkTx": "cHNidP8BAKECAAAAARfObWjY6+p81Ovoof3+EliBJDAmxFi+cdJqtfy1XxlpAAAAAAD/////AsASAAAAAAAAIlEgjvPMbaVIOsjmeP0A/xg+7dzX8KewwV7KA+VYbGOe3fUAAAAAAAAAADpqOEFSSwEzAQAADADKUYiI2wQA0klrhyIBII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAABASuIEwAAAAAAACJRINFGNxCZ+xq1qIvfDL8MaYQ4VgDT75WLay3PsEgj+9f4QhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBJsXDJjhdfcOB+jTNzT4otjzdjUpzipnrsqVIDiSUpnEUg90pGpuKabBn9ClQiA4ybn4A7ZqcbeGrz2gGbqglCy3KtIMYEf5RB7X1tMEVAbpXAfNhcd45LjO88p6usCblccJ7lrMAK3nByZXZhcmt0eIkCAAAAAdIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AogTAAAAAAAAIlEg+TCKAZJYwxBJNE+F+J1SKbUxyEWDb5mwhgHxE7zgNvmIEwAAAAAAACJRII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAAAAA==",
+      "checkpoints": [
+        "cHNidP8BAGsCAAAAAQxwS4eCNb9L2kuFaOG8aqpqS7K5yglnUWwIz/kuKw8dAQAAAAD/////AogTAAAAAAAAIlEg0UY3EJn7GrWoi98MvwxphDhWANPvlYtrLc+wSCP71/gAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31IhXBUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIPdKRqbimmwZ/QpUIgOMm5+AO2anG3hq89oBm6oJQstyrSDGBH+UQe19bTBFQG6VwHzYXHeOS4zvPKerrAm5XHCe5azAAAAA"
+      ],
+      "vtxoExpiries": {
+        "1d0f2b2ef9cf086c516709cab9b24b6aaa6abce168854bda4bbf3582874b700c:1": 1800000000
+      },
+      "expiryOutpoints": [
+        "1d0f2b2ef9cf086c516709cab9b24b6aaa6abce168854bda4bbf3582874b700c:1"
+      ],
+      "requests": [
+        {
+          "txid": "3db2c9ad8b3d315e11d0733fd363c7d2a4d2e6994738b47bd38798a43a4133c2",
+          "inputIndex": 0,
+          "scriptHash": "549cf1518ead8a0cc1f7268ef95ed9d25bacce11d0edd1b45bcd5fc8d6c0867c",
+          "closurePubKeys": [
+            "f74a46a6e29a6c19fd0a5422038c9b9f803b66a71b786af3da019baa0942cb72",
+            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+          ]
+        },
+        {
+          "txid": "69195fb5fcb56ad271be58c4263024815812fefda1e8ebd47ceaebd8686dce17",
+          "inputIndex": 0,
+          "scriptHash": "549cf1518ead8a0cc1f7268ef95ed9d25bacce11d0edd1b45bcd5fc8d6c0867c",
+          "closurePubKeys": [
+            "f74a46a6e29a6c19fd0a5422038c9b9f803b66a71b786af3da019baa0942cb72",
+            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+          ]
+        }
+      ]
     }
   ],
   "invalid": [
@@ -344,6 +377,17 @@
         "16e1e7521827698b4372ff2894faedf1d35377c3ddd4cc4c7feaca230d321f7d:0": 0
       },
       "errorContains": "has no expiry"
+    },
+    {
+      "name": "checkpoint nonzero prevout with output zero witness script",
+      "arkTx": "cHNidP8BAKECAAAAARfObWjY6+p81Ovoof3+EliBJDAmxFi+cdJqtfy1XxlpAAAAAAD/////AsASAAAAAAAAIlEgjvPMbaVIOsjmeP0A/xg+7dzX8KewwV7KA+VYbGOe3fUAAAAAAAAAADpqOEFSSwEzAQAADADKUYiI2wQA0klrhyIBII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAABASuIEwAAAAAAACJRINFGNxCZ+xq1qIvfDL8MaYQ4VgDT75WLay3PsEgj+9f4QhXAUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBJsXDJjhdfcOB+jTNzT4otjzdjUpzipnrsqVIDiSUpnEUg90pGpuKabBn9ClQiA4ybn4A7ZqcbeGrz2gGbqglCy3KtIMYEf5RB7X1tMEVAbpXAfNhcd45LjO88p6usCblccJ7lrMAK3nByZXZhcmt0eIkCAAAAAdIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AogTAAAAAAAAIlEg+TCKAZJYwxBJNE+F+J1SKbUxyEWDb5mwhgHxE7zgNvmIEwAAAAAAACJRII7zzG2lSDrI5nj9AP8YPu3c1/CnsMFeygPlWGxjnt31AAAAAAAAAA==",
+      "checkpoints": [
+        "cHNidP8BAGsCAAAAAQxwS4eCNb9L2kuFaOG8aqpqS7K5yglnUWwIz/kuKw8dAQAAAAD/////AogTAAAAAAAAIlEg0UY3EJn7GrWoi98MvwxphDhWANPvlYtrLc+wSCP71/gAAAAAAAAAAARRAk5zAAAAAAABASuIEwAAAAAAACJRIPkwigGSWMMQSTRPhfidUim1MchFg2+ZsIYB8RO84Db5IhXBUJKbdMGgSVS3i0tgNel6XgeKWg8o7JbVR7/ums6AOsBFIPdKRqbimmwZ/QpUIgOMm5+AO2anG3hq89oBm6oJQstyrSDGBH+UQe19bTBFQG6VwHzYXHeOS4zvPKerrAm5XHCe5azAAAAA"
+      ],
+      "vtxoExpiries": {
+        "1d0f2b2ef9cf086c516709cab9b24b6aaa6abce168854bda4bbf3582874b700c:1": 1800000000
+      },
+      "errorContains": "prevout tx script mismatch for input 0"
     }
   ]
 }
