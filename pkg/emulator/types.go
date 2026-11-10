@@ -48,7 +48,7 @@ func (t OffchainTx) ExpiryOutpoints() ([]wire.OutPoint, error) {
 // scripts read it with OP_INSPECTINTENTMESSAGE. The caller verifies the proof
 // commits to Message; the lib never parses it.
 type Proof struct {
-	Proof   arkintent.Proof
+	arkintent.Proof
 	Message string
 }
 
