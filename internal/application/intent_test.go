@@ -36,6 +36,6 @@ func TestValidateIntentMessageCommitment(t *testing.T) {
 	require.ErrorContains(t, validateIntentMessageCommitment(request), "synthetic message input")
 
 	request.Message = encoded
-	request.Proof.UnsignedTx.TxIn[0].PreviousOutPoint.Hash[0] ^= 0xff
+	request.UnsignedTx.TxIn[0].PreviousOutPoint.Hash[0] ^= 0xff
 	require.ErrorContains(t, validateIntentMessageCommitment(request), "synthetic message input")
 }

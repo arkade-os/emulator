@@ -12,7 +12,7 @@ import (
 // canonical re-encoding of the decoded one, a client that signed a
 // non-canonical encoding fails the outpoint comparison here.
 func validateIntentMessageCommitment(request emulator.Proof) error {
-	ptx := &request.Proof.Packet
+	ptx := &request.Packet
 	if len(ptx.UnsignedTx.TxIn) < 2 || len(ptx.Inputs) < 2 || ptx.Inputs[1].WitnessUtxo == nil {
 		return fmt.Errorf("proof is missing its first ownership input witness utxo")
 	}
