@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/macaroons"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
@@ -16,6 +17,8 @@ import (
 	"github.com/arkade-os/emulator/internal/telemetry"
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	grpchealth "google.golang.org/grpc/health/grpc_health_v1"
@@ -31,7 +34,8 @@ type service struct {
 	// macaroonSvc gates the signing endpoints when set. It is nil until a
 	// deployment configures macaroon auth, in which case requests are served
 	// unauthenticated.
-	macaroonSvc *macaroons.Service
+	macaroonSvc  *macaroons.Service
+	otelShutdown func(context.Context) error
 }
 
 func NewService(
@@ -71,6 +75,13 @@ func (s *service) Stop() {
 	if s.server != nil {
 		// nolint
 		s.server.Shutdown(context.Background())
+	}
+	if s.otelShutdown != nil {
+		if err := s.otelShutdown(context.Background()); err != nil {
+			log.Errorf("failed to shutdown otel: %s", err)
+		}
+
+		log.Infof("otel shutdown")
 	}
 	log.Info("shutdown service")
 }
@@ -129,10 +140,27 @@ func (s *service) newServer() error {
 	grpcConfig := serverOptions()
 	grpcConfig = append(
 		grpcConfig,
-		telemetry.GRPCServerOption(),
 		interceptors.UnaryInterceptor(s.macaroonSvc),
 		interceptors.StreamInterceptor(s.macaroonSvc),
 	)
+	if s.cfg.OtelCollectorEndpoint != "" {
+		pushInteval := time.Duration(s.cfg.OtelPushInterval) * time.Second
+		otelShutdown, err := telemetry.InitOtelSDK(
+			ctx,
+			s.cfg.OtelCollectorEndpoint,
+			pushInteval,
+		)
+		if err != nil {
+			return err
+		}
+
+		otelHandler := otelgrpc.NewServerHandler(
+			otelgrpc.WithTracerProvider(otel.GetTracerProvider()),
+		)
+		grpcConfig = append(grpcConfig, grpc.StatsHandler(otelHandler))
+
+		s.otelShutdown = otelShutdown
+	}
 
 	// Server grpc.
 	grpcServer := grpc.NewServer(grpcConfig...)
@@ -148,11 +176,10 @@ func (s *service) newServer() error {
 	healthHandler := handlers.NewHealthHandler()
 	grpchealth.RegisterHealthServer(grpcServer, healthHandler)
 
-	// Creds for grpc gateway reverse proxy; the dial option propagates its trace.
+	// Creds for grpc gateway reverse proxy.
+	gatewayOpts := grpc.WithTransportCredentials(insecure.NewCredentials())
 	conn, err := grpc.NewClient(
-		s.config.gatewayAddress(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		telemetry.GRPCDialOption(),
+		s.config.gatewayAddress(), gatewayOpts,
 	)
 	if err != nil {
 		return err
@@ -175,11 +202,12 @@ func (s *service) newServer() error {
 	// Register public services on main gateway
 	emulatorv1.RegisterEmulatorServiceHandler(ctx, gwmux, conn)
 
-	// Only the gateway is wrapped: gRPC requests are traced by the server option.
-	grpcGateway := telemetry.HTTPHandler(gwmux)
+	grpcGateway := http.Handler(gwmux)
 	handler := router(grpcServer, grpcGateway)
 	mux := http.NewServeMux()
 	mux.Handle("/", handler)
+
+	httpServerHandler := http.Handler(mux)
 
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
@@ -188,7 +216,7 @@ func (s *service) newServer() error {
 	s.grpcServer = grpcServer
 	s.server = &http.Server{
 		Addr:      s.config.address(),
-		Handler:   mux,
+		Handler:   httpServerHandler,
 		Protocols: protocols,
 	}
 
