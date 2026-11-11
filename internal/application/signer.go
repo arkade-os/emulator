@@ -1,13 +1,12 @@
-// ponytail: superseded by arkd-signer, delete with internal/
 package application
 
 import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"time"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -125,7 +124,7 @@ func (s *service) signRequests(requests []emulator.SignRequest) ([]emulator.Sign
 func (s *service) signFinalization(
 	ctx context.Context, finalization emulator.BatchFinalization, connectorTree *tree.TxTree,
 ) (*SignedBatchFinalization, error) {
-	requests, err := s.lib.EmulateBatchFinalization(ctx, finalization)
+	requests, err := s.emulator.EmulateBatchFinalization(ctx, finalization)
 	if err != nil {
 		return nil, err
 	}

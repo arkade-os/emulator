@@ -332,11 +332,21 @@ type packetScript struct {
 	script *arkade.ArkadeScript
 }
 
+// txScripts returns the txid of ptx and its emulator packet scripts, wrapping failures with wrap.
+func txScripts(ptx *psbt.Packet, wrap func(txid string, err error) *Error) (string, []packetScript, error) {
+	if ptx == nil || ptx.UnsignedTx == nil {
+		return "", nil, wrap("", fmt.Errorf("missing transaction"))
+	}
+	txid := ptx.UnsignedTx.TxID()
+	scripts, err := packetScripts(ptx)
+	if err != nil {
+		return txid, nil, wrap(txid, err)
+	}
+	return txid, scripts, nil
+}
+
 // packetScripts returns every emulator packet entry's arkade script, in packet order.
 func packetScripts(ptx *psbt.Packet) ([]packetScript, error) {
-	if ptx == nil || ptx.UnsignedTx == nil {
-		return nil, fmt.Errorf("missing transaction")
-	}
 	packet, err := arkade.FindEmulatorPacket(ptx.UnsignedTx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse emulator packet: %w", err)

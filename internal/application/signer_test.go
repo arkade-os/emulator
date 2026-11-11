@@ -294,7 +294,7 @@ func TestSignFinalization(t *testing.T) {
 	}
 	submit := func(t *testing.T, validUntil time.Time, forfeits ...*psbt.Packet) (*SignedBatchFinalization, error) {
 		svc := &service{
-			lib:                      emulator.New(arkade.DefaultComputeLimits()),
+			emulator:                 emulator.New(arkade.DefaultComputeLimits()),
 			signer:                   signer{newResolverPrivateKey(t)},
 			deprecatedSigners:        []signer{{deprecatedKey}},
 			deprecatedKeysValidUntil: &validUntil,

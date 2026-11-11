@@ -421,7 +421,7 @@ func TestVerifyCheckpointSignatures(t *testing.T) {
 func TestIsFinalizerRole(t *testing.T) {
 	t.Run("last non-arkd signer", func(t *testing.T) {
 		svc, tx, _ := newTestService(t, true)
-		signed, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
+		signed, err := signTx(t, svc, tx)
 		require.NoError(t, err)
 
 		ok, err := isFinalizerRole(signed.ArkTx, []int{0}, svc.signerPubKeys, svc.arkdPubKey)
@@ -431,7 +431,7 @@ func TestIsFinalizerRole(t *testing.T) {
 
 	t.Run("another signer comes after us", func(t *testing.T) {
 		svc, tx, _ := newTestService(t, false)
-		signed, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
+		signed, err := signTx(t, svc, tx)
 		require.NoError(t, err)
 
 		ok, err := isFinalizerRole(signed.ArkTx, []int{0}, svc.signerPubKeys, svc.arkdPubKey)
@@ -763,7 +763,7 @@ func TestClose(t *testing.T) {
 	idx := &testIndexer{}
 	lib := emulator.New(arkade.DefaultComputeLimits())
 	arkd := &fakeArkd{}
-	svc := &service{lib: lib, signer: signer{signerKey}, arkd: arkd, indexer: idx}
+	svc := &service{emulator: lib, signer: signer{signerKey}, arkd: arkd, indexer: idx}
 
 	svc.Close()
 	require.Equal(t, 1, idx.closeCalls)
@@ -868,7 +868,7 @@ func newTestServiceWithCheckpoints(
 		finalArkTx: encodePacket(t, arkPtx),
 	}
 	svc := &service{
-		lib:                 lib,
+		emulator:            lib,
 		signer:              signer{emulatorKey},
 		arkdForfeitPkScript: []byte{txscript.OP_TRUE},
 		arkd:                arkd,
@@ -1091,7 +1091,7 @@ func TestSignTxDeprecatedKey(t *testing.T) {
 
 	t.Run("before cutoff signs ark and checkpoint inputs", func(t *testing.T) {
 		svc, tx := newDeprecated(t, time.Now().Add(time.Hour))
-		signed, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
+		signed, err := signTx(t, svc, tx)
 		require.NoError(t, err)
 
 		tweaked := arkade.ComputeArkadeScriptPublicKey(
@@ -1108,7 +1108,17 @@ func TestSignTxDeprecatedKey(t *testing.T) {
 
 	t.Run("after cutoff matches nothing", func(t *testing.T) {
 		svc, tx := newDeprecated(t, time.Now().Add(-time.Hour))
-		_, err := svc.signTx(t.Context(), tx, emulator.OffchainData{})
+		_, err := signTx(t, svc, tx)
 		require.ErrorContains(t, err, "failed to find any valid input/entry pairs")
 	})
+}
+
+// signTx emulates and signs tx in place like SubmitTx does, without submitting it.
+func signTx(t *testing.T, svc *service, tx emulator.OffchainTx) (*emulator.OffchainTx, error) {
+	requests, err := svc.emulator.EmulateOffchainTx(t.Context(), tx, emulator.OffchainData{})
+	require.NoError(t, err)
+	if _, err := svc.signRequests(requests); err != nil {
+		return nil, err
+	}
+	return &tx, nil
 }

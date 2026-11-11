@@ -49,106 +49,136 @@ var testService = New(arkade.DefaultComputeLimits())
 
 func TestEmulateOffchainTx(t *testing.T) {
 	fix := loadFixtures(t, "offchain_tx.json")
-	for _, c := range fix.Valid {
-		t.Run(c.Name, func(t *testing.T) {
-			tx := offchainTx(t, c)
-			requests, err := testService.EmulateOffchainTx(t.Context(), tx, offchainData(t, c))
-			require.NoError(t, err)
-			assertRequests(t, c.Requests, requests)
 
-			outpoints, err := tx.ExpiryOutpoints()
-			require.NoError(t, err)
-			require.Equal(t, c.ExpiryOutpoints, outpointStrings(outpoints))
-		})
-	}
-	for _, c := range fix.Invalid {
-		t.Run(c.Name, func(t *testing.T) {
-			tx := offchainTx(t, c)
-			_, err := testService.EmulateOffchainTx(t.Context(), tx, offchainData(t, c))
-			require.ErrorContains(t, err, c.ErrorContains)
-			var emulationErr *Error
-			require.ErrorAs(t, err, &emulationErr)
-			require.Equal(t, "emulate offchain tx", emulationErr.Operation)
-			require.Equal(t, "ark", emulationErr.TransactionRole)
-			if tx.ArkTx != nil {
-				require.ErrorContains(t, err, "ark_txid="+tx.ArkTx.UnsignedTx.TxID())
-				require.Equal(t, tx.ArkTx.UnsignedTx.TxID(), emulationErr.TxID)
-			}
-		})
-	}
+	t.Run("valid", func(t *testing.T) {
+		for _, c := range fix.Valid {
+			t.Run(c.Name, func(t *testing.T) {
+				tx := offchainTx(t, c)
+				requests, err := testService.EmulateOffchainTx(t.Context(), tx, offchainData(t, c))
+				require.NoError(t, err)
+				assertRequests(t, c.Requests, requests)
+
+				outpoints, err := tx.ExpiryOutpoints()
+				require.NoError(t, err)
+				require.Equal(t, c.ExpiryOutpoints, outpointStrings(outpoints))
+			})
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		for _, c := range fix.Invalid {
+			t.Run(c.Name, func(t *testing.T) {
+				tx := offchainTx(t, c)
+				requests, err := testService.EmulateOffchainTx(t.Context(), tx, offchainData(t, c))
+				require.ErrorContains(t, err, c.ErrorContains)
+				require.Nil(t, requests)
+				var emulationErr *Error
+				require.ErrorAs(t, err, &emulationErr)
+				require.Equal(t, "emulate offchain tx", emulationErr.Operation)
+				require.Equal(t, "ark", emulationErr.TransactionKind)
+				if tx.ArkTx != nil {
+					require.ErrorContains(t, err, "ark_txid="+tx.ArkTx.UnsignedTx.TxID())
+					require.Equal(t, tx.ArkTx.UnsignedTx.TxID(), emulationErr.TxID)
+				}
+			})
+		}
+	})
 }
 
 func TestEmulateBatchRegistration(t *testing.T) {
 	fix := loadFixtures(t, "intent.json")
-	for _, c := range fix.Valid {
-		t.Run(c.Name, func(t *testing.T) {
-			registration := proofFixture(t, c.Proof, c.Message)
-			requests, err := testService.EmulateBatchRegistration(t.Context(), registration, offchainData(t, c))
-			require.NoError(t, err)
-			assertRequests(t, c.Requests, requests)
 
-			outpoints, err := registration.ExpiryOutpoints()
-			require.NoError(t, err)
-			require.Equal(t, c.ExpiryOutpoints, outpointStrings(outpoints))
-		})
-	}
-	for _, c := range fix.Invalid {
-		t.Run(c.Name, func(t *testing.T) {
-			registration := proofFixture(t, c.Proof, c.Message)
-			_, err := testService.EmulateBatchRegistration(t.Context(), registration, offchainData(t, c))
-			require.ErrorContains(t, err, c.ErrorContains)
-			var emulationErr *Error
-			require.ErrorAs(t, err, &emulationErr)
-			require.Equal(t, "proof", emulationErr.TransactionRole)
-			require.Equal(t, registration.Proof.Packet.UnsignedTx.TxID(), emulationErr.TxID)
-			require.ErrorContains(t, err, "proof_txid="+registration.Proof.Packet.UnsignedTx.TxID())
-		})
-	}
+	t.Run("valid", func(t *testing.T) {
+		for _, c := range fix.Valid {
+			t.Run(c.Name, func(t *testing.T) {
+				registration := proofFixture(t, c.Proof, c.Message)
+				requests, err := testService.EmulateBatchRegistration(t.Context(), registration, offchainData(t, c))
+				require.NoError(t, err)
+				assertRequests(t, c.Requests, requests)
+
+				outpoints, err := registration.ExpiryOutpoints()
+				require.NoError(t, err)
+				require.Equal(t, c.ExpiryOutpoints, outpointStrings(outpoints))
+			})
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		for _, c := range fix.Invalid {
+			t.Run(c.Name, func(t *testing.T) {
+				registration := proofFixture(t, c.Proof, c.Message)
+				requests, err := testService.EmulateBatchRegistration(t.Context(), registration, offchainData(t, c))
+				require.ErrorContains(t, err, c.ErrorContains)
+				require.Nil(t, requests)
+				var emulationErr *Error
+				require.ErrorAs(t, err, &emulationErr)
+				require.Equal(t, "emulate batch registration", emulationErr.Operation)
+				require.Equal(t, "proof", emulationErr.TransactionKind)
+				require.Equal(t, registration.Proof.Packet.UnsignedTx.TxID(), emulationErr.TxID)
+				require.ErrorContains(t, err, "proof_txid="+registration.Proof.Packet.UnsignedTx.TxID())
+			})
+		}
+	})
 }
 
 func TestEmulateOnchainTx(t *testing.T) {
 	fix := loadFixtures(t, "onchain_tx.json")
-	for _, c := range fix.Valid {
-		t.Run(c.Name, func(t *testing.T) {
-			requests, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: decodePSBT(t, c.Tx)})
-			require.NoError(t, err)
-			assertRequests(t, c.Requests, requests)
-		})
-	}
-	for _, c := range fix.Invalid {
-		t.Run(c.Name, func(t *testing.T) {
-			tx := decodePSBT(t, c.Tx)
-			_, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: tx})
-			require.ErrorContains(t, err, c.ErrorContains)
-			var emulationErr *Error
-			require.ErrorAs(t, err, &emulationErr)
-			require.Equal(t, "onchain", emulationErr.TransactionRole)
-			require.Equal(t, tx.UnsignedTx.TxID(), emulationErr.TxID)
-			require.ErrorContains(t, err, "txid="+tx.UnsignedTx.TxID())
-		})
-	}
+
+	t.Run("valid", func(t *testing.T) {
+		for _, c := range fix.Valid {
+			t.Run(c.Name, func(t *testing.T) {
+				requests, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: decodePSBT(t, c.Tx)})
+				require.NoError(t, err)
+				assertRequests(t, c.Requests, requests)
+			})
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		for _, c := range fix.Invalid {
+			t.Run(c.Name, func(t *testing.T) {
+				tx := decodePSBT(t, c.Tx)
+				requests, err := testService.EmulateOnchainTx(t.Context(), OnchainTx{Tx: tx})
+				require.ErrorContains(t, err, c.ErrorContains)
+				require.Nil(t, requests)
+				var emulationErr *Error
+				require.ErrorAs(t, err, &emulationErr)
+				require.Equal(t, "emulate onchain tx", emulationErr.Operation)
+				require.Equal(t, "onchain", emulationErr.TransactionKind)
+				require.Equal(t, tx.UnsignedTx.TxID(), emulationErr.TxID)
+				require.ErrorContains(t, err, "txid="+tx.UnsignedTx.TxID())
+			})
+		}
+	})
 }
 
 func TestEmulateBatchFinalization(t *testing.T) {
 	fix := loadFixtures(t, "batch_finalization.json")
-	for _, c := range fix.Valid {
-		t.Run(c.Name, func(t *testing.T) {
-			requests, err := testService.EmulateBatchFinalization(t.Context(), batchFinalization(t, c))
-			require.NoError(t, err)
-			assertRequests(t, c.Requests, requests)
-		})
-	}
-	for _, c := range fix.Invalid {
-		t.Run(c.Name, func(t *testing.T) {
-			_, err := testService.EmulateBatchFinalization(t.Context(), batchFinalization(t, c))
-			require.ErrorContains(t, err, c.ErrorContains)
-			var emulationErr *Error
-			require.ErrorAs(t, err, &emulationErr)
-			require.Equal(t, "emulate batch finalization", emulationErr.Operation)
-			require.Contains(t, []string{"proof", "forfeit", "commitment"}, emulationErr.TransactionRole)
-			require.NotEmpty(t, emulationErr.TxID)
-		})
-	}
+
+	t.Run("valid", func(t *testing.T) {
+		for _, c := range fix.Valid {
+			t.Run(c.Name, func(t *testing.T) {
+				requests, err := testService.EmulateBatchFinalization(t.Context(), batchFinalization(t, c))
+				require.NoError(t, err)
+				assertRequests(t, c.Requests, requests)
+			})
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		for _, c := range fix.Invalid {
+			t.Run(c.Name, func(t *testing.T) {
+				requests, err := testService.EmulateBatchFinalization(t.Context(), batchFinalization(t, c))
+				require.ErrorContains(t, err, c.ErrorContains)
+				require.Nil(t, requests)
+				var emulationErr *Error
+				require.ErrorAs(t, err, &emulationErr)
+				require.Equal(t, "emulate batch finalization", emulationErr.Operation)
+				require.Contains(t, []string{"proof", "forfeit", "commitment"}, emulationErr.TransactionKind)
+				require.NotEmpty(t, emulationErr.TxID)
+			})
+		}
+	})
 }
 
 func loadFixtures(t *testing.T, file string) fixtureFile {

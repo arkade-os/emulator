@@ -15,8 +15,8 @@ type ExecutionError struct {
 }
 
 func (e *ExecutionError) Error() string {
-	return fmt.Sprintf("script=%d position=%d opcode=%s: %v",
-		e.ScriptIndex, e.Position, e.Opcode, e.Err)
+	return fmt.Sprintf("script=%d opcode=%s position=%d: %v",
+		e.ScriptIndex, e.Opcode, e.Position, e.Err)
 }
 
 func (e *ExecutionError) Unwrap() error { return e.Err }

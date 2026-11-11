@@ -32,17 +32,9 @@ func (s *service) EmulateOffchainTx(
 	ctx context.Context, tx OffchainTx, data OffchainData,
 ) ([]SignRequest, error) {
 	arkPtx := tx.ArkTx
-	txid := ""
-
-	if arkPtx == nil || arkPtx.UnsignedTx == nil {
-		return nil, offchainTxError(txid, fmt.Errorf("missing transaction (ark tx)"))
-	}
-
-	txid = arkPtx.UnsignedTx.TxID()
-
-	scripts, err := packetScripts(arkPtx)
+	txid, scripts, err := txScripts(arkPtx, offchainTxError)
 	if err != nil {
-		return nil, offchainTxError(txid, err)
+		return nil, err
 	}
 	if len(scripts) == 0 {
 		return nil, nil
@@ -103,7 +95,7 @@ func (s *service) EmulateOffchainTx(
 		if err != nil {
 			return nil, offchainTxError(txid, fmt.Errorf("cannot request signature for checkpoint input 0 (checkpoint_txid=%s, ark input %d): %w", inputTxid, inputIndex, err))
 		}
-		requests = append(requests, arkReq, cpReq)
+		requests = append(requests, *arkReq, *cpReq)
 	}
 	return requests, nil
 }
@@ -111,16 +103,9 @@ func (s *service) EmulateOffchainTx(
 // EmulateOnchainTx runs every emulator packet script on a plain Bitcoin PSBT and returns one request per entry.
 func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignRequest, error) {
 	ptx := tx.Tx
-	txid := ""
-	if ptx == nil || ptx.UnsignedTx == nil {
-		return nil, onchainTxError(txid, fmt.Errorf("missing transaction"))
-	}
-
-	txid = ptx.UnsignedTx.TxID()
-
-	scripts, err := packetScripts(ptx)
+	txid, scripts, err := txScripts(ptx, onchainTxError)
 	if err != nil {
-		return nil, onchainTxError(txid, err)
+		return nil, err
 	}
 	if len(scripts) == 0 {
 		return nil, nil
@@ -152,7 +137,7 @@ func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignReq
 		if err != nil {
 			return nil, onchainTxError(txid, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err))
 		}
-		requests = append(requests, req)
+		requests = append(requests, *req)
 	}
 	return requests, nil
 }
@@ -162,15 +147,9 @@ func (s *service) EmulateBatchRegistration(
 	ctx context.Context, registration Proof, data OffchainData,
 ) ([]SignRequest, error) {
 	ptx := &registration.Proof.Packet
-	if ptx.UnsignedTx == nil {
-		return nil, batchRegistrationError("", fmt.Errorf("missing proof transaction"))
-	}
-
-	txid := ptx.UnsignedTx.TxID()
-
-	scripts, err := packetScripts(ptx)
+	txid, scripts, err := txScripts(ptx, batchRegistrationError)
 	if err != nil {
-		return nil, batchRegistrationError(txid, err)
+		return nil, err
 	}
 	if len(scripts) == 0 {
 		return nil, nil
@@ -212,7 +191,7 @@ func (s *service) EmulateBatchRegistration(
 		if err != nil {
 			return nil, batchRegistrationError(txid, fmt.Errorf("cannot request signature for input %d: %w", inputIndex, err))
 		}
-		requests = append(requests, req)
+		requests = append(requests, *req)
 
 		// if input index 1 is valid, the proof message input (index 0) is approved with it
 		if inputIndex == 1 {
@@ -229,7 +208,7 @@ func (s *service) EmulateBatchRegistration(
 			if err != nil {
 				return nil, batchRegistrationError(txid, fmt.Errorf("cannot request signature for message input: %w", err))
 			}
-			requests = append(requests, msgReq)
+			requests = append(requests, *msgReq)
 		}
 	}
 	return requests, nil
@@ -282,7 +261,7 @@ func (s *service) EmulateBatchFinalization(
 				return nil, batchFinalizationError(role, ptx.UnsignedTx.TxID(), err)
 			}
 			req.ClosurePubKeys = a.signers
-			requests = append(requests, req)
+			requests = append(requests, *req)
 			// a vtxo is forfeited once
 			delete(approved, outpoint)
 		}

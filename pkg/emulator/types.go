@@ -102,18 +102,18 @@ type SignRequest struct {
 	ClosurePubKeys []*btcec.PublicKey
 }
 
-func newSignRequest(ptx *psbt.Packet, inputIndex int, script *arkade.ArkadeScript) (SignRequest, error) {
+func newSignRequest(ptx *psbt.Packet, inputIndex int, script *arkade.ArkadeScript) (*SignRequest, error) {
 	if inputIndex < 0 || len(ptx.Inputs) <= inputIndex || len(ptx.UnsignedTx.TxIn) <= inputIndex {
-		return SignRequest{}, fmt.Errorf("input index out of range, cannot sign")
+		return nil, fmt.Errorf("input index out of range, cannot sign")
 	}
 
 	input := ptx.Inputs[inputIndex]
 	if input.WitnessUtxo == nil || !txscript.IsPayToTaproot(input.WitnessUtxo.PkScript) {
-		return SignRequest{}, fmt.Errorf("not a taproot input, cannot sign")
+		return nil, fmt.Errorf("not a taproot input, cannot sign")
 	}
 
 	if len(input.TaprootLeafScript) != 1 || input.TaprootLeafScript[0] == nil {
-		return SignRequest{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"expected exactly 1 taproot leaf script, got %d, cannot sign",
 			len(input.TaprootLeafScript),
 		)
@@ -122,10 +122,10 @@ func newSignRequest(ptx *psbt.Packet, inputIndex int, script *arkade.ArkadeScrip
 	if err := arkade.VerifyTaprootLeafCommitment(
 		input.WitnessUtxo.PkScript, input.TaprootLeafScript[0],
 	); err != nil {
-		return SignRequest{}, fmt.Errorf("cannot sign input: %w", err)
+		return nil, fmt.Errorf("cannot sign input: %w", err)
 	}
 
-	return SignRequest{
+	return &SignRequest{
 		Packet: ptx, InputIndex: inputIndex,
 		ScriptHash: script.Hash(), ClosurePubKeys: script.ClosurePubKeys(),
 	}, nil

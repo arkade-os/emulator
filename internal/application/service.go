@@ -51,7 +51,7 @@ type Service interface {
 }
 
 type service struct {
-	lib                      emulator.Service
+	emulator                 emulator.Service
 	signer                   signer
 	deprecatedSigners        []signer
 	deprecatedKeysValidUntil *time.Time
@@ -148,7 +148,7 @@ func New(
 		signerPubKeys = append(signerPubKeys, k.PubKey())
 	}
 	return &service{
-		lib:                      lib,
+		emulator:                 lib,
 		signer:                   signer{secretKey},
 		deprecatedSigners:        deprecatedSigners,
 		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
@@ -171,18 +171,6 @@ func (s *service) GetInfo(context.Context) (*Info, error) {
 	}, nil
 }
 
-// signTx executes and signs the arkade script inputs of tx in place, even on error: do not reuse it across calls.
-func (s *service) signTx(ctx context.Context, tx emulator.OffchainTx, data emulator.OffchainData) (*emulator.OffchainTx, error) {
-	requests, err := s.lib.EmulateOffchainTx(ctx, tx, data)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := s.signRequests(requests); err != nil {
-		return nil, err
-	}
-	return &emulator.OffchainTx{ArkTx: tx.ArkTx, Checkpoints: tx.Checkpoints}, nil
-}
-
 // SubmitTx executes and signs arkade script for offchain tx
 // it directly submits to arkd in order to prevent griefing attacks where a malicious signer retain the tx in the "pending" state
 func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulator.OffchainTx, error) {
@@ -203,10 +191,15 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 		return nil, err
 	}
 
-	signed, err := s.signTx(ctx, tx, data)
+	requests, err := s.emulator.EmulateOffchainTx(ctx, tx, data)
 	if err != nil {
 		return nil, err
 	}
+	// signs tx in place, even on error: the caller must not reuse it
+	if _, err := s.signRequests(requests); err != nil {
+		return nil, err
+	}
+	signed := &tx
 
 	isFinalizer, err := isFinalizerRole(signed.ArkTx, sigsBefore, s.signerPubKeys, s.arkdPubKey)
 	if err != nil {
@@ -335,7 +328,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent emulator.Proof) (*psb
 	if err != nil {
 		return nil, err
 	}
-	requests, err := s.lib.EmulateBatchRegistration(ctx, intent, data)
+	requests, err := s.emulator.EmulateBatchRegistration(ctx, intent, data)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +340,7 @@ func (s *service) SubmitIntent(ctx context.Context, intent emulator.Proof) (*psb
 
 // SubmitOnchainTx executes and signs arkade script for a plain Bitcoin PSBT
 func (s *service) SubmitOnchainTx(ctx context.Context, tx emulator.OnchainTx) (*psbt.Packet, error) {
-	requests, err := s.lib.EmulateOnchainTx(ctx, tx)
+	requests, err := s.emulator.EmulateOnchainTx(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -382,6 +375,10 @@ func (s *service) SubmitFinalization(
 func (s *service) Close() {
 	s.indexer.Close()
 	s.arkd.Close()
+	s.signer.secretKey.Zero()
+	for _, deprecated := range s.deprecatedSigners {
+		deprecated.secretKey.Zero()
+	}
 }
 
 // versionedIndexer adds the x-sdk-version header to indexer calls.
