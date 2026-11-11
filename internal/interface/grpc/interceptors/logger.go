@@ -15,8 +15,7 @@ func unaryLogger(
 	log.Debugf("gRPC method: %s", info.FullMethod)
 	resp, err := handler(ctx, req)
 	if err != nil {
-		var structuredErr arkerrors.Error
-		if errors.As(err, &structuredErr) {
+		if structuredErr, ok := errors.AsType[arkerrors.Error](err); ok {
 			if structuredErr.Code() == arkerrors.INTERNAL_ERROR.Code {
 				structuredErr.Log().Error(err)
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/arkade-os/arkd/pkg/macaroons"
 	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
@@ -13,6 +14,7 @@ import (
 	interfaces "github.com/arkade-os/emulator/internal/interface"
 	"github.com/arkade-os/emulator/internal/interface/grpc/handlers"
 	"github.com/arkade-os/emulator/internal/interface/grpc/interceptors"
+	"github.com/arkade-os/emulator/internal/telemetry"
 	"github.com/meshapi/grpc-api-gateway/gateway"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -32,7 +34,8 @@ type service struct {
 	// macaroonSvc gates the signing endpoints when set. It is nil until a
 	// deployment configures macaroon auth, in which case requests are served
 	// unauthenticated.
-	macaroonSvc *macaroons.Service
+	macaroonSvc  *macaroons.Service
+	otelShutdown func(context.Context) error
 }
 
 func NewService(
@@ -72,6 +75,13 @@ func (s *service) Stop() {
 	if s.server != nil {
 		// nolint
 		s.server.Shutdown(context.Background())
+	}
+	if s.otelShutdown != nil {
+		if err := s.otelShutdown(context.Background()); err != nil {
+			log.Errorf("failed to shutdown otel: %s", err)
+		}
+
+		log.Infof("otel shutdown")
 	}
 	log.Info("shutdown service")
 }
@@ -120,10 +130,6 @@ func serverOptions() []grpc.ServerOption {
 func (s *service) newServer() error {
 	ctx := context.Background()
 
-	otelHandler := otelgrpc.NewServerHandler(
-		otelgrpc.WithTracerProvider(otel.GetTracerProvider()),
-	)
-
 	// No macaroon service is configured today, so the interceptors run without
 	// authentication. They are still installed so that the request logging and
 	// the macaroon check are in place the moment one is provided.
@@ -134,10 +140,27 @@ func (s *service) newServer() error {
 	grpcConfig := serverOptions()
 	grpcConfig = append(
 		grpcConfig,
-		grpc.StatsHandler(otelHandler),
 		interceptors.UnaryInterceptor(s.macaroonSvc),
 		interceptors.StreamInterceptor(s.macaroonSvc),
 	)
+	if s.cfg.OtelCollectorEndpoint != "" {
+		pushInteval := time.Duration(s.cfg.OtelPushInterval) * time.Second
+		otelShutdown, err := telemetry.InitOtelSDK(
+			ctx,
+			s.cfg.OtelCollectorEndpoint,
+			pushInteval,
+		)
+		if err != nil {
+			return err
+		}
+
+		otelHandler := otelgrpc.NewServerHandler(
+			otelgrpc.WithTracerProvider(otel.GetTracerProvider()),
+		)
+		grpcConfig = append(grpcConfig, grpc.StatsHandler(otelHandler))
+
+		s.otelShutdown = otelShutdown
+	}
 
 	// Server grpc.
 	grpcServer := grpc.NewServer(grpcConfig...)

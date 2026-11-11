@@ -24,11 +24,15 @@ const (
 	ArkdURL                  = "ARKD_URL"
 	ArkdIndexerURL           = "ARKD_INDEXER_URL"
 	ComputeLimits            = "COMPUTE_LIMITS"
+	OtelCollectorEndpoint    = "OTEL_COLLECTOR_ENDPOINT"
+	OtelPushInterval         = "OTEL_PUSH_INTERVAL"
 )
 
 var (
 	defaultPort     = uint32(7073)
 	defaultLogLevel = log.DebugLevel
+
+	defaultOtelPushInterval = 10 // seconds
 )
 
 type Config struct {
@@ -39,6 +43,8 @@ type Config struct {
 	ArkdURL                  string
 	ArkdIndexerURL           string
 	ComputeLimits            arkade.ComputeLimits
+	OtelCollectorEndpoint    string
+	OtelPushInterval         int64
 }
 
 func LoadConfig() (*Config, error) {
@@ -47,6 +53,7 @@ func LoadConfig() (*Config, error) {
 
 	viper.SetDefault(Port, defaultPort)
 	viper.SetDefault(LogLevel, defaultLogLevel)
+	viper.SetDefault(OtelPushInterval, defaultOtelPushInterval)
 
 	currentKey, err := parsePrivateKey(viper.GetString(SecretKey), "secret key")
 	if err != nil {
@@ -98,6 +105,8 @@ func LoadConfig() (*Config, error) {
 		ArkdURL:                  viper.GetString(ArkdURL),
 		ArkdIndexerURL:           viper.GetString(ArkdIndexerURL),
 		ComputeLimits:            computeLimits,
+		OtelCollectorEndpoint:    viper.GetString(OtelCollectorEndpoint),
+		OtelPushInterval:         viper.GetInt64(OtelPushInterval),
 	}
 	if cfg.ArkdURL == "" {
 		return nil, fmt.Errorf("missing arkd url")

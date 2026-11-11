@@ -7,6 +7,7 @@ import (
 
 	"github.com/arkade-os/emulator/internal/config"
 	grpcservice "github.com/arkade-os/emulator/internal/interface/grpc"
+	"github.com/arkade-os/emulator/internal/telemetry"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -17,6 +18,10 @@ func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("invalid config: %s", err)
+	}
+
+	if cfg.OtelCollectorEndpoint != "" {
+		log.AddHook(telemetry.NewOTelHook())
 	}
 
 	log.WithFields(log.Fields{
