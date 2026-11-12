@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -9,6 +10,7 @@ import (
 	"github.com/arkade-os/emulator/internal/application"
 	"github.com/arkade-os/emulator/pkg/emulator"
 	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +22,30 @@ import (
 // implementation detail. Validation errors stay descriptive so that a
 // legitimate caller can fix its request.
 const internalErrMsg = "internal error"
+
+// verdicts are the engine errors that only judge the submitted script. Other
+// txscript errors can describe the engine's own state, so they stay opaque.
+var verdicts = map[txscript.ErrorCode]bool{
+	txscript.ErrVerify:              true,
+	txscript.ErrEqualVerify:         true,
+	txscript.ErrNumEqualVerify:      true,
+	txscript.ErrCheckSigVerify:      true,
+	txscript.ErrEvalFalse:           true,
+	txscript.ErrUnsatisfiedLockTime: true,
+	txscript.ErrNullFail:            true,
+}
+
+// serviceError names the covenant check a request failed, which the caller can
+// fix; anything else stays opaque.
+func serviceError(err error, what string) error {
+	var refused txscript.Error
+	if errors.As(err, &refused) && verdicts[refused.ErrorCode] {
+		log.WithError(err).Debug(what)
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	log.WithError(err).Error(what)
+	return status.Error(codes.Internal, internalErrMsg)
+}
 
 type handler struct {
 	version string
@@ -80,8 +106,7 @@ func (h *handler) SubmitTx(
 
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
-		log.WithError(err).Error("failed to process transaction")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process transaction")
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -120,8 +145,7 @@ func (h *handler) SubmitIntent(
 
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
-		log.WithError(err).Error("failed to process intent")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process intent")
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
@@ -238,8 +262,7 @@ func (h *handler) SubmitOnchainTx(
 
 	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
-		log.WithError(err).Error("failed to process onchain tx")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process onchain tx")
 	}
 
 	encoded, err := signed.B64Encode()
