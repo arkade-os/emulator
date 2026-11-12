@@ -78,7 +78,10 @@ func prevOutFetcherForArkTx(
 	}
 
 	checkpointsByTxid := make(map[string]*psbt.Packet, len(checkpoints))
-	for _, checkpoint := range checkpoints {
+	for i, checkpoint := range checkpoints {
+		if checkpoint == nil || checkpoint.UnsignedTx == nil {
+			return nil, fmt.Errorf("checkpoint %d is missing its transaction", i)
+		}
 		checkpointsByTxid[checkpoint.UnsignedTx.TxID()] = checkpoint
 	}
 

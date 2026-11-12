@@ -84,7 +84,7 @@ type OnchainTx struct {
 }
 
 // BatchFinalization is a batch to sign: the signed proofs it settles, its forfeits and commitment tx.
-// Proofs[i].Message is unused.
+// Proofs[i].Message is unused; the caller must verify its commitment and registration type.
 type BatchFinalization struct {
 	Proofs       []Proof
 	Forfeits     []*psbt.Packet
