@@ -368,11 +368,11 @@ func signedFinalizationIntent(
 ) emulator.Proof {
 	t.Helper()
 
-	tx := wire.NewMsgTx(2)
-	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{2}}})
-	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
-	ptx, err := psbt.NewFromUnsignedTx(tx)
+	message, err := (arkintent.RegisterMessage{BaseMessage: arkintent.BaseMessage{Type: arkintent.IntentMessageTypeRegister}}).Encode()
 	require.NoError(t, err)
+	proof, err := arkintent.New(message, []arkintent.Input{{OutPoint: &outpoint, WitnessUtxo: prevout}}, nil)
+	require.NoError(t, err)
+	ptx := &proof.Packet
 	for i := range ptx.Inputs {
 		ptx.Inputs[i].WitnessUtxo = prevout
 	}
@@ -391,5 +391,5 @@ func signedFinalizationIntent(
 		ptx, 1, arkade.ArkadeScriptHash(arkadeScript), prevoutFetcher,
 	))
 
-	return emulator.Proof{Proof: arkintent.Proof{Packet: *ptx}}
+	return emulator.Proof{Proof: arkintent.Proof{Packet: *ptx}, Message: message}
 }

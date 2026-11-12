@@ -124,6 +124,11 @@ func (s *service) signRequests(requests []emulator.SignRequest) ([]emulator.Sign
 func (s *service) signFinalization(
 	ctx context.Context, finalization emulator.BatchFinalization, connectorTree *tree.TxTree,
 ) (*SignedBatchFinalization, error) {
+	for i, proof := range finalization.Proofs {
+		if err := validateRegistrationProof(proof); err != nil {
+			return nil, fmt.Errorf("proof %d: %w", i, err)
+		}
+	}
 	requests, err := s.emulator.EmulateBatchFinalization(ctx, finalization)
 	if err != nil {
 		return nil, err

@@ -28,6 +28,13 @@ func TestValidateIntentMessageCommitment(t *testing.T) {
 
 	request := emulator.Proof{Proof: *proof, Message: encoded}
 	require.NoError(t, validateIntentMessageCommitment(request))
+	require.NoError(t, validateRegistrationProof(request))
+	request.Message = `{"type":"get_data"}`
+	require.ErrorContains(t, validateRegistrationProof(request), "invalid registration message")
+	request.Message = encoded + " "
+	require.ErrorContains(t, validateRegistrationProof(request), "synthetic message input")
+	_, err = (&service{}).signFinalization(t.Context(), emulator.BatchFinalization{Proofs: []emulator.Proof{request}}, nil)
+	require.ErrorContains(t, err, "synthetic message input")
 
 	// a proof bound to non-canonical bytes fails the outpoint comparison
 	request.Message = " " + encoded

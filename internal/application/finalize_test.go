@@ -464,6 +464,20 @@ func TestIsFinalizerRole(t *testing.T) {
 }
 
 func TestSubmitTx(t *testing.T) {
+	t.Run("reject checkpoint with extra spend path", func(t *testing.T) {
+		svc, tx, _ := newTestServiceWithCheckpoints(t, false, 1)
+		checkpoint := tx.Checkpoints[0]
+		otherKey, err := btcec.NewPrivateKey()
+		require.NoError(t, err)
+		pkScript, leaf := testCheckpointSpend(t, testArkdCheckpointTapscript(t, otherKey.PubKey()), checkpoint.Inputs[0].TaprootLeafScript[0].Script)
+		checkpoint.UnsignedTx.TxOut[0].PkScript = pkScript
+		tx.ArkTx.UnsignedTx.TxIn[0].PreviousOutPoint.Hash = checkpoint.UnsignedTx.TxHash()
+		tx.ArkTx.Inputs[0].WitnessUtxo = checkpoint.UnsignedTx.TxOut[0]
+		tx.ArkTx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{leaf}
+		_, err = svc.SubmitTx(t.Context(), tx)
+		require.ErrorContains(t, err, "checkpoint vtxo output is not the arkd checkpoint script")
+		require.Empty(t, checkpoint.Inputs[0].TaprootScriptSpendSig)
+	})
 	t.Run("not finalizer", func(t *testing.T) {
 		svc, tx, arkd := newTestService(t, false)
 
@@ -868,13 +882,14 @@ func newTestServiceWithCheckpoints(
 		finalArkTx: encodePacket(t, arkPtx),
 	}
 	svc := &service{
-		emulator:            lib,
-		signer:              signer{emulatorKey},
-		arkdForfeitPkScript: []byte{txscript.OP_TRUE},
-		arkd:                arkd,
-		indexer:             &testIndexer{},
-		arkdPubKey:          arkdKey.PubKey(),
-		signerPubKeys:       []*btcec.PublicKey{emulatorKey.PubKey()},
+		emulator:                lib,
+		signer:                  signer{emulatorKey},
+		arkdForfeitPkScript:     []byte{txscript.OP_TRUE},
+		arkdCheckpointTapscript: unrollScript,
+		arkd:                    arkd,
+		indexer:                 &testIndexer{},
+		arkdPubKey:              arkdKey.PubKey(),
+		signerPubKeys:           []*btcec.PublicKey{emulatorKey.PubKey()},
 	}
 
 	return svc, emulator.OffchainTx{

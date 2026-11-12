@@ -2,6 +2,7 @@
 package application
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
+	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
 	clientlib "github.com/arkade-os/arkd/pkg/client-lib"
 	grpcclient "github.com/arkade-os/arkd/pkg/client-lib/client"
@@ -56,6 +58,7 @@ type service struct {
 	deprecatedSigners        []signer
 	deprecatedKeysValidUntil *time.Time
 	arkdForfeitPkScript      []byte
+	arkdCheckpointTapscript  []byte
 	arkd                     arkdClient
 	indexer                  clientlib.Indexer
 	arkdPubKey               *btcec.PublicKey
@@ -130,6 +133,10 @@ func New(
 		return nil, fmt.Errorf("invalid arkd signer pubkey: %w", err)
 	}
 
+	checkpointTapscript, err := hex.DecodeString(info.CheckpointTapscript)
+	if err != nil || len(checkpointTapscript) == 0 {
+		return nil, fmt.Errorf("invalid arkd checkpoint tapscript")
+	}
 	network := clientlib.ToBitcoinNetwork(clientlib.NetworkFromString(info.Network))
 	forfeitAddr, err := arklib.DecodeBitcoinAddress(info.ForfeitAddress, &network)
 	if err != nil {
@@ -153,6 +160,7 @@ func New(
 		deprecatedSigners:        deprecatedSigners,
 		deprecatedKeysValidUntil: deprecatedKeysValidUntil,
 		arkdForfeitPkScript:      forfeitPkScript,
+		arkdCheckpointTapscript:  checkpointTapscript,
 		arkd:                     arkd,
 		indexer:                  versionedIndexer{indexerClient, clientVersion},
 		arkdPubKey:               arkdPubKey,
@@ -193,6 +201,9 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 
 	requests, err := s.emulator.EmulateOffchainTx(ctx, tx, data)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateCheckpointOutputs(tx.Checkpoints, requests, s.arkdCheckpointTapscript); err != nil {
 		return nil, err
 	}
 	// signs tx in place, even on error: the caller must not reuse it
@@ -397,4 +408,28 @@ func (v versionedIndexer) GetVtxos(ctx context.Context, opts ...clientlib.GetVtx
 
 func (v versionedIndexer) GetCommitmentTx(ctx context.Context, txid string) (*clientlib.CommitmentTx, error) {
 	return v.Indexer.GetCommitmentTx(v.ctx(ctx), txid)
+}
+
+func validateCheckpointOutputs(checkpoints []*psbt.Packet, requests []emulator.SignRequest, checkpointTapscript []byte) error {
+	for _, checkpoint := range checkpoints {
+		for _, request := range requests {
+			if request.Packet != checkpoint {
+				continue
+			}
+			if len(checkpointTapscript) == 0 || checkpoint == nil || checkpoint.UnsignedTx == nil || len(checkpoint.UnsignedTx.TxOut) == 0 || len(checkpoint.Inputs) == 0 || len(checkpoint.Inputs[0].TaprootLeafScript) != 1 || checkpoint.Inputs[0].TaprootLeafScript[0] == nil {
+				return fmt.Errorf("invalid checkpoint output data")
+			}
+			leaf := checkpoint.Inputs[0].TaprootLeafScript[0]
+			tree := txscript.AssembleTaprootScriptTree(txscript.NewBaseTapLeaf(checkpointTapscript), txscript.NewTapLeaf(leaf.LeafVersion, leaf.Script))
+			root := tree.RootNode.TapHash()
+			expected, err := script.P2TRScript(txscript.ComputeTaprootOutputKey(script.UnspendableKey(), root[:]))
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(checkpoint.UnsignedTx.TxOut[0].PkScript, expected) {
+				return fmt.Errorf("checkpoint vtxo output is not the arkd checkpoint script")
+			}
+		}
+	}
+	return nil
 }

@@ -30,3 +30,14 @@ func validateIntentMessageCommitment(request emulator.Proof) error {
 	}
 	return nil
 }
+
+func validateRegistrationProof(proof emulator.Proof) error {
+	var message intent.RegisterMessage
+	if err := message.Decode(proof.Message); err != nil {
+		return fmt.Errorf("invalid registration message: %w", err)
+	}
+	if proof.UnsignedTx == nil {
+		return fmt.Errorf("missing proof transaction")
+	}
+	return validateIntentMessageCommitment(proof)
+}
