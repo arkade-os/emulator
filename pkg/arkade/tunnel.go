@@ -70,6 +70,9 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 				return scriptError(txscript.ErrInvalidIndex, "previous output not found")
 			}
 		}
+		if err := vm.chargeWork(len(output.PkScript)); err != nil {
+			return err
+		}
 		if !bytes.Equal(script, output.PkScript) {
 			return scriptError(txscript.ErrInvalidStackOperation, "selected output does not preserve source script")
 		}
@@ -88,6 +91,9 @@ func opcodeTunnel(op *opcode, data []byte, vm *Engine) error {
 		}
 	}
 	if flags&TunnelAssets != 0 {
+		if err := vm.chargeWork(vm.assetWork); err != nil {
+			return err
+		}
 		if err := tunnelAssets(
 			vm.txID(), vm.assetPacket, vm.txIdx, int(outputIndex), exceptions,
 		); err != nil {

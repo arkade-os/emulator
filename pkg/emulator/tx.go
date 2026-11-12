@@ -42,6 +42,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	txCache := arkade.NewTxCache()
 
 	var nSigned = 0
 	for _, entry := range packet {
@@ -83,6 +84,7 @@ func (s *service) SubmitTx(ctx context.Context, tx OffchainTx, data OffchainData
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithTxCache(txCache),
 			arkade.WithExpiry(expiry),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)

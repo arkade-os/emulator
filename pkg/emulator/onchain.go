@@ -30,6 +30,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	txCache := arkade.NewTxCache()
 
 	nSigned := 0
 
@@ -51,6 +52,7 @@ func (s *service) SubmitOnchainTx(ctx context.Context, tx OnchainTx) (*psbt.Pack
 			inputIndex,
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithTxCache(txCache),
 		); err != nil {
 			return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex)
 		}

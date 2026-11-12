@@ -2059,7 +2059,7 @@ func TestPacketIntrospectionOpcodes(t *testing.T) {
 	maxPacket := extension.UnknownPacket{PacketType: maxPacketType, Data: maxPayload}
 
 	// Large packet (> MaxScriptElementSize = 520 bytes) to test that
-	// introspection opcodes can push data beyond the normal push limit.
+	// introspection opcodes reject content beyond the push limit.
 	const largePacketType = 4
 	largePayload := bytes.Repeat([]byte{0xab}, 1000)
 	largePacket := extension.UnknownPacket{PacketType: largePacketType, Data: largePayload}
@@ -2869,6 +2869,49 @@ func TestArkadeSighashSingleMasksExtensionOutput(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestArkadeSighashSingleWithSharedTxCache checks that engines of different
+// inputs sharing one TxCache each commit to their own output under
+// SIGHASH_SINGLE, matching an engine with a private cache.
+func TestArkadeSighashSingleWithSharedTxCache(t *testing.T) {
+	t.Parallel()
+
+	op0 := wire.OutPoint{Hash: chainhash.Hash{0x01}, Index: 0}
+	op1 := wire.OutPoint{Hash: chainhash.Hash{0x02}, Index: 0}
+	tx := &wire.MsgTx{
+		Version: 2,
+		TxIn:    []*wire.TxIn{{PreviousOutPoint: op0}, {PreviousOutPoint: op1}},
+		TxOut: []*wire.TxOut{
+			{Value: 1000, PkScript: []byte{OP_TRUE}},
+			{Value: 2000, PkScript: []byte{OP_2}},
+		},
+	}
+	fetcher := fetcherFor(map[wire.OutPoint]*wire.TxOut{
+		op0: {Value: 1500, PkScript: []byte{OP_TRUE}},
+		op1: {Value: 2500, PkScript: []byte{OP_TRUE}},
+	})
+	leafScript := []byte{OP_TRUE}
+
+	cache := NewTxCache()
+	digests := make([][]byte, len(tx.TxIn))
+	for idx := range tx.TxIn {
+		vm := &Engine{
+			tx:             *tx,
+			txIdx:          idx,
+			hashCache:      txscript.NewTxSigHashes(tx, fetcher),
+			prevOutFetcher: fetcher,
+			taprootCtx: newTaprootExecutionCtxForLeaf(
+				txscript.NewBaseTapLeaf(leafScript),
+			),
+			cache: cache,
+		}
+		digest, err := computeArkadeSighash(vm, txscript.SigHashSingle)
+		require.NoError(t, err)
+		require.Equal(t, arkadeDigest(t, tx, idx, fetcher, leafScript, txscript.SigHashSingle), digest)
+		digests[idx] = digest
+	}
+	require.NotEqual(t, digests[0], digests[1])
 }
 
 // TestArkadeSighashByteLayoutMatchesBIP342 is the strongest correctness check

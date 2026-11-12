@@ -7,7 +7,6 @@ import (
 	"encoding"
 	"encoding/gob"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"hash"
 	"math"
@@ -18,7 +17,6 @@ import (
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/crypto/sha3"
 
-	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/btcutil/v2"
 	"github.com/btcsuite/btcd/chainhash/v2"
 	"github.com/btcsuite/btcd/psbt/v2"
@@ -2092,6 +2090,9 @@ func pushScriptPubKey(scriptPubKey []byte, vm *Engine) error {
 	}
 
 	// non-native segwit, calculate sha256 hash
+	if err := vm.chargeWork(len(scriptPubKey)); err != nil {
+		return err
+	}
 	hash := sha256.Sum256(scriptPubKey)
 	vm.dstack.PushByteArray(hash[:])
 
@@ -2219,7 +2220,7 @@ func opcodeInspectNumOutputs(op *opcode, data []byte, vm *Engine) error {
 // opcodeTxWeight pushes the transaction weight onto the stack.
 // Stack transformation: [...] -> [... weight]
 func opcodeTxWeight(op *opcode, data []byte, vm *Engine) error {
-	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.tx.SerializeSizeStripped() * 4)))
+	return vm.dstack.PushBigNum(BigNumFromUint64(uint64(vm.txCache().txStrippedSize(&vm.tx) * 4)))
 }
 
 // opcodeCat concatenates two byte arrays.
@@ -3026,33 +3027,6 @@ func opcodeSighash(op *opcode, data []byte, vm *Engine) error {
 	return nil
 }
 
-// findPacketByType scans a transaction for an ark extension packet of the given
-// type and returns its serialized content. Returns nil if no extension is
-// present or the requested type is not found.
-func findPacketByType(tx *wire.MsgTx, packetType uint8) ([]byte, error) {
-	ext, err := extension.NewExtensionFromTx(tx)
-	if err != nil {
-		if errors.Is(err, extension.ErrExtensionNotFound) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to parse extension: %w", err)
-	}
-	for _, pkt := range ext {
-		if pkt.Type() != packetType {
-			continue
-		}
-		content, err := pkt.Serialize()
-		if err != nil {
-			return nil, fmt.Errorf("failed to serialize packet type %d: %w", packetType, err)
-		}
-		if content == nil {
-			content = []byte{}
-		}
-		return content, nil
-	}
-	return nil, nil
-}
-
 // opcodeInspectPacket pops a packet type from the stack and searches the
 // currently executing transaction's extension for a packet of that type.
 // Found:     pushes the raw packet content, then 1.
@@ -3068,7 +3042,7 @@ func opcodeInspectPacket(op *opcode, data []byte, vm *Engine) error {
 		return scriptError(txscript.ErrInvalidStackOperation, "packet type out of range")
 	}
 
-	content, err := findPacketByType(&vm.tx, uint8(packetType))
+	content, err := vm.txCache().txPacket(&vm.tx, uint8(packetType))
 	if err != nil {
 		return scriptError(txscript.ErrInvalidStackOperation, err.Error())
 	}
@@ -3130,7 +3104,7 @@ func opcodeInspectInputPacket(op *opcode, data []byte, vm *Engine) error {
 			fmt.Sprintf("prevout tx not available for input %d", index))
 	}
 
-	content, err := findPacketByType(prevTx, uint8(packetType))
+	content, err := vm.txCache().inputPacket(outpoint, prevTx, uint8(packetType))
 	if err != nil {
 		return scriptError(txscript.ErrInvalidStackOperation, err.Error())
 	}
@@ -3176,6 +3150,9 @@ func opcodeInspectInputArkadeScriptHash(op *opcode, data []byte, vm *Engine) err
 			fmt.Sprintf("no emulator entry for vin %d", index))
 	}
 
+	if err := vm.chargeWork(len(vm.emulatorPacket)*entryWork + len(entry.Script)); err != nil {
+		return err
+	}
 	scriptHash := ArkadeScriptHash(entry.Script)
 	vm.dstack.PushByteArray(scriptHash)
 	return nil
@@ -3203,6 +3180,10 @@ func opcodeInspectInputArkadeWitnessHash(op *opcode, data []byte, vm *Engine) er
 	if !found {
 		return scriptError(txscript.ErrInvalidStackOperation,
 			fmt.Sprintf("no emulator entry for vin %d", index))
+	}
+
+	if err := vm.chargeWork(len(vm.emulatorPacket)*entryWork + entry.Witness.SerializeSize()); err != nil {
+		return err
 	}
 
 	if len(entry.Witness) == 0 {

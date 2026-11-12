@@ -1032,3 +1032,33 @@ func TestStackPeekBigNum(t *testing.T) {
 		t.Fatalf("Peek modified depth: %d", s.Depth())
 	}
 }
+
+// TestStackBytesTracksContents checks that the running byte total matches the
+// summed element lengths after every kind of stack mutation.
+func TestStackBytesTracksContents(t *testing.T) {
+	var s stack
+	steps := []func() error{
+		func() error { s.PushByteArray(make([]byte, 520)); return nil },
+		func() error { s.PushByteArray([]byte{1, 2, 3}); return nil },
+		func() error { return s.DupN(2) },
+		func() error { return s.PutN(1, make([]byte, 7)) },
+		func() error { return s.RollN(2) },
+		func() error { return s.Tuck() },
+		func() error { return s.NipN(1) },
+		func() error { _, err := s.PopByteArray(); return err },
+		func() error { return s.DropN(2) },
+		func() error { return s.DropN(s.Depth()) },
+	}
+	for i, step := range steps {
+		if err := step(); err != nil {
+			t.Fatalf("step %d: %v", i, err)
+		}
+		want := 0
+		for _, item := range s.stk {
+			want += len(item)
+		}
+		if s.bytes != want {
+			t.Fatalf("step %d: bytes = %d, want %d", i, s.bytes, want)
+		}
+	}
+}

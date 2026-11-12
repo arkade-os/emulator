@@ -48,6 +48,7 @@ func (s *service) SubmitIntent(
 	}
 
 	budget := arkade.NewComputeBudgetWithLimits(arkade.AggregateComputeLimits(s.computeLimits))
+	txCache := arkade.NewTxCache()
 
 	var nSigned = 0
 	for _, entry := range packet {
@@ -82,6 +83,7 @@ func (s *service) SubmitIntent(
 			arkade.WithIntentMessage(encodedMessage),
 			arkade.WithExactComputeLimits(s.computeLimits),
 			arkade.WithComputeBudget(budget),
+			arkade.WithTxCache(txCache),
 			arkade.WithExpiry(expiry),
 		); err != nil {
 			log.WithError(err).WithField("input_index", inputIndex).Error("arkade script execution failed")

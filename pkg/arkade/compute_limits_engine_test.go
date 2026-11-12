@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
 	"github.com/btcsuite/btcd/txscript/v2"
 	"github.com/btcsuite/btcd/wire/v2"
@@ -281,4 +282,47 @@ func limitOnlyOp1(t *testing.T, limit int) *Engine {
 	vm.taprootCtx = &taprootExecutionCtx{}
 	vm.limits = ComputeLimits{OP_1: limit}
 	return vm
+}
+
+// TestChargeWorkScalesWithAssetPacket checks that a packet-walking opcode is
+// metered by the size of the packet it walks: spam over a small packet passes,
+// the same spam over a large packet exhausts the input's work, and a shared
+// budget caps the request even when each input stays within its own limit.
+func TestChargeWorkScalesWithAssetPacket(t *testing.T) {
+	spam := func(outputs int, budget *ComputeBudget) error {
+		vm, err := newOpcodeEngine(buildOpcodeWorld(), 0)
+		require.NoError(t, err)
+		vm.taprootCtx = &taprootExecutionCtx{}
+		vm.budget = budget
+		vm.SetAssetPacket(asset.Packet{{Outputs: make([]asset.AssetOutput, outputs)}})
+		for range 1000 {
+			vm.dstack.PushInt(0)
+			if err := invokeOpcodeWithData(OP_INSPECTOUTASSETCOUNT, nil, vm); err != nil {
+				return err
+			}
+			_, _ = vm.dstack.PopByteArray()
+		}
+		return nil
+	}
+
+	require.NoError(t, spam(10, nil))
+	requireScriptErrorCode(t, spam(1000, nil), txscript.ErrScriptTooBig)
+
+	// 250 outputs costs ~8.0M per input, just under maxInputWork, so only the
+	// shared request budget can stop the inputs that follow
+	budget := NewComputeBudget()
+	var err error
+	for i := 0; i <= requestInputBudget && err == nil; i++ {
+		err = spam(250, budget)
+	}
+	requireScriptErrorCode(t, err, txscript.ErrScriptTooBig)
+	require.ErrorContains(t, err, "request exceeded")
+}
+
+func TestExecuteRejectsOversizedWitnessItem(t *testing.T) {
+	s := &ArkadeScript{script: []byte{OP_DROP, OP_1}, witness: wire.TxWitness{make([]byte, txscript.MaxScriptElementSize+1)}}
+	tx := &wire.MsgTx{TxIn: []*wire.TxIn{{}}}
+	fetcher := txscript.NewMultiPrevOutFetcher(map[wire.OutPoint]*wire.TxOut{{}: {}})
+	err := s.Execute(tx, newTestArkPrevOutFetcher(fetcher, nil, nil), 0)
+	require.ErrorContains(t, err, "witness item 0 size")
 }
