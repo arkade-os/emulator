@@ -594,8 +594,20 @@ func (vm *Engine) Execute() (err error) {
 
 	done := false
 	for !done {
+		scriptIdx, offset := vm.scriptIdx, vm.tokenizer.ByteIndex()
 		done, err = vm.Step()
 		if err != nil {
+			// scriptIdx and offset were captured before the step, so they locate the
+			// opcode that failed: the step may have advanced the tokenizer or script index
+			if scriptIdx >= 0 && scriptIdx < len(vm.scripts) && offset >= 0 && int(offset) < len(vm.scripts[scriptIdx]) {
+				op := vm.scripts[scriptIdx][offset]
+				return &ExecutionError{
+					ScriptIndex: scriptIdx,
+					Position:    int(offset),
+					Opcode:      opcodeArray[op].name,
+					Err:         err,
+				}
+			}
 			return err
 		}
 
@@ -625,7 +637,10 @@ func (vm *Engine) Execute() (err error) {
 		}
 	}
 
-	return vm.CheckErrorCondition(true)
+	if err := vm.CheckErrorCondition(true); err != nil {
+		return fmt.Errorf("final script validation failed: %w", err)
+	}
+	return nil
 }
 
 // getStack returns the contents of stack as a byte array bottom up

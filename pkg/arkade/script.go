@@ -131,10 +131,9 @@ func VerifyTaprootLeafCommitment(pkScript []byte, leaf *psbt.TaprootTapLeafScrip
 	return nil
 }
 
-// ReadArkadeScript reads an arkade script from an EmulatorEntry and validates
-// it against the tapscript in the PSBT input. The entry contains the script and
-// witness data extracted from the Emulator Packet (OP_RETURN TLV).
-func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry EmulatorEntry) (*ArkadeScript, error) {
+// NewArkadeScript builds an ArkadeScript from an EmulatorEntry and the tapscript
+// in the PSBT input, without checking the tweaked signer key. pubkey is left nil.
+func NewArkadeScript(ptx *psbt.Packet, entry EmulatorEntry) (*ArkadeScript, error) {
 	inputIndex := int(entry.Vin)
 	if len(ptx.Inputs) <= inputIndex {
 		return nil, fmt.Errorf("input index out of range")
@@ -153,10 +152,6 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 		return nil, fmt.Errorf("unsupported taproot leaf version: 0x%02x",
 			byte(spendingTapscript.LeafVersion))
 	}
-
-	scriptHash := ArkadeScriptHash(entry.Script)
-	expectedPublicKey := ComputeArkadeScriptPublicKey(signerPublicKey, scriptHash)
-	expectedPublicKeyXonly := schnorr.SerializePubKey(expectedPublicKey)
 
 	closure, err := scriptlib.DecodeClosure(spendingTapscript.Script)
 	if err != nil {
@@ -179,29 +174,37 @@ func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry 
 		return nil, fmt.Errorf("unsupported closure type: %T", closure)
 	}
 
-	found := false
-	for _, pubkey := range pubkeys {
-		xonly := schnorr.SerializePubKey(pubkey)
-		if bytes.Equal(xonly, expectedPublicKeyXonly) {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return nil, ErrTweakedArkadePubKeyNotFound
-	}
-
 	return &ArkadeScript{
 		script:  entry.Script,
-		hash:    scriptHash,
+		hash:    ArkadeScriptHash(entry.Script),
 		witness: entry.Witness,
-		pubkey:  expectedPublicKey,
 		spendingTapLeaf: txscript.NewTapLeaf(
 			spendingTapscript.LeafVersion, spendingTapscript.Script,
 		),
 		closurePubkeys: pubkeys,
 	}, nil
+}
+
+// ReadArkadeScript reads an arkade script from an EmulatorEntry and validates
+// it against the tapscript in the PSBT input. The entry contains the script and
+// witness data extracted from the Emulator Packet (OP_RETURN TLV).
+func ReadArkadeScript(ptx *psbt.Packet, signerPublicKey *btcec.PublicKey, entry EmulatorEntry) (*ArkadeScript, error) {
+	s, err := NewArkadeScript(ptx, entry)
+	if err != nil {
+		return nil, err
+	}
+
+	expectedPublicKey := ComputeArkadeScriptPublicKey(signerPublicKey, s.hash)
+	expectedPublicKeyXonly := schnorr.SerializePubKey(expectedPublicKey)
+
+	for _, pubkey := range s.closurePubkeys {
+		if bytes.Equal(schnorr.SerializePubKey(pubkey), expectedPublicKeyXonly) {
+			s.pubkey = expectedPublicKey
+			return s, nil
+		}
+	}
+
+	return nil, ErrTweakedArkadePubKeyNotFound
 }
 
 func (s *ArkadeScript) Execute(spendingTx *wire.MsgTx, prevOutFetcher ArkPrevOutFetcher, inputIndex int, opts ...ExecuteOption) error {
