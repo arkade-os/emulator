@@ -35,6 +35,20 @@ var verdicts = map[txscript.ErrorCode]bool{
 	txscript.ErrNullFail:            true,
 }
 
+// backendVerdicts are the status codes a backend (arkd, its indexer) uses to
+// refuse the submitted transaction itself. Other codes report a fault on their
+// side, so they stay opaque.
+var backendVerdicts = map[codes.Code]bool{
+	codes.InvalidArgument:    true,
+	codes.FailedPrecondition: true,
+	codes.NotFound:           true,
+	codes.AlreadyExists:      true,
+	codes.OutOfRange:         true,
+}
+
+// grpcStatus is implemented by gRPC status errors, including wrapped ones.
+type grpcStatus interface{ GRPCStatus() *status.Status }
+
 // serviceError names the covenant check a request failed, which the caller can
 // fix; anything else stays opaque.
 func serviceError(err error, what string) error {
@@ -42,6 +56,15 @@ func serviceError(err error, what string) error {
 	if errors.As(err, &refused) && verdicts[refused.ErrorCode] {
 		log.WithError(err).Debug(what)
 		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	// a backend refused the tx we forwarded: its verdict is about the caller's
+	// transaction, so relay the code and the backend's own message
+	var gs grpcStatus
+	if errors.As(err, &gs) {
+		if st := gs.GRPCStatus(); st != nil && backendVerdicts[st.Code()] {
+			log.WithError(err).Debug(what)
+			return status.Error(st.Code(), st.Message())
+		}
 	}
 	log.WithError(err).Error(what)
 	return status.Error(codes.Internal, internalErrMsg)
@@ -219,8 +242,7 @@ func (h *handler) SubmitFinalization(
 
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization)
 	if err != nil {
-		log.WithError(err).Error("failed to process finalization")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process finalization")
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))

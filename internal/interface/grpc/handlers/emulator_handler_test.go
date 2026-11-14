@@ -139,6 +139,12 @@ func (s scriptService) SubmitOnchainTx(context.Context, emulator.OnchainTx) (*ps
 	return nil, fmt.Errorf("failed to execute arkade script: %w vin=%d", s.inner, 0)
 }
 
+func (s scriptService) SubmitFinalization(
+	context.Context, emulator.BatchFinalization,
+) (*emulator.SignedBatchFinalization, error) {
+	return nil, fmt.Errorf("failed to execute arkade script at input %d: %w", 0, s.inner)
+}
+
 func submitAll(t *testing.T, h *handler) []error {
 	t.Helper()
 	ctx := context.Background()
@@ -168,6 +174,66 @@ func TestOtherScriptErrorsStayOpaque(t *testing.T) {
 		require.Equal(t, codes.Internal, st.Code())
 		require.Equal(t, internalErrMsg, st.Message())
 	}
+}
+
+// backendService fails every script-executing call with inner, wrapped the way
+// the application layer wraps an arkd refusal.
+type backendService struct {
+	failingService
+	inner error
+}
+
+func (s backendService) SubmitTx(
+	context.Context, emulator.OffchainTx,
+) (*emulator.OffchainTx, error) {
+	return nil, fmt.Errorf("failed to submit tx on arkd: %w", s.inner)
+}
+
+func (s backendService) SubmitIntent(context.Context, emulator.Intent) (*psbt.Packet, error) {
+	return nil, fmt.Errorf("failed to submit tx on arkd: %w", s.inner)
+}
+
+func (s backendService) SubmitOnchainTx(context.Context, emulator.OnchainTx) (*psbt.Packet, error) {
+	return nil, fmt.Errorf("failed to submit tx on arkd: %w", s.inner)
+}
+
+// A backend refusal judges the caller's transaction, so its code and message
+// reach the caller instead of the opaque internal error.
+func TestBackendRefusalsAreRelayed(t *testing.T) {
+	const detail = "ASSET_INPUT_INVALID (35): input 0 owns asset 3c7321 but amount mismatch: 10000 != 10"
+	inner := status.Error(codes.InvalidArgument, detail)
+	for _, err := range submitAll(t, New("test", backendService{inner: inner})) {
+		st, ok := status.FromError(err)
+		require.True(t, ok, "expected a grpc status error, got %v", err)
+		require.Equal(t, codes.InvalidArgument, st.Code())
+		// the wrapper text is dropped: the caller gets the backend's own message
+		require.Equal(t, detail, st.Message())
+	}
+}
+
+// A fault on the backend's side is not the caller's doing, so it stays opaque.
+func TestBackendFaultsStayOpaque(t *testing.T) {
+	inner := status.Error(codes.Unavailable, "connection refused")
+	for _, err := range submitAll(t, New("test", backendService{inner: inner})) {
+		st, ok := status.FromError(err)
+		require.True(t, ok, "expected a grpc status error, got %v", err)
+		require.Equal(t, codes.Internal, st.Code())
+		require.Equal(t, internalErrMsg, st.Message())
+	}
+}
+
+// SubmitFinalization classifies its errors like the other signing endpoints.
+func TestFinalizationRefusalIsRelayed(t *testing.T) {
+	inner := txscript.Error{ErrorCode: txscript.ErrVerify, Description: "OP_VERIFY failed"}
+	h := New("test", scriptService{inner: inner})
+	_, err := h.SubmitFinalization(context.Background(), &emulatorv1.SubmitFinalizationRequest{
+		SignedIntent: newIntentProto(t),
+		CommitmentTx: newProofB64(t),
+	})
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected a grpc status error, got %v", err)
+	require.Equal(t, codes.FailedPrecondition, st.Code())
+	require.Contains(t, st.Message(), "OP_VERIFY failed")
 }
 
 // TestValidationErrorsStayDescriptive pins the other half of the fix: errors a
