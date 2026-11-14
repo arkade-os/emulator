@@ -46,7 +46,9 @@ var backendVerdicts = map[codes.Code]bool{
 	codes.OutOfRange:         true,
 }
 
-// grpcStatus is implemented by gRPC status errors, including wrapped ones.
+// grpcStatus is implemented by gRPC status errors. Reading it directly keeps
+// the backend's own message: status.FromError would return the wrapper text
+// instead ("failed to submit tx on arkd: rpc error: code = ... desc = ...").
 type grpcStatus interface{ GRPCStatus() *status.Status }
 
 // serviceError names the covenant check a request failed, which the caller can
