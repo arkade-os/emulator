@@ -44,7 +44,9 @@ import (
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func TestMain(m *testing.M) {
@@ -218,7 +220,13 @@ func TestSubmitOffchain(t *testing.T) {
 		}
 
 		_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidTx, signedInvalidCheckpoints)
-		assertSubmitError(t, err)
+		require.Error(t, err)
+		// a script refusal is a verdict on the caller's own tx, so it crosses
+		// the wire with its code and detail, not as "internal error"
+		st, ok := status.FromError(err)
+		require.True(t, ok, "expected a grpc status error, got %v", err)
+		require.Equal(t, codes.FailedPrecondition, st.Code())
+		require.Contains(t, st.Message(), "OP_EQUALVERIFY failed")
 	})
 
 	t.Run("single_input_missing_checkpoint_signature", func(t *testing.T) {
