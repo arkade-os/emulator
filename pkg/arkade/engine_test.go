@@ -3090,3 +3090,49 @@ func TestArkadeSighashIsDomainSeparated(t *testing.T) {
 	require.NotEqual(t, bip342, arkade,
 		"arkade sighash must use a distinct BIP-340 tag from BIP342 (TapSighash)")
 }
+
+// TestExecuteFalseEvalCarriesOpcodeContext proves that a script running to
+// completion but leaving a false value on the stack fails with an
+// *ExecutionError naming the opcode that produced it, so callers can map the
+// rejection back to the failing clause instead of parsing "false stack entry
+// at end of script execution" alone.
+func TestExecuteFalseEvalCarriesOpcodeContext(t *testing.T) {
+	t.Parallel()
+
+	outpoint := wire.OutPoint{Hash: chainhash.Hash{}, Index: 0}
+	fetcher := fetcherFor(map[wire.OutPoint]*wire.TxOut{
+		outpoint: {Value: 1000, PkScript: []byte{OP_TRUE}},
+	})
+	tx := &wire.MsgTx{
+		Version: 1,
+		TxIn:    []*wire.TxIn{{PreviousOutPoint: outpoint}},
+		TxOut:   []*wire.TxOut{{Value: 1000, PkScript: []byte{OP_TRUE}}},
+	}
+
+	// OP_1 OP_2 OP_EQUAL leaves false on the stack: OP_EQUAL is the clause
+	// whose check failed.
+	script, err := txscript.NewScriptBuilder().
+		AddOp(OP_1).AddOp(OP_2).AddOp(OP_EQUAL).
+		Script()
+	require.NoError(t, err)
+
+	vm, err := NewEngine(
+		script,
+		tx, 0,
+		txscript.NewSigCache(100),
+		txscript.NewTxSigHashes(tx, fetcher),
+		1000,
+		fetcher,
+	)
+	require.NoError(t, err)
+
+	err = vm.Execute()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "false stack entry at end of script execution")
+
+	var execErr *ExecutionError
+	require.ErrorAs(t, err, &execErr)
+	require.Equal(t, 1, execErr.ScriptIndex) // script 0 is the witness stack
+	require.Equal(t, 2, execErr.Position)
+	require.Equal(t, "OP_EQUAL", execErr.Opcode)
+}
