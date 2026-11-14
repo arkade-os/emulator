@@ -245,6 +245,9 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 
 	arkdTxid, finalArkTx, arkdCheckpointTxs, err := s.arkd.SubmitTx(ctx, arkTx, encodedCheckpoints)
 	if err != nil {
+		if rej := arkdRejection(err); rej != nil {
+			return nil, rej
+		}
 		return nil, fmt.Errorf("failed to submit tx on arkd: %w", err)
 	}
 
@@ -316,6 +319,9 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 
 		// TODO: if retry fails, persist retry task in background queue
 		if err := s.retryFinalize(ctx, arkTxid, finalEncodedCheckpoints); err != nil {
+			if rej := arkdRejection(err); rej != nil {
+				return nil, rej
+			}
 			return nil, err
 		}
 	}

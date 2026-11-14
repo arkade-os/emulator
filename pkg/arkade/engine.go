@@ -593,6 +593,10 @@ func (vm *Engine) Execute() (err error) {
 	}
 
 	done := false
+	// lastScriptIdx and lastOffset locate the most recently executed opcode, so
+	// a failed final stack check can still name the clause that produced the
+	// false value.
+	lastScriptIdx, lastOffset := -1, -1
 	for !done {
 		scriptIdx, offset := vm.scriptIdx, vm.tokenizer.ByteIndex()
 		done, err = vm.Step()
@@ -610,6 +614,7 @@ func (vm *Engine) Execute() (err error) {
 			}
 			return err
 		}
+		lastScriptIdx, lastOffset = scriptIdx, int(offset)
 
 		if vm.stepCallback != nil {
 			scriptIdx := vm.scriptIdx
@@ -638,7 +643,18 @@ func (vm *Engine) Execute() (err error) {
 	}
 
 	if err := vm.CheckErrorCondition(true); err != nil {
-		return fmt.Errorf("final script validation failed: %w", err)
+		err = fmt.Errorf("final script validation failed: %w", err)
+		if lastScriptIdx >= 0 && lastScriptIdx < len(vm.scripts) &&
+			lastOffset >= 0 && lastOffset < len(vm.scripts[lastScriptIdx]) {
+			op := vm.scripts[lastScriptIdx][lastOffset]
+			return &ExecutionError{
+				ScriptIndex: lastScriptIdx,
+				Position:    lastOffset,
+				Opcode:      opcodeArray[op].name,
+				Err:         err,
+			}
+		}
+		return err
 	}
 	return nil
 }

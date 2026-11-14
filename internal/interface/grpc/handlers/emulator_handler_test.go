@@ -119,6 +119,126 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	})
 }
 
+// scriptVerdict stands in for the emulator's deterministic rejection of the
+// caller's own transaction: its detail describes the caller's script, so it is
+// safe and useful to relay.
+const scriptVerdict = "emulate offchain tx ark_txid=deadbeef: input 0: failed to execute arkade script: " +
+	"script=1 opcode=OP_EQUAL position=2: final script validation failed: " +
+	"false stack entry at end of script execution"
+
+// arkdVerdict stands in for a deterministic arkd refusal of the forwarded tx.
+const arkdVerdict = "ASSET_INPUT_INVALID (35): input 0 owns asset 3c7321 but amount mismatch: 10000 != 10"
+
+// rejectingService refuses every signing call with a classified rejection.
+type rejectingService struct{}
+
+func (rejectingService) GetInfo(context.Context) (*application.Info, error) {
+	return nil, fmt.Errorf("boom: %s", leakyDetail)
+}
+
+func (rejectingService) SubmitTx(
+	context.Context, emulator.OffchainTx,
+) (*emulator.OffchainTx, error) {
+	return nil, &emulator.Error{
+		Operation:       "emulate offchain tx",
+		TransactionKind: "ark",
+		TxID:            "deadbeef",
+		Err: fmt.Errorf(
+			"input 0: failed to execute arkade script: script=1 opcode=OP_EQUAL position=2: " +
+				"final script validation failed: false stack entry at end of script execution",
+		),
+	}
+}
+
+func (rejectingService) SubmitIntent(
+	context.Context, emulator.Proof,
+) (*psbt.Packet, error) {
+	return nil, &application.ArkdError{
+		Code: codes.InvalidArgument,
+		Msg:  arkdVerdict,
+		Err:  status.Error(codes.InvalidArgument, arkdVerdict),
+	}
+}
+
+func (rejectingService) SubmitFinalization(
+	context.Context, emulator.BatchFinalization, *tree.TxTree,
+) (*application.SignedBatchFinalization, error) {
+	return nil, &emulator.Error{
+		Operation:       "emulate batch finalization",
+		TransactionKind: "forfeit",
+		TxID:            "deadbeef",
+		Err:             fmt.Errorf("missing signature for approved input 0"),
+	}
+}
+
+func (rejectingService) SubmitOnchainTx(
+	context.Context, emulator.OnchainTx,
+) (*psbt.Packet, error) {
+	return nil, &emulator.Error{
+		Operation:       "emulate onchain tx",
+		TransactionKind: "onchain",
+		TxID:            "deadbeef",
+		Err:             fmt.Errorf("input 0: failed to execute arkade script: %s", scriptVerdict),
+	}
+}
+
+func (rejectingService) Close() {}
+
+// TestRejectionsAreRelayed proves deterministic rejections of the caller's own
+// transaction reach the caller with a fitting status code and the full
+// message, instead of a generic internal error.
+func TestRejectionsAreRelayed(t *testing.T) {
+	h := New("test", rejectingService{})
+	ctx := context.Background()
+	ptx := newProofB64(t)
+
+	t.Run("SubmitTx relays the emulation verdict", func(t *testing.T) {
+		_, err := h.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{
+			ArkTx:         ptx,
+			CheckpointTxs: []string{ptx},
+		})
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.FailedPrecondition, st.Code())
+		require.Equal(t, scriptVerdict, st.Message())
+	})
+
+	t.Run("SubmitIntent relays the arkd status and message", func(t *testing.T) {
+		_, err := h.SubmitIntent(ctx, &emulatorv1.SubmitIntentRequest{
+			Intent: newIntentProto(t),
+		})
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.InvalidArgument, st.Code())
+		require.Contains(t, st.Message(), arkdVerdict)
+	})
+
+	t.Run("SubmitFinalization relays the emulation verdict", func(t *testing.T) {
+		_, err := h.SubmitFinalization(ctx, &emulatorv1.SubmitFinalizationRequest{
+			SignedIntent: newIntentProto(t),
+			CommitmentTx: ptx,
+		})
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.FailedPrecondition, st.Code())
+		require.Contains(t, st.Message(), "missing signature for approved input 0")
+	})
+
+	t.Run("SubmitOnchainTx relays the emulation verdict", func(t *testing.T) {
+		_, err := h.SubmitOnchainTx(ctx, &emulatorv1.SubmitOnchainTxRequest{
+			Tx: ptx,
+		})
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.FailedPrecondition, st.Code())
+		require.Contains(t, st.Message(), "opcode=OP_EQUAL position=2")
+	})
+}
+
 // TestValidationErrorsStayDescriptive pins the other half of the fix: errors a
 // legitimate caller needs in order to correct its request are not genericized.
 func TestValidationErrorsStayDescriptive(t *testing.T) {

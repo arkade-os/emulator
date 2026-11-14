@@ -83,7 +83,7 @@ func (s *service) EmulateOffchainTx(
 			inputIndex,
 			append(opts, arkade.WithExpiry(expiry))...,
 		); err != nil {
-			return nil, offchainTxError(txid, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex))
+			return nil, offchainTxError(txid, fmt.Errorf("input %d: %w", inputIndex, err))
 		}
 		logger.Debugf("execution of %x succeeded", script.Script())
 
@@ -129,7 +129,7 @@ func (s *service) EmulateOnchainTx(ctx context.Context, tx OnchainTx) ([]SignReq
 			inputIndex,
 			opts...,
 		); err != nil {
-			return nil, onchainTxError(txid, fmt.Errorf("failed to execute arkade script: %w vin=%d", err, inputIndex))
+			return nil, onchainTxError(txid, fmt.Errorf("input %d: %w", inputIndex, err))
 		}
 		logger.Debugf("execution of %x succeeded", script.Script())
 
@@ -184,7 +184,7 @@ func (s *service) EmulateBatchRegistration(
 			append(opts, arkade.WithIntentMessage(registration.Message), arkade.WithExpiry(expiry))...,
 		); err != nil {
 			log.WithError(err).WithFields(log.Fields{"proof_txid": ptx.UnsignedTx.TxID(), "input_index": inputIndex}).Error("arkade script execution failed")
-			return nil, batchRegistrationError(txid, fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err))
+			return nil, batchRegistrationError(txid, fmt.Errorf("input %d: %w", inputIndex, err))
 		}
 
 		req, err := newSignRequest(ptx, inputIndex, script)

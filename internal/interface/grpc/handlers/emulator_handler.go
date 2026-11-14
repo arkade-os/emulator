@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
@@ -20,6 +21,26 @@ import (
 // implementation detail. Validation errors stay descriptive so that a
 // legitimate caller can fix its request.
 const internalErrMsg = "internal error"
+
+// toRPCError classifies an application-layer failure. Deterministic rejections
+// of the caller's own transaction (the emulator's verdict on its arkade script
+// and checkpoints, or arkd's refusal of the forwarded tx) are relayed with the
+// status code and message the caller needs to fix and resubmit. Unexpected
+// faults stay hidden behind internalErrMsg.
+func toRPCError(err error, logMsg string) error {
+	var emuErr *emulator.Error
+	if errors.As(err, &emuErr) {
+		log.WithError(err).Warn(logMsg)
+		return status.Error(codes.FailedPrecondition, emuErr.Error())
+	}
+	var arkdErr *application.ArkdError
+	if errors.As(err, &arkdErr) {
+		log.WithError(err).Warn(logMsg)
+		return status.Error(arkdErr.Code, arkdErr.Error())
+	}
+	log.WithError(err).Error(logMsg)
+	return status.Error(codes.Internal, internalErrMsg)
+}
 
 type handler struct {
 	version string
@@ -80,8 +101,7 @@ func (h *handler) SubmitTx(
 
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
-		log.WithError(err).Error("failed to process transaction")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, toRPCError(err, "failed to process transaction")
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -120,8 +140,7 @@ func (h *handler) SubmitIntent(
 
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
-		log.WithError(err).Error("failed to process intent")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, toRPCError(err, "failed to process intent")
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
@@ -195,8 +214,7 @@ func (h *handler) SubmitFinalization(
 
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization, connectorTxTree)
 	if err != nil {
-		log.WithError(err).Error("failed to process finalization")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, toRPCError(err, "failed to process finalization")
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
@@ -238,8 +256,7 @@ func (h *handler) SubmitOnchainTx(
 
 	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
-		log.WithError(err).Error("failed to process onchain tx")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, toRPCError(err, "failed to process onchain tx")
 	}
 
 	encoded, err := signed.B64Encode()
