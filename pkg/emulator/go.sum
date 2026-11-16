@@ -4,6 +4,8 @@ github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20261105114752-97386cb3d95c h1:a4
 github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20261105114752-97386cb3d95c/go.mod h1:n6ZFdfF0VqFrBCWuc9/3czFRNRSc+7HA6Ar0OcWuATo=
 github.com/arkade-os/arkd/pkg/errors v0.0.0-20261105114752-97386cb3d95c h1:GNrnES3l7b/c4c+q1KU+o4MiDQJLu5EIfM7UIojC6fw=
 github.com/arkade-os/arkd/pkg/errors v0.0.0-20261105114752-97386cb3d95c/go.mod h1:MdSG6glVLNnY7pFcDSOm97VDhvvZGu5enva+y9m6Tas=
+github.com/arkade-os/emulator/pkg/arkade v0.2.0 h1:laR0VZN3+Tr/kG8GW2o1m1R2FVS0cFlmTaOwWs24uOQ=
+github.com/arkade-os/emulator/pkg/arkade v0.2.0/go.mod h1:FXV0V6/SFckzIe3tRg8p24uL6H5ewuvsLEsqOj7y6pk=
 github.com/bits-and-blooms/bitset v1.20.0 h1:2F+rfL86jE2d/bmw7OhqUg2Sj/1rURkBn3MdfoPyRVU=
 github.com/bits-and-blooms/bitset v1.20.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/btcsuite/btcd v0.26.2 h1:hPXzICjUZOsW2JwBLg9nHwGabc/D7pJDlna2vTB/SWI=

@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/arkade-os/arkd/pkg/ark-lib v0.8.1-0.20261105114752-97386cb3d95c
-	github.com/arkade-os/emulator/pkg/arkade v0.1.0
+	github.com/arkade-os/emulator/pkg/arkade v0.2.0
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0
 	github.com/btcsuite/btcd/chainhash/v2 v2.0.0
 	github.com/btcsuite/btcd/psbt/v2 v2.0.0
