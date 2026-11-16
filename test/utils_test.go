@@ -1124,7 +1124,7 @@ func executeArkadeScripts(t *testing.T, ptx *psbt.Packet, checkpoints []*psbt.Pa
 
 		err = script.Execute(ptx.UnsignedTx, prevOutFetcher, inputIndex, opts...)
 		if err != nil {
-			return fmt.Errorf("failed to execute arkade script at input %d: %w", inputIndex, err)
+			return fmt.Errorf("input %d: %w", inputIndex, err)
 		}
 	}
 
