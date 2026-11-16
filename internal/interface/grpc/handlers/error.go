@@ -152,7 +152,8 @@ func scriptErrorCode(code txscript.ErrorCode) codes.Code {
 		txscript.ErrControlBlockTooSmall, txscript.ErrControlBlockTooLarge,
 		txscript.ErrControlBlockInvalidLength, txscript.ErrTaprootMerkleProofInvalid,
 		txscript.ErrTaprootOutputKeyParityMismatch,
-		txscript.ErrDiscourageUpgradableNOPs, txscript.ErrDiscourageUpgradeablePubKeyType:
+		txscript.ErrDiscourageUpgradableNOPs, txscript.ErrDiscourageUpgradeablePubKeyType,
+		txscript.ErrInvalidStackOperation:
 		return codes.InvalidArgument
 	default:
 		return codes.Internal
