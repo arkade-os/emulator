@@ -17,7 +17,7 @@ require (
 	github.com/arkade-os/arkd/pkg/errors v0.0.0-20261105114752-97386cb3d95c
 	github.com/arkade-os/arkd/pkg/macaroons v0.7.1-0.20261105114752-97386cb3d95c
 	github.com/arkade-os/emulator/api-spec v0.1.0
-	github.com/arkade-os/emulator/pkg/arkade v0.1.0
+	github.com/arkade-os/emulator/pkg/arkade v0.2.0
 	github.com/arkade-os/emulator/pkg/client v0.1.0
 	github.com/arkade-os/emulator/pkg/emulator v0.1.2
 	github.com/btcsuite/btcd v0.26.2
