@@ -3,6 +3,7 @@ package application
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -476,6 +477,8 @@ func TestSubmitTx(t *testing.T) {
 		tx.ArkTx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{leaf}
 		_, err = svc.SubmitTx(t.Context(), tx)
 		require.ErrorContains(t, err, "checkpoint vtxo output is not the arkd checkpoint script")
+		var validationErr *ValidationError
+		require.ErrorAs(t, err, &validationErr)
 		require.Empty(t, checkpoint.Inputs[0].TaprootScriptSpendSig)
 	})
 	t.Run("not finalizer", func(t *testing.T) {
@@ -581,6 +584,8 @@ func TestSubmitTx(t *testing.T) {
 		out, err := svc.SubmitTx(t.Context(), tx)
 		require.ErrorContains(t, err, "failed to submit tx on arkd")
 		require.ErrorContains(t, err, "arkd rejected tx")
+		var validationErr *ValidationError
+		require.False(t, errors.As(err, &validationErr), "backend errors must not be exposed as request validation")
 		require.Nil(t, out)
 		require.Equal(t, 1, arkd.submitCalls)
 		require.Zero(t, arkd.finalizeCalls)
@@ -652,6 +657,8 @@ func TestSubmitTx(t *testing.T) {
 
 		out, err := svc.SubmitTx(t.Context(), tx)
 		require.ErrorContains(t, err, "failed to verify non-arkd signatures on checkpoints")
+		var validationErr *ValidationError
+		require.ErrorAs(t, err, &validationErr)
 		require.Nil(t, out)
 		require.Zero(t, arkd.submitCalls)
 	})

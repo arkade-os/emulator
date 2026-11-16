@@ -14,13 +14,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// internalErrMsg is returned in place of an unexpected error. The detail is
-// logged server-side instead of being echoed back, since callers reaching these
-// endpoints are unauthenticated and the underlying errors can carry
-// implementation detail. Validation errors stay descriptive so that a
-// legitimate caller can fix its request.
-const internalErrMsg = "internal error"
-
 type handler struct {
 	version string
 	svc     application.Service
@@ -35,7 +28,7 @@ func (h *handler) GetInfo(
 ) (*emulatorv1.GetInfoResponse, error) {
 	info, err := h.svc.GetInfo(ctx)
 	if err != nil {
-		return nil, err
+		return nil, serviceError(err, "failed to get info")
 	}
 
 	return &emulatorv1.GetInfoResponse{
@@ -61,14 +54,14 @@ func (h *handler) SubmitTx(
 
 	arkPtx, err := parsePsbt(arkTx)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid ark tx")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid ark tx: %v", err)
 	}
 
 	checkpointPsbt := make([]*psbt.Packet, 0, len(checkpoints))
-	for _, checkpoint := range checkpoints {
+	for i, checkpoint := range checkpoints {
 		checkpointPtx, err := parsePsbt(checkpoint)
 		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, "invalid checkpoint tx")
+			return nil, status.Errorf(codes.InvalidArgument, "invalid checkpoint tx %d: %v", i, err)
 		}
 		checkpointPsbt = append(checkpointPsbt, checkpointPtx)
 	}
@@ -80,8 +73,7 @@ func (h *handler) SubmitTx(
 
 	approvedTx, err := h.svc.SubmitTx(ctx, offchainTx)
 	if err != nil {
-		log.WithError(err).Error("failed to process transaction")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process transaction")
 	}
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
@@ -120,8 +112,7 @@ func (h *handler) SubmitIntent(
 
 	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
 	if err != nil {
-		log.WithError(err).Error("failed to process intent")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process intent")
 	}
 
 	encodedProof, err := signedIntentProof.B64Encode()
@@ -158,14 +149,14 @@ func (h *handler) SubmitFinalization(
 
 	commitmentPtx, err := parsePsbt(commitmentTx)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid commitment tx")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid commitment tx: %v", err)
 	}
 
 	forfeitPsbt := make([]*psbt.Packet, 0, len(forfeitTxs))
-	for _, forfeit := range forfeitTxs {
+	for i, forfeit := range forfeitTxs {
 		forfeitPtx, err := parsePsbt(forfeit)
 		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, "invalid forfeit tx")
+			return nil, status.Errorf(codes.InvalidArgument, "invalid forfeit tx %d: %v", i, err)
 		}
 		forfeitPsbt = append(forfeitPsbt, forfeitPtx)
 	}
@@ -195,8 +186,7 @@ func (h *handler) SubmitFinalization(
 
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization, connectorTxTree)
 	if err != nil {
-		log.WithError(err).Error("failed to process finalization")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process finalization")
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
@@ -233,13 +223,12 @@ func (h *handler) SubmitOnchainTx(
 
 	ptx, err := parsePsbt(b64)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid tx")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid tx: %v", err)
 	}
 
 	signed, err := h.svc.SubmitOnchainTx(ctx, emulator.OnchainTx{Tx: ptx})
 	if err != nil {
-		log.WithError(err).Error("failed to process onchain tx")
-		return nil, status.Error(codes.Internal, internalErrMsg)
+		return nil, serviceError(err, "failed to process onchain tx")
 	}
 
 	encoded, err := signed.B64Encode()

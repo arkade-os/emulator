@@ -243,6 +243,8 @@ func TestSignInputRejectsUnsafeSighashTypes(t *testing.T) {
 			}
 
 			require.ErrorContains(t, err, "unsupported sighash type")
+			var validationErr *ValidationError
+			require.ErrorAs(t, err, &validationErr)
 			require.Empty(t, ptx.Inputs[0].TaprootScriptSpendSig)
 		})
 	}
@@ -324,6 +326,8 @@ func TestSignFinalization(t *testing.T) {
 		forfeit.UnsignedTx.TxOut[0].PkScript = randomP2TRScript(t)
 		_, err := submit(t, future, forfeit)
 		require.ErrorContains(t, err, "output 0 does not pay the arkd forfeit script")
+		var validationErr *ValidationError
+		require.ErrorAs(t, err, &validationErr)
 		require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 	})
 
@@ -331,6 +335,8 @@ func TestSignFinalization(t *testing.T) {
 		forfeit := buildForfeit(t, vtxoOutpoint)
 		_, err := submit(t, past, forfeit)
 		require.ErrorContains(t, err, "failed to find any valid input/entry pairs")
+		var validationErr *ValidationError
+		require.ErrorAs(t, err, &validationErr)
 		require.Empty(t, forfeit.Inputs[0].TaprootScriptSpendSig)
 	})
 }

@@ -31,7 +31,7 @@ func (s signer) signInput(ptx *psbt.Packet, inputIndex int, tweak []byte, prevou
 	// only sighash types committing to every input and output are safe: any other
 	// type lets the requester replace outputs or prevouts the covenant approved
 	if input.SighashType != txscript.SigHashDefault && input.SighashType != txscript.SigHashAll {
-		return fmt.Errorf("unsupported sighash type 0x%02x, cannot sign", uint32(input.SighashType))
+		return invalidRequest("input %d: unsupported sighash type 0x%02x, cannot sign", inputIndex, uint32(input.SighashType))
 	}
 
 	if input.WitnessUtxo == nil || !txscript.IsPayToTaproot(input.WitnessUtxo.PkScript) {
@@ -115,7 +115,7 @@ func (s *service) signRequests(requests []emulator.SignRequest) ([]emulator.Sign
 		signed = append(signed, req)
 	}
 	if len(signed) == 0 {
-		return nil, fmt.Errorf("failed to find any valid input/entry pairs")
+		return nil, invalidRequest("failed to find any valid input/entry pairs for this signer's active keys")
 	}
 	return signed, nil
 }
@@ -126,7 +126,7 @@ func (s *service) signFinalization(
 ) (*SignedBatchFinalization, error) {
 	for i, proof := range finalization.Proofs {
 		if err := validateRegistrationProof(proof); err != nil {
-			return nil, fmt.Errorf("proof %d: %w", i, err)
+			return nil, invalidRequest("proof %d: %w", i, err)
 		}
 	}
 	requests, err := s.emulator.EmulateBatchFinalization(ctx, finalization)
@@ -138,6 +138,9 @@ func (s *service) signFinalization(
 			continue
 		}
 		forfeit, vtxoIndex := req.Packet, req.InputIndex
+		if len(s.arkdForfeitPkScript) == 0 {
+			return nil, fmt.Errorf("missing forfeit script")
+		}
 		var connectorOutput *wire.TxOut
 		if len(forfeit.UnsignedTx.TxIn) == 2 {
 			connector := forfeit.UnsignedTx.TxIn[vtxoIndex^1].PreviousOutPoint
@@ -147,7 +150,7 @@ func (s *service) signFinalization(
 		if err := validateForfeitOutputs(
 			forfeit, vtxoIndex, forfeit.Inputs[vtxoIndex].WitnessUtxo, connectorOutput, s.arkdForfeitPkScript,
 		); err != nil {
-			return nil, fmt.Errorf("malformed forfeit %s: %w", forfeit.UnsignedTx.TxID(), err)
+			return nil, invalidRequest("malformed forfeit %s: %w", forfeit.UnsignedTx.TxID(), err)
 		}
 	}
 
