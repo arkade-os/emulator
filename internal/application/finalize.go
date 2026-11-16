@@ -31,7 +31,7 @@ func isFinalizerRole(arkPtx *psbt.Packet, sigsBefore []int, signerPubKeys []*btc
 				continue
 			}
 			if err != nil {
-				return false, fmt.Errorf("failed to read arkade script: %w vin=%d", err, entry.Vin)
+				return false, invalidRequest("failed to read arkade script: %w vin=%d", err, entry.Vin)
 			}
 			added := arkPtx.Inputs[entry.Vin].TaprootScriptSpendSig[sigsBefore[entry.Vin]:]
 			if signedBy(added, arkadeScript.PubKey()) {
@@ -113,7 +113,7 @@ func (a *finalizerAccumulator) checkScript(vin uint16, script *arkade.ArkadeScri
 	tweakedSignerPublicKeyXOnly := schnorr.SerializePubKey(script.PubKey())
 	if nClosurePubKeys < 2 {
 		// the script should always have a forfeit closure with at least arkd + tweaked key
-		return fmt.Errorf("malformed script %x", script.Script())
+		return invalidRequest("input %d: malformed script %x", vin, script.Script())
 	}
 
 	lastSigner := script.ClosurePubKeys()[nClosurePubKeys-1]
@@ -146,7 +146,7 @@ func (a *finalizerAccumulator) isFinalizer() (bool, error) {
 			return false, fmt.Errorf("missing finalizer state for input %d", vin)
 		}
 		if isLast != referenceIsLast {
-			return false, fmt.Errorf("input %d has a different finalizer", vin)
+			return false, invalidRequest("input %d has a different finalizer", vin)
 		}
 	}
 	return referenceIsLast, nil

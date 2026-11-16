@@ -35,6 +35,11 @@ func TestValidateIntentMessageCommitment(t *testing.T) {
 	require.ErrorContains(t, validateRegistrationProof(request), "synthetic message input")
 	_, err = (&service{}).signFinalization(t.Context(), emulator.BatchFinalization{Proofs: []emulator.Proof{request}}, nil)
 	require.ErrorContains(t, err, "synthetic message input")
+	var validationErr *ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	_, err = (&service{}).SubmitIntent(t.Context(), request)
+	require.ErrorContains(t, err, "synthetic message input")
+	require.ErrorAs(t, err, &validationErr)
 
 	// a proof bound to non-canonical bytes fails the outpoint comparison
 	request.Message = " " + encoded

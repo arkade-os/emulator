@@ -192,7 +192,7 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 
 	outpoints, err := tx.ExpiryOutpoints()
 	if err != nil {
-		return nil, err
+		return nil, invalidRequest("invalid ark tx: %w", err)
 	}
 	data, err := s.fetchOffchainData(ctx, outpoints)
 	if err != nil {
@@ -226,7 +226,7 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 	// we must verify that we have all the required checkpoint signatures before submitting to arkd
 	// otherwise, finalizing with arkd will fail later
 	if err = verifyNonArkdCheckpointSignatures(signed.Checkpoints, s.arkdPubKey); err != nil {
-		return nil, fmt.Errorf("failed to verify non-arkd signatures on checkpoints: %w", err)
+		return nil, invalidRequest("failed to verify non-arkd signatures on checkpoints: %w", err)
 	}
 
 	encodedCheckpoints := make([]string, 0, len(signed.Checkpoints))
@@ -329,11 +329,11 @@ func (s *service) SubmitTx(ctx context.Context, tx emulator.OffchainTx) (*emulat
 // SubmitIntent executes and signs arkade script for intent tx
 func (s *service) SubmitIntent(ctx context.Context, intent emulator.Proof) (*psbt.Packet, error) {
 	if err := validateIntentMessageCommitment(intent); err != nil {
-		return nil, fmt.Errorf("intent message is not committed by the proof: %w", err)
+		return nil, invalidRequest("intent message is not committed by the proof: %w", err)
 	}
 	outpoints, err := intent.ExpiryOutpoints()
 	if err != nil {
-		return nil, err
+		return nil, invalidRequest("invalid intent proof: %w", err)
 	}
 	data, err := s.fetchOffchainData(ctx, outpoints)
 	if err != nil {
@@ -366,7 +366,7 @@ func (s *service) SubmitFinalization(
 	ctx context.Context, finalization emulator.BatchFinalization, connectorTree *tree.TxTree,
 ) (*SignedBatchFinalization, error) {
 	if finalization.CommitmentTx == nil {
-		return nil, fmt.Errorf("commitment tx is required")
+		return nil, invalidRequest("commitment tx is required")
 	}
 	commitmentTxid := finalization.CommitmentTx.UnsignedTx.TxID()
 	err := retryWithBackoff(ctx, indexerRetryConfig,
@@ -416,8 +416,11 @@ func validateCheckpointOutputs(checkpoints []*psbt.Packet, requests []emulator.S
 			if request.Packet != checkpoint {
 				continue
 			}
-			if len(checkpointTapscript) == 0 || checkpoint == nil || checkpoint.UnsignedTx == nil || len(checkpoint.UnsignedTx.TxOut) == 0 || len(checkpoint.Inputs) == 0 || len(checkpoint.Inputs[0].TaprootLeafScript) != 1 || checkpoint.Inputs[0].TaprootLeafScript[0] == nil {
-				return fmt.Errorf("invalid checkpoint output data")
+			if len(checkpointTapscript) == 0 {
+				return fmt.Errorf("missing arkd checkpoint tapscript")
+			}
+			if checkpoint == nil || checkpoint.UnsignedTx == nil || len(checkpoint.UnsignedTx.TxOut) == 0 || len(checkpoint.Inputs) == 0 || len(checkpoint.Inputs[0].TaprootLeafScript) != 1 || checkpoint.Inputs[0].TaprootLeafScript[0] == nil {
+				return invalidRequest("invalid checkpoint output data")
 			}
 			leaf := checkpoint.Inputs[0].TaprootLeafScript[0]
 			tree := txscript.AssembleTaprootScriptTree(txscript.NewBaseTapLeaf(checkpointTapscript), txscript.NewTapLeaf(leaf.LeafVersion, leaf.Script))
@@ -427,7 +430,7 @@ func validateCheckpointOutputs(checkpoints []*psbt.Packet, requests []emulator.S
 				return err
 			}
 			if !bytes.Equal(checkpoint.UnsignedTx.TxOut[0].PkScript, expected) {
-				return fmt.Errorf("checkpoint vtxo output is not the arkd checkpoint script")
+				return invalidRequest("checkpoint_txid=%s: checkpoint vtxo output is not the arkd checkpoint script", checkpoint.UnsignedTx.TxID())
 			}
 		}
 	}

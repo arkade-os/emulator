@@ -135,5 +135,5 @@ func TestValidationErrorsStayDescriptive(t *testing.T) {
 	st, ok = status.FromError(err)
 	require.True(t, ok)
 	require.Equal(t, codes.InvalidArgument, st.Code())
-	require.Equal(t, "invalid tx", st.Message())
+	require.Equal(t, "invalid tx: illegal base64 data at input byte 3", st.Message())
 }
