@@ -593,23 +593,19 @@ func (vm *Engine) Execute() (err error) {
 	}
 
 	done := false
+	// lastScriptIdx and lastOffset locate the most recently executed opcode, so
+	// a failed final stack check can still name the clause that produced the
+	// false value.
+	lastScriptIdx, lastOffset := -1, -1
 	for !done {
 		scriptIdx, offset := vm.scriptIdx, vm.tokenizer.ByteIndex()
 		done, err = vm.Step()
 		if err != nil {
 			// scriptIdx and offset were captured before the step, so they locate the
 			// opcode that failed: the step may have advanced the tokenizer or script index
-			if scriptIdx >= 0 && scriptIdx < len(vm.scripts) && offset >= 0 && int(offset) < len(vm.scripts[scriptIdx]) {
-				op := vm.scripts[scriptIdx][offset]
-				return &ExecutionError{
-					ScriptIndex: scriptIdx,
-					Position:    int(offset),
-					Opcode:      opcodeArray[op].name,
-					Err:         err,
-				}
-			}
-			return err
+			return vm.locateError(scriptIdx, int(offset), err)
 		}
+		lastScriptIdx, lastOffset = scriptIdx, int(offset)
 
 		if vm.stepCallback != nil {
 			scriptIdx := vm.scriptIdx
@@ -638,9 +634,28 @@ func (vm *Engine) Execute() (err error) {
 	}
 
 	if err := vm.CheckErrorCondition(true); err != nil {
-		return fmt.Errorf("final script validation failed: %w", err)
+		return vm.locateError(
+			lastScriptIdx, lastOffset,
+			fmt.Errorf("final script validation failed: %w", err),
+		)
 	}
 	return nil
+}
+
+// locateError wraps err in an ExecutionError naming the opcode at
+// scripts[scriptIdx][offset], or returns err unchanged when that location is
+// out of range (for example an empty script).
+func (vm *Engine) locateError(scriptIdx, offset int, err error) error {
+	if scriptIdx < 0 || scriptIdx >= len(vm.scripts) ||
+		offset < 0 || offset >= len(vm.scripts[scriptIdx]) {
+		return err
+	}
+	return &ExecutionError{
+		ScriptIndex: scriptIdx,
+		Position:    offset,
+		Opcode:      opcodeArray[vm.scripts[scriptIdx][offset]].name,
+		Err:         err,
+	}
 }
 
 // getStack returns the contents of stack as a byte array bottom up
