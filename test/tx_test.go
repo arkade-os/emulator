@@ -828,7 +828,7 @@ func TestBoarding(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, emulatorInfo)
 
-	publicKeyBytes, err := hex.DecodeString(emulatorInfo.ArkadeSignerPublicKey)
+	publicKeyBytes, err := hex.DecodeString(emulatorInfo.OperatorPubkey)
 	require.NoError(t, err)
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	require.NoError(t, err)

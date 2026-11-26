@@ -61,12 +61,12 @@ func (*GetInfoRequest) Descriptor() ([]byte, []int) {
 type GetInfoResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	// hex-encoded compressed public key of the Arkade signer, untweaked.
-	ArkadeSignerPubkey string `protobuf:"bytes,2,opt,name=arkade_signer_pubkey,json=arkadeSignerPubkey,proto3" json:"arkade_signer_pubkey,omitempty"`
-	// hex-encoded compressed public keys of deprecated Arkade signers still accepted for signing.
-	DeprecatedArkadeSignerPubkeys []string `protobuf:"bytes,3,rep,name=deprecated_arkade_signer_pubkeys,json=deprecatedArkadeSignerPubkeys,proto3" json:"deprecated_arkade_signer_pubkeys,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	// hex-encoded compressed operator public key, untweaked.
+	OperatorPubkey string `protobuf:"bytes,2,opt,name=operator_pubkey,json=operatorPubkey,proto3" json:"operator_pubkey,omitempty"`
+	// hex-encoded compressed public keys of deprecated operator keys still accepted for signing.
+	DeprecatedOperatorPubkeys []string `protobuf:"bytes,3,rep,name=deprecated_operator_pubkeys,json=deprecatedOperatorPubkeys,proto3" json:"deprecated_operator_pubkeys,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *GetInfoResponse) Reset() {
@@ -106,16 +106,16 @@ func (x *GetInfoResponse) GetVersion() string {
 	return ""
 }
 
-func (x *GetInfoResponse) GetArkadeSignerPubkey() string {
+func (x *GetInfoResponse) GetOperatorPubkey() string {
 	if x != nil {
-		return x.ArkadeSignerPubkey
+		return x.OperatorPubkey
 	}
 	return ""
 }
 
-func (x *GetInfoResponse) GetDeprecatedArkadeSignerPubkeys() []string {
+func (x *GetInfoResponse) GetDeprecatedOperatorPubkeys() []string {
 	if x != nil {
-		return x.DeprecatedArkadeSignerPubkeys
+		return x.DeprecatedOperatorPubkeys
 	}
 	return nil
 }
@@ -272,7 +272,7 @@ func (x *SubmitProofRequest) GetBip322Proof() *Bip322Proof {
 
 type SubmitProofResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// base64 psbt of the proof with this Arkade signer's signature.
+	// base64 psbt of the proof with this operator's signature.
 	SignedProof   string `protobuf:"bytes,1,opt,name=signed_proof,json=signedProof,proto3" json:"signed_proof,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -643,11 +643,11 @@ var File_emulator_v1_service_proto protoreflect.FileDescriptor
 const file_emulator_v1_service_proto_rawDesc = "" +
 	"\n" +
 	"\x19emulator/v1/service.proto\x12\vemulator.v1\x1a!meshapi/gateway/annotations.proto\"\x10\n" +
-	"\x0eGetInfoRequest\"\xa6\x01\n" +
+	"\x0eGetInfoRequest\"\x94\x01\n" +
 	"\x0fGetInfoResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\tR\aversion\x120\n" +
-	"\x14arkade_signer_pubkey\x18\x02 \x01(\tR\x12arkadeSignerPubkey\x12G\n" +
-	" deprecated_arkade_signer_pubkeys\x18\x03 \x03(\tR\x1ddeprecatedArkadeSignerPubkeys\"]\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12'\n" +
+	"\x0foperator_pubkey\x18\x02 \x01(\tR\x0eoperatorPubkey\x12>\n" +
+	"\x1bdeprecated_operator_pubkeys\x18\x03 \x03(\tR\x19deprecatedOperatorPubkeys\"]\n" +
 	"\x17SubmitOffchainTxRequest\x12\x1b\n" +
 	"\tarkade_tx\x18\x01 \x01(\tR\barkadeTx\x12%\n" +
 	"\x0echeckpoint_txs\x18\x02 \x03(\tR\rcheckpointTxs\"x\n" +

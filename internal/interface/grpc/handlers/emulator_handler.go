@@ -32,9 +32,9 @@ func (h *handler) GetInfo(
 	}
 
 	return &emulatorv1.GetInfoResponse{
-		ArkadeSignerPubkey:            info.SignerPublicKey,
-		DeprecatedArkadeSignerPubkeys: append([]string(nil), info.DeprecatedSignerPublicKeys...),
-		Version:                       h.version,
+		OperatorPubkey:            info.SignerPublicKey,
+		DeprecatedOperatorPubkeys: append([]string(nil), info.DeprecatedSignerPublicKeys...),
+		Version:                   h.version,
 	}, nil
 }
 

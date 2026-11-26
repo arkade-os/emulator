@@ -5,7 +5,7 @@ package emulator.v1;
 import "meshapi/gateway/annotations.proto";
 
 service EmulatorService {
-  // GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the
+  // GetInfo returns the operator's public key. The key is untweaked: tweak it with the
   // Arkade script hash before using it in a tapscript.
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse) {
     option (meshapi.gateway.http) = {
@@ -33,7 +33,7 @@ service EmulatorService {
   }
 
   // SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.
-  // It signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree
+  // It signs only when this operator's signature is in the BIP322 proof. The connector tree
   // verifies the forfeits belong to the batch. Call SubmitProof before registering the proof with
   // arkd, then SubmitForfeitTxs when the batch finalizes.
   rpc SubmitForfeitTxs(SubmitForfeitTxsRequest) returns (SubmitForfeitTxsResponse) {
@@ -56,10 +56,10 @@ service EmulatorService {
 message GetInfoRequest {}
 message GetInfoResponse {
   string version = 1;
-  // hex-encoded compressed public key of the Arkade signer, untweaked.
-  string arkade_signer_pubkey = 2;
-  // hex-encoded compressed public keys of deprecated Arkade signers still accepted for signing.
-  repeated string deprecated_arkade_signer_pubkeys = 3;
+  // hex-encoded compressed operator public key, untweaked.
+  string operator_pubkey = 2;
+  // hex-encoded compressed public keys of deprecated operator keys still accepted for signing.
+  repeated string deprecated_operator_pubkeys = 3;
 }
 
 message SubmitOffchainTxRequest {
@@ -77,7 +77,7 @@ message SubmitProofRequest {
   Bip322Proof bip322_proof = 1;
 }
 message SubmitProofResponse {
-  // base64 psbt of the proof with this Arkade signer's signature.
+  // base64 psbt of the proof with this operator's signature.
   string signed_proof = 1;
 }
 

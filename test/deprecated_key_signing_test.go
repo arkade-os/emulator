@@ -37,10 +37,10 @@ func TestDeprecatedKeySigning(t *testing.T) {
 
 	info, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)
-	require.NotEmpty(t, info.DeprecatedArkadeSignerPublicKeys)
+	require.NotEmpty(t, info.DeprecatedOperatorPubkeys)
 
 	deprecatedPubKeyBytes, err := hex.DecodeString(
-		info.DeprecatedArkadeSignerPublicKeys[len(info.DeprecatedArkadeSignerPublicKeys)-1],
+		info.DeprecatedOperatorPubkeys[len(info.DeprecatedOperatorPubkeys)-1],
 	)
 	require.NoError(t, err)
 	deprecatedPubKey, err := btcec.ParsePubKey(deprecatedPubKeyBytes)

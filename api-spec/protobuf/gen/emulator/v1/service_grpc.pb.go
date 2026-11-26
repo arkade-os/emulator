@@ -30,7 +30,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type EmulatorServiceClient interface {
-	// GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the
+	// GetInfo returns the operator's public key. The key is untweaked: tweak it with the
 	// Arkade script hash before using it in a tapscript.
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
 	// SubmitOffchainTx signs an Arkade transaction and its checkpoint transactions by executing
@@ -41,7 +41,7 @@ type EmulatorServiceClient interface {
 	// the proof transaction. The message may be any batch message type.
 	SubmitProof(ctx context.Context, in *SubmitProofRequest, opts ...grpc.CallOption) (*SubmitProofResponse, error)
 	// SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.
-	// It signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree
+	// It signs only when this operator's signature is in the BIP322 proof. The connector tree
 	// verifies the forfeits belong to the batch. Call SubmitProof before registering the proof with
 	// arkd, then SubmitForfeitTxs when the batch finalizes.
 	SubmitForfeitTxs(ctx context.Context, in *SubmitForfeitTxsRequest, opts ...grpc.CallOption) (*SubmitForfeitTxsResponse, error)
@@ -112,7 +112,7 @@ func (c *emulatorServiceClient) SubmitOnchainTx(ctx context.Context, in *SubmitO
 // All implementations should embed UnimplementedEmulatorServiceServer
 // for forward compatibility.
 type EmulatorServiceServer interface {
-	// GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the
+	// GetInfo returns the operator's public key. The key is untweaked: tweak it with the
 	// Arkade script hash before using it in a tapscript.
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
 	// SubmitOffchainTx signs an Arkade transaction and its checkpoint transactions by executing
@@ -123,7 +123,7 @@ type EmulatorServiceServer interface {
 	// the proof transaction. The message may be any batch message type.
 	SubmitProof(context.Context, *SubmitProofRequest) (*SubmitProofResponse, error)
 	// SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.
-	// It signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree
+	// It signs only when this operator's signature is in the BIP322 proof. The connector tree
 	// verifies the forfeits belong to the batch. Call SubmitProof before registering the proof with
 	// arkd, then SubmitForfeitTxs when the batch finalizes.
 	SubmitForfeitTxs(context.Context, *SubmitForfeitTxsRequest) (*SubmitForfeitTxsResponse, error)

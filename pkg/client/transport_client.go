@@ -9,9 +9,9 @@ import (
 )
 
 type Info struct {
-	Version                          string
-	ArkadeSignerPublicKey            string
-	DeprecatedArkadeSignerPublicKeys []string
+	Version                   string
+	OperatorPubkey            string
+	DeprecatedOperatorPubkeys []string
 }
 
 // Bip322Proof is a BIP322 proof. Proof is the base64 PSBT and Message is the canonical message
@@ -56,9 +56,9 @@ func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
 	}
 
 	return &Info{
-		Version:                          resp.GetVersion(),
-		ArkadeSignerPublicKey:            resp.GetArkadeSignerPubkey(),
-		DeprecatedArkadeSignerPublicKeys: append([]string(nil), resp.GetDeprecatedArkadeSignerPubkeys()...),
+		Version:                   resp.GetVersion(),
+		OperatorPubkey:            resp.GetOperatorPubkey(),
+		DeprecatedOperatorPubkeys: append([]string(nil), resp.GetDeprecatedOperatorPubkeys()...),
 	}, nil
 }
 

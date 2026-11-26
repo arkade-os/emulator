@@ -10,7 +10,7 @@
         "tags": [
           "EmulatorService"
         ],
-        "description": "SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.\nIt signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree\nverifies the forfeits belong to the batch. Call SubmitProof before registering the proof with\narkd, then SubmitForfeitTxs when the batch finalizes.",
+        "description": "SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.\nIt signs only when this operator's signature is in the BIP322 proof. The connector tree\nverifies the forfeits belong to the batch. Call SubmitProof before registering the proof with\narkd, then SubmitForfeitTxs when the batch finalizes.",
         "operationId": "EmulatorService_SubmitForfeitTxs",
         "requestBody": {
           "content": {
@@ -51,7 +51,7 @@
         "tags": [
           "EmulatorService"
         ],
-        "description": "GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the\nArkade script hash before using it in a tapscript.",
+        "description": "GetInfo returns the operator's public key. The key is untweaked: tweak it with the\nArkade script hash before using it in a tapscript.",
         "operationId": "EmulatorService_GetInfo",
         "responses": {
           "200": {
@@ -234,16 +234,16 @@
         "title": "GetInfoResponse",
         "type": "object",
         "properties": {
-          "arkadeSignerPubkey": {
-            "type": "string",
-            "description": "hex-encoded compressed public key of the Arkade signer, untweaked."
-          },
-          "deprecatedArkadeSignerPubkeys": {
+          "deprecatedOperatorPubkeys": {
             "type": "array",
-            "description": "hex-encoded compressed public keys of deprecated Arkade signers still accepted for signing.",
+            "description": "hex-encoded compressed public keys of deprecated operator keys still accepted for signing.",
             "items": {
               "type": "string"
             }
+          },
+          "operatorPubkey": {
+            "type": "string",
+            "description": "hex-encoded compressed operator public key, untweaked."
           },
           "version": {
             "type": "string"
@@ -374,7 +374,7 @@
         "properties": {
           "signedProof": {
             "type": "string",
-            "description": "base64 psbt of the proof with this Arkade signer's signature."
+            "description": "base64 psbt of the proof with this operator's signature."
           }
         }
       },

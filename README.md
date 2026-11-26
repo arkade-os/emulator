@@ -88,7 +88,7 @@ Renewing a VTXO through every Arkade batch settlement without the owner — perm
 
 ### GetInfo
 
-Returns service metadata including the Arkade signer's public key. The key is untweaked: tweak it with the Arkade script hash before using it in a VTXO tapscript.
+Returns the operator's public key. The key is untweaked: tweak it with the Arkade script hash before using it in a VTXO tapscript.
 
 **Endpoint**: `GET /v1/info`
 
@@ -96,8 +96,8 @@ Returns service metadata including the Arkade signer's public key. The key is un
 ```json
 {
   "version": "0.0.1",
-  "arkadeSignerPubkey": "compressed_current_public_key",
-  "deprecatedArkadeSignerPubkeys": ["compressed_deprecated_public_key"]
+  "operatorPubkey": "compressed_current_public_key",
+  "deprecatedOperatorPubkeys": ["compressed_deprecated_public_key"]
 }
 ```
 
@@ -160,7 +160,7 @@ Signs a BIP322 proof after validating its message and executing Arkade scripts o
 
 ### SubmitForfeitTxs
 
-Signs forfeit transactions and boarding inputs on the commitment transaction. Signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree verifies the forfeits belong to the batch. Call `SubmitProof` before registering the proof with arkd, then `SubmitForfeitTxs` when the batch finalizes.
+Signs forfeit transactions and boarding inputs on the commitment transaction. Signs only when this operator's signature is in the BIP322 proof. The connector tree verifies the forfeits belong to the batch. Call `SubmitProof` before registering the proof with arkd, then `SubmitForfeitTxs` when the batch finalizes.
 
 **Endpoint**: `POST /v1/forfeit-txs`
 
