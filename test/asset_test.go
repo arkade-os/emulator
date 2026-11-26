@@ -173,7 +173,7 @@ func TestOffchainTxWithAsset(t *testing.T) {
 	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
 
 	// Submit to emulator - should succeed as the asset introspection opcodes will validate correctly
-	_, _, err = emulatorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+	_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
 	waitForVtxos()
@@ -339,7 +339,7 @@ func TestSettlementWithAsset(t *testing.T) {
 	waitForMintVtxo := watchForPreconfirmedVtxos(t, indexerSvc, mintTx, 0)
 
 	// Submit mint tx to emulator
-	_, _, err = emulatorClient.SubmitTx(ctx, signedMintTx, encodedMintCheckpoints)
+	_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedMintTx, encodedMintCheckpoints)
 	require.NoError(t, err)
 
 	waitForMintVtxo()
@@ -460,13 +460,13 @@ func TestSettlementWithAsset(t *testing.T) {
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
 	// Submit intent to emulator (validates the settle arkade script with transfer packet)
-	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
+	approvedIntentProof, err := emulatorClient.SubmitProof(ctx, emulatorclient.Bip322Proof{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	signedIntent := emulatorclient.Intent{
+	signedIntent := emulatorclient.Bip322Proof{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}

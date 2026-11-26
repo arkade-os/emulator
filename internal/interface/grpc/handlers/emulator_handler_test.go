@@ -67,14 +67,14 @@ func requireGenericInternal(t *testing.T, err error) {
 	require.Equal(t, internalErrMsg, st.Message())
 }
 
-// newIntentProto builds an intent the parser accepts, so the request reaches
-// the application service.
-func newIntentProto(t *testing.T) *emulatorv1.Intent {
+// newBip322ProofProto builds a BIP322 proof the parser accepts, so the request reaches the
+// application service.
+func newBip322ProofProto(t *testing.T) *emulatorv1.Bip322Proof {
 	t.Helper()
 	msg := intent.DeleteMessage{
 		BaseMessage: intent.BaseMessage{Type: intent.IntentMessageTypeDelete},
 	}
-	return &emulatorv1.Intent{
+	return &emulatorv1.Bip322Proof{
 		Proof:   newProofB64(t),
 		Message: encodeMsg(t, msg),
 	}
@@ -88,25 +88,25 @@ func TestInternalErrorsAreNotLeaked(t *testing.T) {
 	ctx := context.Background()
 	ptx := newProofB64(t)
 
-	t.Run("SubmitTx", func(t *testing.T) {
-		_, err := h.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{
-			ArkTx:         ptx,
+	t.Run("SubmitOffchainTx", func(t *testing.T) {
+		_, err := h.SubmitOffchainTx(ctx, &emulatorv1.SubmitOffchainTxRequest{
+			ArkadeTx:      ptx,
 			CheckpointTxs: []string{ptx},
 		})
 		requireGenericInternal(t, err)
 	})
 
-	t.Run("SubmitIntent", func(t *testing.T) {
-		_, err := h.SubmitIntent(ctx, &emulatorv1.SubmitIntentRequest{
-			Intent: newIntentProto(t),
+	t.Run("SubmitProof", func(t *testing.T) {
+		_, err := h.SubmitProof(ctx, &emulatorv1.SubmitProofRequest{
+			Bip322Proof: newBip322ProofProto(t),
 		})
 		requireGenericInternal(t, err)
 	})
 
-	t.Run("SubmitFinalization", func(t *testing.T) {
-		_, err := h.SubmitFinalization(ctx, &emulatorv1.SubmitFinalizationRequest{
-			SignedIntent: newIntentProto(t),
-			CommitmentTx: ptx,
+	t.Run("SubmitForfeitTxs", func(t *testing.T) {
+		_, err := h.SubmitForfeitTxs(ctx, &emulatorv1.SubmitForfeitTxsRequest{
+			SignedBip322Proof: newBip322ProofProto(t),
+			CommitmentTx:      ptx,
 		})
 		requireGenericInternal(t, err)
 	})
@@ -125,11 +125,11 @@ func TestValidationErrorsStayDescriptive(t *testing.T) {
 	h := New("test", failingService{})
 	ctx := context.Background()
 
-	_, err := h.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{})
+	_, err := h.SubmitOffchainTx(ctx, &emulatorv1.SubmitOffchainTxRequest{})
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	require.Equal(t, codes.InvalidArgument, st.Code())
-	require.Equal(t, "missing ark tx", st.Message())
+	require.Equal(t, "missing arkade tx", st.Message())
 
 	_, err = h.SubmitOnchainTx(ctx, &emulatorv1.SubmitOnchainTxRequest{Tx: "not-a-psbt"})
 	st, ok = status.FromError(err)

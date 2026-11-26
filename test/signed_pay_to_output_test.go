@@ -105,7 +105,7 @@ func TestSignedPayToOutput(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		require.Error(t, err)
 	})
 
@@ -144,7 +144,7 @@ func TestSignedPayToOutput(t *testing.T) {
 			t, signedPtx, checkpoints, emulatorPubKey,
 		))
 
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 
 		waitForVtxos()

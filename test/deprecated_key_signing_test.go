@@ -37,20 +37,20 @@ func TestDeprecatedKeySigning(t *testing.T) {
 
 	info, err := emulatorClient.GetInfo(ctx)
 	require.NoError(t, err)
-	require.NotEmpty(t, info.DeprecatedSignerPublicKeys)
+	require.NotEmpty(t, info.DeprecatedArkadeSignerPublicKeys)
 
 	deprecatedPubKeyBytes, err := hex.DecodeString(
-		info.DeprecatedSignerPublicKeys[len(info.DeprecatedSignerPublicKeys)-1],
+		info.DeprecatedArkadeSignerPublicKeys[len(info.DeprecatedArkadeSignerPublicKeys)-1],
 	)
 	require.NoError(t, err)
 	deprecatedPubKey, err := btcec.ParsePubKey(deprecatedPubKeyBytes)
 	require.NoError(t, err)
 
-	t.Run("SubmitTx signs offchain transaction", func(t *testing.T) {
+	t.Run("SubmitOffchainTx signs an Arkade transaction", func(t *testing.T) {
 		runSubmitTxWithDeprecatedKey(t, ctx, emulatorClient, deprecatedPubKey)
 	})
 
-	t.Run("SubmitIntent and SubmitFinalization complete batch", func(t *testing.T) {
+	t.Run("SubmitProof and SubmitForfeitTxs complete a batch", func(t *testing.T) {
 		runSubmitIntentFinalizationWithDeprecatedKey(t, ctx, emulatorClient, deprecatedPubKey)
 	})
 
@@ -144,7 +144,7 @@ func runSubmitTxWithDeprecatedKey(
 	}
 
 	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, tx, 0)
-	_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+	_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 	require.NoError(t, err)
 	waitForVtxos()
 }
@@ -236,12 +236,12 @@ func runSubmitIntentFinalizationWithDeprecatedKey(
 	encodedProof, err := intentPtx.B64Encode()
 	require.NoError(t, err)
 
-	approvedProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
+	approvedProof, err := emulatorClient.SubmitProof(ctx, emulatorclient.Bip322Proof{
 		Proof:   encodedProof,
 		Message: message,
 	})
 	require.NoError(t, err)
-	signedIntent := emulatorclient.Intent{Proof: approvedProof, Message: message}
+	signedIntent := emulatorclient.Bip322Proof{Proof: approvedProof, Message: message}
 	intentID, err := grpcClient.RegisterIntent(ctx, signedIntent.Proof, signedIntent.Message)
 	require.NoError(t, err)
 

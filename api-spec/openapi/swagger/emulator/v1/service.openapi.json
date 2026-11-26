@@ -5,18 +5,18 @@
     "version": "version not set"
   },
   "paths": {
-    "/v1/finalization": {
+    "/v1/forfeit-txs": {
       "post": {
         "tags": [
           "EmulatorService"
         ],
-        "description": "SubmitFinalization conditionally signs forfeit and/or boarding inputs.\nIt only signs if the signer's signature is found in the intent proof.\nconnector tree is used to verify the forfeits are part of a real batch session.\nSubmitFinalization works in sequence with SubmitIntent.\n1. SubmitIntent before intent registration.\n2. SubmitFinalization during batch finalization.",
-        "operationId": "EmulatorService_SubmitFinalization",
+        "description": "SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.\nIt signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree\nverifies the forfeits belong to the batch. Call SubmitProof before registering the proof with\narkd, then SubmitForfeitTxs when the batch finalizes.",
+        "operationId": "EmulatorService_SubmitForfeitTxs",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SubmitFinalizationRequest"
+                "$ref": "#/components/schemas/SubmitForfeitTxsRequest"
               }
             }
           },
@@ -28,7 +28,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SubmitFinalizationResponse"
+                  "$ref": "#/components/schemas/SubmitForfeitTxsResponse"
                 }
               }
             }
@@ -51,7 +51,7 @@
         "tags": [
           "EmulatorService"
         ],
-        "description": "GetInfo returns service metadata including the base signer's public key.\nthe public key should be tweaked with the arkade script hash before being used as forfeit.",
+        "description": "GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the\nArkade script hash before using it in a tapscript.",
         "operationId": "EmulatorService_GetInfo",
         "responses": {
           "200": {
@@ -77,18 +77,18 @@
         }
       }
     },
-    "/v1/intent": {
+    "/v1/offchain-tx": {
       "post": {
         "tags": [
           "EmulatorService"
         ],
-        "description": "SubmitIntent signs an intent proof after validating the register message\nand executing Arkade Script on the intent proof transaction.",
-        "operationId": "EmulatorService_SubmitIntent",
+        "description": "SubmitOffchainTx signs an Arkade transaction and its checkpoint transactions by executing\nArkade scripts on each input. The script runs only on the Arkade transaction, not on\ncheckpoints.",
+        "operationId": "EmulatorService_SubmitOffchainTx",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SubmitIntentRequest"
+                "$ref": "#/components/schemas/SubmitOffchainTxRequest"
               }
             }
           },
@@ -100,7 +100,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SubmitIntentResponse"
+                  "$ref": "#/components/schemas/SubmitOffchainTxResponse"
                 }
               }
             }
@@ -159,18 +159,18 @@
         }
       }
     },
-    "/v1/tx": {
+    "/v1/proof": {
       "post": {
         "tags": [
           "EmulatorService"
         ],
-        "description": "SubmitTx signs an Ark transaction and its associated checkpoint\ntransactions by executing Arkade scripts on each input.\nthe script is executed only on the ark transaction, not on checkpoints.",
-        "operationId": "EmulatorService_SubmitTx",
+        "description": "SubmitProof signs a BIP322 proof after validating its message and executing Arkade Script on\nthe proof transaction. The message may be any batch message type.",
+        "operationId": "EmulatorService_SubmitProof",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SubmitTxRequest"
+                "$ref": "#/components/schemas/SubmitProofRequest"
               }
             }
           },
@@ -182,7 +182,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SubmitTxResponse"
+                  "$ref": "#/components/schemas/SubmitProofResponse"
                 }
               }
             }
@@ -213,6 +213,19 @@
           }
         }
       },
+      "Bip322Proof": {
+        "title": "Bip322Proof",
+        "type": "object",
+        "description": "Bip322Proof is a BIP322 proof. proof is the base64 PSBT and message is the canonical message\nthe proof signs.",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "proof": {
+            "type": "string"
+          }
+        }
+      },
       "GetInfoRequest": {
         "title": "GetInfoRequest",
         "type": "object"
@@ -221,30 +234,18 @@
         "title": "GetInfoResponse",
         "type": "object",
         "properties": {
-          "deprecatedSignerPubkeys": {
+          "arkadeSignerPubkey": {
+            "type": "string",
+            "description": "hex-encoded compressed public key of the Arkade signer, untweaked."
+          },
+          "deprecatedArkadeSignerPubkeys": {
             "type": "array",
-            "description": "hex-encoded compressed public keys of deprecated signers accepted for signing.",
+            "description": "hex-encoded compressed public keys of deprecated Arkade signers still accepted for signing.",
             "items": {
               "type": "string"
             }
           },
-          "signerPubkey": {
-            "type": "string",
-            "description": "hex-encoded compressed public key of the signer."
-          },
           "version": {
-            "type": "string"
-          }
-        }
-      },
-      "Intent": {
-        "title": "Intent",
-        "type": "object",
-        "properties": {
-          "message": {
-            "type": "string"
-          },
-          "proof": {
             "type": "string"
           }
         }
@@ -268,8 +269,8 @@
           }
         }
       },
-      "SubmitFinalizationRequest": {
-        "title": "SubmitFinalizationRequest",
+      "SubmitForfeitTxsRequest": {
+        "title": "SubmitForfeitTxsRequest",
         "type": "object",
         "properties": {
           "commitmentTx": {
@@ -287,13 +288,13 @@
               "type": "string"
             }
           },
-          "signedIntent": {
-            "$ref": "#/components/schemas/Intent"
+          "signedBip322Proof": {
+            "$ref": "#/components/schemas/Bip322Proof"
           }
         }
       },
-      "SubmitFinalizationResponse": {
-        "title": "SubmitFinalizationResponse",
+      "SubmitForfeitTxsResponse": {
+        "title": "SubmitForfeitTxsResponse",
         "type": "object",
         "properties": {
           "signedCommitmentTx": {
@@ -307,21 +308,35 @@
           }
         }
       },
-      "SubmitIntentRequest": {
-        "title": "SubmitIntentRequest",
+      "SubmitOffchainTxRequest": {
+        "title": "SubmitOffchainTxRequest",
         "type": "object",
         "properties": {
-          "intent": {
-            "$ref": "#/components/schemas/Intent"
+          "arkadeTx": {
+            "type": "string",
+            "description": "base64 psbt of the Arkade transaction."
+          },
+          "checkpointTxs": {
+            "type": "array",
+            "description": "base64 psbts.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
-      "SubmitIntentResponse": {
-        "title": "SubmitIntentResponse",
+      "SubmitOffchainTxResponse": {
+        "title": "SubmitOffchainTxResponse",
         "type": "object",
         "properties": {
-          "signedProof": {
+          "signedArkadeTx": {
             "type": "string"
+          },
+          "signedCheckpointTxs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -344,35 +359,22 @@
           }
         }
       },
-      "SubmitTxRequest": {
-        "title": "SubmitTxRequest",
+      "SubmitProofRequest": {
+        "title": "SubmitProofRequest",
         "type": "object",
         "properties": {
-          "arkTx": {
-            "type": "string",
-            "description": "base64 psbt"
-          },
-          "checkpointTxs": {
-            "type": "array",
-            "description": "base64 psbts",
-            "items": {
-              "type": "string"
-            }
+          "bip322Proof": {
+            "$ref": "#/components/schemas/Bip322Proof"
           }
         }
       },
-      "SubmitTxResponse": {
-        "title": "SubmitTxResponse",
+      "SubmitProofResponse": {
+        "title": "SubmitProofResponse",
         "type": "object",
         "properties": {
-          "signedArkTx": {
-            "type": "string"
-          },
-          "signedCheckpointTxs": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "signedProof": {
+            "type": "string",
+            "description": "base64 psbt of the proof with this Arkade signer's signature."
           }
         }
       },

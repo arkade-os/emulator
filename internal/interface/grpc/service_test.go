@@ -20,18 +20,18 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// stubEmulatorServer records the ark tx it was handed so tests can tell whether
+// stubEmulatorServer records the Arkade transaction it was handed so tests can tell whether
 // a request reached the handler or was rejected before it.
 type stubEmulatorServer struct {
 	emulatorv1.UnimplementedEmulatorServiceServer
-	gotArkTxLen int
+	gotArkadeTxLen int
 }
 
-func (s *stubEmulatorServer) SubmitTx(
-	_ context.Context, req *emulatorv1.SubmitTxRequest,
-) (*emulatorv1.SubmitTxResponse, error) {
-	s.gotArkTxLen = len(req.GetArkTx())
-	return &emulatorv1.SubmitTxResponse{SignedArkTx: "ok"}, nil
+func (s *stubEmulatorServer) SubmitOffchainTx(
+	_ context.Context, req *emulatorv1.SubmitOffchainTxRequest,
+) (*emulatorv1.SubmitOffchainTxResponse, error) {
+	s.gotArkadeTxLen = len(req.GetArkadeTx())
+	return &emulatorv1.SubmitOffchainTxResponse{SignedArkadeTx: "ok"}, nil
 }
 
 // lazyHandler lets the router be built before the gateway that it fronts.
@@ -108,21 +108,21 @@ func TestServerRejectsOversizedMessage(t *testing.T) {
 	defer cancel()
 
 	oversized := strings.Repeat("a", maxReceiveMessageSize+(1<<20))
-	_, err := srv.client.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{
-		ArkTx:         oversized,
+	_, err := srv.client.SubmitOffchainTx(ctx, &emulatorv1.SubmitOffchainTxRequest{
+		ArkadeTx:      oversized,
 		CheckpointTxs: []string{"cp"},
 	})
 	if err == nil {
 		t.Fatalf(
 			"expected oversized request to be rejected, but it reached the handler with %d bytes",
-			srv.stub.gotArkTxLen,
+			srv.stub.gotArkadeTxLen,
 		)
 	}
 	if got := status.Code(err); got != codes.ResourceExhausted {
 		t.Fatalf("expected ResourceExhausted, got %s: %s", got, err)
 	}
-	if srv.stub.gotArkTxLen != 0 {
-		t.Fatalf("oversized request reached the handler with %d bytes", srv.stub.gotArkTxLen)
+	if srv.stub.gotArkadeTxLen != 0 {
+		t.Fatalf("oversized request reached the handler with %d bytes", srv.stub.gotArkadeTxLen)
 	}
 }
 
@@ -141,8 +141,8 @@ func TestServerAcceptsLegitimateMessage(t *testing.T) {
 		checkpoints = append(checkpoints, fmt.Sprintf("%d%s", i, strings.Repeat("b", 64*1024)))
 	}
 
-	if _, err := srv.client.SubmitTx(ctx, &emulatorv1.SubmitTxRequest{
-		ArkTx:         "arktx",
+	if _, err := srv.client.SubmitOffchainTx(ctx, &emulatorv1.SubmitOffchainTxRequest{
+		ArkadeTx:      "arktx",
 		CheckpointTxs: checkpoints,
 	}); err != nil {
 		t.Fatalf("legitimate sized request was rejected: %s", err)
@@ -159,7 +159,7 @@ func TestJSONGatewayBoundsOversizedBody(t *testing.T) {
 
 	const bodySize = 256 * 1024 * 1024
 	body := fmt.Sprintf(
-		`{"ark_tx":%q,"checkpoint_txs":["cp"]}`, strings.Repeat("a", bodySize),
+		`{"arkade_tx":%q,"checkpoint_txs":["cp"]}`, strings.Repeat("a", bodySize),
 	)
 
 	var before, after runtime.MemStats
@@ -167,7 +167,7 @@ func TestJSONGatewayBoundsOversizedBody(t *testing.T) {
 	runtime.ReadMemStats(&before)
 
 	resp, err := http.Post(
-		srv.url+"/v1/tx", "application/json", strings.NewReader(body),
+		srv.url+"/v1/offchain-tx", "application/json", strings.NewReader(body),
 	)
 	if err != nil {
 		// Refusing the connection outright is an acceptable rejection.
@@ -181,8 +181,8 @@ func TestJSONGatewayBoundsOversizedBody(t *testing.T) {
 	if resp.StatusCode == http.StatusOK {
 		t.Fatalf("oversized JSON body was accepted with status %s", resp.Status)
 	}
-	if srv.stub.gotArkTxLen != 0 {
-		t.Fatalf("oversized JSON body reached the handler with %d bytes", srv.stub.gotArkTxLen)
+	if srv.stub.gotArkadeTxLen != 0 {
+		t.Fatalf("oversized JSON body reached the handler with %d bytes", srv.stub.gotArkadeTxLen)
 	}
 
 	// The cap should keep allocation far below the body the caller offered.
@@ -199,13 +199,13 @@ func TestJSONGatewayBoundsOversizedBody(t *testing.T) {
 func TestJSONGatewayAcceptsLegitimateBody(t *testing.T) {
 	srv := newTestServer(t)
 
-	// ~1MB ark tx, well within a legitimate payload.
+	// ~1MB Arkade transaction, well within a legitimate payload.
 	body := fmt.Sprintf(
-		`{"ark_tx":%q,"checkpoint_txs":["cp"]}`, strings.Repeat("a", 1024*1024),
+		`{"arkade_tx":%q,"checkpoint_txs":["cp"]}`, strings.Repeat("a", 1024*1024),
 	)
 
 	resp, err := http.Post(
-		srv.url+"/v1/tx", "application/json", strings.NewReader(body),
+		srv.url+"/v1/offchain-tx", "application/json", strings.NewReader(body),
 	)
 	if err != nil {
 		t.Fatalf("legitimate JSON request failed: %s", err)

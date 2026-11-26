@@ -42,7 +42,7 @@ import (
 
 type delegateBatchEventsHandler struct {
 	intentId       string
-	intent         emulatorclient.Intent
+	intent         emulatorclient.Bip322Proof
 	vtxosToForfeit []clientlib.Vtxo
 	signerSession  tree.SignerSession
 	emulatorClient emulatorclient.TransportClient
@@ -211,7 +211,7 @@ func (h *delegateBatchEventsHandler) OnBatchFinalization(
 		return nil, err
 	}
 
-	signedForfeits, signedCommitmentTx, err := h.emulatorClient.SubmitFinalization(
+	signedForfeits, signedCommitmentTx, err := h.emulatorClient.SubmitForfeitTxs(
 		ctx, h.intent, forfeits, flatConnectorTree, event.Tx,
 	)
 	if err != nil {
@@ -426,7 +426,7 @@ func (h *boardingBatchEventsHandler) OnBatchFinalization(
 		return nil, err
 	}
 
-	_, signedCommitmentTx, err = h.emulatorClient.SubmitFinalization(
+	_, signedCommitmentTx, err = h.emulatorClient.SubmitForfeitTxs(
 		ctx, h.intent, []string{}, nil, signedCommitmentTx,
 	)
 	if err != nil {
@@ -792,7 +792,7 @@ func setupEmulatorClient(t *testing.T, ctx context.Context) (emulatorclient.Tran
 	require.NoError(t, err)
 	require.NotNil(t, emulatorInfo)
 
-	publicKeyBytes, err := hex.DecodeString(emulatorInfo.SignerPublicKey)
+	publicKeyBytes, err := hex.DecodeString(emulatorInfo.ArkadeSignerPublicKey)
 	require.NoError(t, err)
 
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
@@ -808,7 +808,7 @@ type prevArkTxEmulatorClient struct {
 	emulatorclient.TransportClient
 }
 
-func (c *prevArkTxEmulatorClient) SubmitTx(
+func (c *prevArkTxEmulatorClient) SubmitOffchainTx(
 	ctx context.Context, encodedArkTx string, encodedCheckpoints []string,
 ) (string, []string, error) {
 	arkPtx, err := psbt.NewFromRawBytes(strings.NewReader(encodedArkTx), true)
@@ -851,15 +851,15 @@ func (c *prevArkTxEmulatorClient) SubmitTx(
 		}
 	}
 
-	signedArkTx, signedCheckpoints, err := c.TransportClient.SubmitTx(ctx, encodedArkTx, encodedCheckpoints)
+	signedArkTx, signedCheckpoints, err := c.TransportClient.SubmitOffchainTx(ctx, encodedArkTx, encodedCheckpoints)
 	if err == nil {
 		integrationPrevArkTxs.Store(arkPtx.UnsignedTx.TxID(), arkPtx.UnsignedTx.Copy())
 	}
 	return signedArkTx, signedCheckpoints, err
 }
 
-func (c *prevArkTxEmulatorClient) SubmitIntent(
-	ctx context.Context, intent emulatorclient.Intent,
+func (c *prevArkTxEmulatorClient) SubmitProof(
+	ctx context.Context, intent emulatorclient.Bip322Proof,
 ) (string, error) {
 	ptx, err := psbt.NewFromRawBytes(strings.NewReader(intent.Proof), true)
 	if err != nil {
@@ -886,7 +886,7 @@ func (c *prevArkTxEmulatorClient) SubmitIntent(
 	if err != nil {
 		return "", err
 	}
-	return c.TransportClient.SubmitIntent(ctx, intent)
+	return c.TransportClient.SubmitProof(ctx, intent)
 }
 
 type recordingIndexer struct {

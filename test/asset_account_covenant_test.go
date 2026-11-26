@@ -131,7 +131,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 	)
 	addAssetPacketToTx(t, mintTx, createIssuanceAssetPacket(t, 0, solverAliceUSDT))
 	// FinalizeTx saves the event and returns while the projection goroutine is
-	// still inserting the VTXO. The next SubmitTx reads that table and gets
+	// still inserting the VTXO. The next SubmitOffchainTx reads that table and gets
 	// VTXO_NOT_FOUND until the indexer event fired by that insert arrives.
 	waitMint := watchForPreconfirmedVtxos(t, indexerSvc, mintTx, 0)
 	submitWithArkd(t, ctx, mintTx, mintCps, aliceWallet, grpcAlice)
@@ -201,7 +201,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 		// signed by the emulator after the arkade script passes.
 		signed, err := solverWallet.SignTransaction(ctx, b64(t, ptx), nil)
 		require.NoError(t, err)
-		_, _, err = emulator.SubmitTx(ctx, signed, signCheckpoints(t, ctx, solverWallet, explorerSvc, cps))
+		_, _, err = emulator.SubmitOffchainTx(ctx, signed, signCheckpoints(t, ctx, solverWallet, explorerSvc, cps))
 		return err
 	}
 
@@ -252,7 +252,7 @@ func TestAssetAccountCovenant(t *testing.T) {
 	waitBob := watchForPreconfirmedVtxos(t, indexerSvc, bobMergeTx, 1)
 	signedBob, err := bobWallet.SignTransaction(ctx, b64(t, bobMergeTx), nil)
 	require.NoError(t, err)
-	_, _, err = emulator.SubmitTx(ctx, signedBob, signCheckpoints(t, ctx, bobWallet, explorerSvc, bobMergeCps))
+	_, _, err = emulator.SubmitOffchainTx(ctx, signedBob, signCheckpoints(t, ctx, bobWallet, explorerSvc, bobMergeCps))
 	require.NoError(t, err)
 	waitBob()
 }

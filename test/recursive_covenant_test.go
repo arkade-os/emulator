@@ -197,7 +197,7 @@ func TestRecursivePolicy(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 
 		waitForVtxos()
@@ -234,7 +234,7 @@ func TestRecursivePolicy(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		require.Error(t, err)
 	}
 

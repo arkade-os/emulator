@@ -24,10 +24,10 @@ func parsePsbt(b64 string) (*psbt.Packet, error) {
 	return ptx, nil
 }
 
-// parseIntent decodes the proof and intent message. The emulator takes every
-// intent type through one endpoint, so it sniffs `BaseMessage.Type`, decodes
-// the matching concrete struct and hands the lib its canonical encoding.
-func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Proof, error) {
+// parseBip322Proof decodes the proof and its message. The emulator takes every arkd message
+// type through one endpoint, so it sniffs BaseMessage.Type, decodes the matching concrete
+// struct and hands the lib its canonical encoding.
+func parseBip322Proof(fromProto *emulatorv1.Bip322Proof) (*emulator.Proof, error) {
 	proof := fromProto.GetProof()
 	message := fromProto.GetMessage()
 
@@ -68,7 +68,7 @@ func parseIntent(fromProto *emulatorv1.Intent) (*emulator.Proof, error) {
 	case intent.IntentMessageTypeGetData:
 		decoded = &intent.GetDataMessage{}
 	default:
-		return nil, fmt.Errorf("unsupported intent message type: %s", base.Type)
+		return nil, fmt.Errorf("unsupported message type: %s", base.Type)
 	}
 
 	if err := decoded.Decode(message); err != nil {

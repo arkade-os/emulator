@@ -151,7 +151,7 @@ func TestCovenantHTLC(t *testing.T) {
 			encodedTx, err := candidateTx.B64Encode()
 			require.NoError(t, err)
 
-			_, _, err = emulatorClient.SubmitTx(
+			_, _, err = emulatorClient.SubmitOffchainTx(
 				ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 			)
 			require.Error(t, err)
@@ -178,7 +178,7 @@ func TestCovenantHTLC(t *testing.T) {
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitOffchainTx(
 			ctx, encodedValidTx, encodeCheckpoints(t, validCheckpoints),
 		)
 		require.NoError(t, err)
@@ -274,7 +274,7 @@ func TestCovenantHTLC(t *testing.T) {
 		encodedTx, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitOffchainTx(
 			ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 		)
 		require.NoError(t, err)
@@ -325,7 +325,7 @@ func TestCovenantHTLC(t *testing.T) {
 			encodedTx, err := candidateTx.B64Encode()
 			require.NoError(t, err)
 
-			_, _, err = emulatorClient.SubmitTx(
+			_, _, err = emulatorClient.SubmitOffchainTx(
 				ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 			)
 			require.Error(t, err)
@@ -359,7 +359,7 @@ func TestCovenantHTLC(t *testing.T) {
 		encodedValidTx, err := validTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitOffchainTx(
 			ctx, encodedValidTx, encodeCheckpoints(t, validCheckpoints),
 		)
 		require.NoError(t, err)

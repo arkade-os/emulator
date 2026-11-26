@@ -949,7 +949,7 @@ func (env *crossInputTestEnv) submitAndExpectFailure(t *testing.T, candidateTx *
 		signedCheckpoints = append(signedCheckpoints, signed)
 	}
 
-	_, _, err = env.emulatorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
+	_, _, err = env.emulatorClient.SubmitOffchainTx(env.ctx, signedTx, signedCheckpoints)
 	require.Error(t, err)
 }
 
@@ -979,7 +979,7 @@ func (env *crossInputTestEnv) submitAndFinalize(t *testing.T, candidateTx *psbt.
 	}
 
 	// Step 2: Submit once through emulator.
-	_, _, err = env.emulatorClient.SubmitTx(env.ctx, signedTx, signedCheckpoints)
+	_, _, err = env.emulatorClient.SubmitOffchainTx(env.ctx, signedTx, signedCheckpoints)
 	require.NoError(t, err)
 
 	// Step 3: Wait for the subscription event and assert preconfirmed/unspent.

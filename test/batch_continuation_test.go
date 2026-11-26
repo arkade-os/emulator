@@ -325,7 +325,7 @@ func signAndSubmitCounterIntent(
 	emulatorClient emulatorclient.TransportClient,
 	intentPtx *psbt.Packet,
 	message string,
-) emulatorclient.Intent {
+) emulatorclient.Bip322Proof {
 	t.Helper()
 
 	encodedIntentProof, err := intentPtx.B64Encode()
@@ -334,13 +334,13 @@ func signAndSubmitCounterIntent(
 	signedIntentProof, err := walletSvc.SignTransaction(ctx, encodedIntentProof, nil)
 	require.NoError(t, err)
 
-	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
+	approvedIntentProof, err := emulatorClient.SubmitProof(ctx, emulatorclient.Bip322Proof{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	return emulatorclient.Intent{
+	return emulatorclient.Bip322Proof{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}

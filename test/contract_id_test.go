@@ -103,7 +103,7 @@ func TestContractIdWithAssetIdentity(t *testing.T) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(checkpoints))
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, encodedTx, encodeCheckpoints(checkpoints))
 		require.NoError(t, err)
 
 		waitForVtxos()

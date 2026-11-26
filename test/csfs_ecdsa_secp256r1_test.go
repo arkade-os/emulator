@@ -126,7 +126,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.NoError(t, err)
 		waitForVtxos()
 	})
@@ -144,7 +144,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 	})
 
@@ -158,7 +158,7 @@ func TestCSFSEmulationECDSASecp256r1(t *testing.T) {
 		encoded, err := spendTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, encoded, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 	})
 }

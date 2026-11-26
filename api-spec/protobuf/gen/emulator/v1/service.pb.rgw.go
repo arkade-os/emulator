@@ -28,41 +28,41 @@ func request_EmulatorService_GetInfo_0(ctx context.Context, marshaler gateway.Ma
 
 }
 
-func request_EmulatorService_SubmitTx_0(ctx context.Context, marshaler gateway.Marshaler, mux *gateway.ServeMux, client EmulatorServiceClient, req *http.Request, pathParams gateway.Params) (proto.Message, gateway.ServerMetadata, error) {
-	var protoReq SubmitTxRequest
+func request_EmulatorService_SubmitOffchainTx_0(ctx context.Context, marshaler gateway.Marshaler, mux *gateway.ServeMux, client EmulatorServiceClient, req *http.Request, pathParams gateway.Params) (proto.Message, gateway.ServerMetadata, error) {
+	var protoReq SubmitOffchainTxRequest
 	var metadata gateway.ServerMetadata
 
 	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, gateway.ErrMarshal{Err: err, Inbound: true}
 	}
 
-	msg, err := client.SubmitTx(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.SubmitOffchainTx(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
 
-func request_EmulatorService_SubmitIntent_0(ctx context.Context, marshaler gateway.Marshaler, mux *gateway.ServeMux, client EmulatorServiceClient, req *http.Request, pathParams gateway.Params) (proto.Message, gateway.ServerMetadata, error) {
-	var protoReq SubmitIntentRequest
+func request_EmulatorService_SubmitProof_0(ctx context.Context, marshaler gateway.Marshaler, mux *gateway.ServeMux, client EmulatorServiceClient, req *http.Request, pathParams gateway.Params) (proto.Message, gateway.ServerMetadata, error) {
+	var protoReq SubmitProofRequest
 	var metadata gateway.ServerMetadata
 
 	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, gateway.ErrMarshal{Err: err, Inbound: true}
 	}
 
-	msg, err := client.SubmitIntent(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.SubmitProof(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
 
-func request_EmulatorService_SubmitFinalization_0(ctx context.Context, marshaler gateway.Marshaler, mux *gateway.ServeMux, client EmulatorServiceClient, req *http.Request, pathParams gateway.Params) (proto.Message, gateway.ServerMetadata, error) {
-	var protoReq SubmitFinalizationRequest
+func request_EmulatorService_SubmitForfeitTxs_0(ctx context.Context, marshaler gateway.Marshaler, mux *gateway.ServeMux, client EmulatorServiceClient, req *http.Request, pathParams gateway.Params) (proto.Message, gateway.ServerMetadata, error) {
+	var protoReq SubmitForfeitTxsRequest
 	var metadata gateway.ServerMetadata
 
 	if err := marshaler.NewDecoder(req.Body).Decode(&protoReq); err != nil && err != io.EOF {
 		return nil, metadata, gateway.ErrMarshal{Err: err, Inbound: true}
 	}
 
-	msg, err := client.SubmitFinalization(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	msg, err := client.SubmitForfeitTxs(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
 	return msg, metadata, err
 
 }
@@ -141,19 +141,19 @@ func RegisterEmulatorServiceHandlerClient(ctx context.Context, mux *gateway.Serv
 		mux.ForwardResponseMessage(annotatedContext, outboundMarshaler, w, req, resp)
 	})
 
-	mux.HandleWithParams("POST", "/v1/tx", func(w http.ResponseWriter, req *http.Request, pathParams gateway.Params) {
+	mux.HandleWithParams("POST", "/v1/offchain-tx", func(w http.ResponseWriter, req *http.Request, pathParams gateway.Params) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := mux.MarshalerForRequest(req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = gateway.AnnotateContext(ctx, mux, req, "/emulator.v1.EmulatorService/SubmitTx", gateway.WithHTTPPathPattern("/v1/tx"))
+		annotatedContext, err = gateway.AnnotateContext(ctx, mux, req, "/emulator.v1.EmulatorService/SubmitOffchainTx", gateway.WithHTTPPathPattern("/v1/offchain-tx"))
 		if err != nil {
 			mux.HTTPError(ctx, outboundMarshaler, w, req, err)
 			return
 		}
 
-		resp, md, err := request_EmulatorService_SubmitTx_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
+		resp, md, err := request_EmulatorService_SubmitOffchainTx_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
 		annotatedContext = gateway.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			mux.HTTPError(annotatedContext, outboundMarshaler, w, req, err)
@@ -163,19 +163,19 @@ func RegisterEmulatorServiceHandlerClient(ctx context.Context, mux *gateway.Serv
 		mux.ForwardResponseMessage(annotatedContext, outboundMarshaler, w, req, resp)
 	})
 
-	mux.HandleWithParams("POST", "/v1/intent", func(w http.ResponseWriter, req *http.Request, pathParams gateway.Params) {
+	mux.HandleWithParams("POST", "/v1/proof", func(w http.ResponseWriter, req *http.Request, pathParams gateway.Params) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := mux.MarshalerForRequest(req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = gateway.AnnotateContext(ctx, mux, req, "/emulator.v1.EmulatorService/SubmitIntent", gateway.WithHTTPPathPattern("/v1/intent"))
+		annotatedContext, err = gateway.AnnotateContext(ctx, mux, req, "/emulator.v1.EmulatorService/SubmitProof", gateway.WithHTTPPathPattern("/v1/proof"))
 		if err != nil {
 			mux.HTTPError(ctx, outboundMarshaler, w, req, err)
 			return
 		}
 
-		resp, md, err := request_EmulatorService_SubmitIntent_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
+		resp, md, err := request_EmulatorService_SubmitProof_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
 		annotatedContext = gateway.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			mux.HTTPError(annotatedContext, outboundMarshaler, w, req, err)
@@ -185,19 +185,19 @@ func RegisterEmulatorServiceHandlerClient(ctx context.Context, mux *gateway.Serv
 		mux.ForwardResponseMessage(annotatedContext, outboundMarshaler, w, req, resp)
 	})
 
-	mux.HandleWithParams("POST", "/v1/finalization", func(w http.ResponseWriter, req *http.Request, pathParams gateway.Params) {
+	mux.HandleWithParams("POST", "/v1/forfeit-txs", func(w http.ResponseWriter, req *http.Request, pathParams gateway.Params) {
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := mux.MarshalerForRequest(req)
 		var err error
 		var annotatedContext context.Context
-		annotatedContext, err = gateway.AnnotateContext(ctx, mux, req, "/emulator.v1.EmulatorService/SubmitFinalization", gateway.WithHTTPPathPattern("/v1/finalization"))
+		annotatedContext, err = gateway.AnnotateContext(ctx, mux, req, "/emulator.v1.EmulatorService/SubmitForfeitTxs", gateway.WithHTTPPathPattern("/v1/forfeit-txs"))
 		if err != nil {
 			mux.HTTPError(ctx, outboundMarshaler, w, req, err)
 			return
 		}
 
-		resp, md, err := request_EmulatorService_SubmitFinalization_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
+		resp, md, err := request_EmulatorService_SubmitForfeitTxs_0(annotatedContext, inboundMarshaler, mux, client, req, pathParams)
 		annotatedContext = gateway.NewServerMetadataContext(annotatedContext, md)
 		if err != nil {
 			mux.HTTPError(annotatedContext, outboundMarshaler, w, req, err)

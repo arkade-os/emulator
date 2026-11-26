@@ -19,34 +19,32 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	EmulatorService_GetInfo_FullMethodName            = "/emulator.v1.EmulatorService/GetInfo"
-	EmulatorService_SubmitTx_FullMethodName           = "/emulator.v1.EmulatorService/SubmitTx"
-	EmulatorService_SubmitIntent_FullMethodName       = "/emulator.v1.EmulatorService/SubmitIntent"
-	EmulatorService_SubmitFinalization_FullMethodName = "/emulator.v1.EmulatorService/SubmitFinalization"
-	EmulatorService_SubmitOnchainTx_FullMethodName    = "/emulator.v1.EmulatorService/SubmitOnchainTx"
+	EmulatorService_GetInfo_FullMethodName          = "/emulator.v1.EmulatorService/GetInfo"
+	EmulatorService_SubmitOffchainTx_FullMethodName = "/emulator.v1.EmulatorService/SubmitOffchainTx"
+	EmulatorService_SubmitProof_FullMethodName      = "/emulator.v1.EmulatorService/SubmitProof"
+	EmulatorService_SubmitForfeitTxs_FullMethodName = "/emulator.v1.EmulatorService/SubmitForfeitTxs"
+	EmulatorService_SubmitOnchainTx_FullMethodName  = "/emulator.v1.EmulatorService/SubmitOnchainTx"
 )
 
 // EmulatorServiceClient is the client API for EmulatorService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type EmulatorServiceClient interface {
-	// GetInfo returns service metadata including the base signer's public key.
-	// the public key should be tweaked with the arkade script hash before being used as forfeit.
+	// GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the
+	// Arkade script hash before using it in a tapscript.
 	GetInfo(ctx context.Context, in *GetInfoRequest, opts ...grpc.CallOption) (*GetInfoResponse, error)
-	// SubmitTx signs an Ark transaction and its associated checkpoint
-	// transactions by executing Arkade scripts on each input.
-	// the script is executed only on the ark transaction, not on checkpoints.
-	SubmitTx(ctx context.Context, in *SubmitTxRequest, opts ...grpc.CallOption) (*SubmitTxResponse, error)
-	// SubmitIntent signs an intent proof after validating the register message
-	// and executing Arkade Script on the intent proof transaction.
-	SubmitIntent(ctx context.Context, in *SubmitIntentRequest, opts ...grpc.CallOption) (*SubmitIntentResponse, error)
-	// SubmitFinalization conditionally signs forfeit and/or boarding inputs.
-	// It only signs if the signer's signature is found in the intent proof.
-	// connector tree is used to verify the forfeits are part of a real batch session.
-	// SubmitFinalization works in sequence with SubmitIntent.
-	// 1. SubmitIntent before intent registration.
-	// 2. SubmitFinalization during batch finalization.
-	SubmitFinalization(ctx context.Context, in *SubmitFinalizationRequest, opts ...grpc.CallOption) (*SubmitFinalizationResponse, error)
+	// SubmitOffchainTx signs an Arkade transaction and its checkpoint transactions by executing
+	// Arkade scripts on each input. The script runs only on the Arkade transaction, not on
+	// checkpoints.
+	SubmitOffchainTx(ctx context.Context, in *SubmitOffchainTxRequest, opts ...grpc.CallOption) (*SubmitOffchainTxResponse, error)
+	// SubmitProof signs a BIP322 proof after validating its message and executing Arkade Script on
+	// the proof transaction. The message may be any batch message type.
+	SubmitProof(ctx context.Context, in *SubmitProofRequest, opts ...grpc.CallOption) (*SubmitProofResponse, error)
+	// SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.
+	// It signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree
+	// verifies the forfeits belong to the batch. Call SubmitProof before registering the proof with
+	// arkd, then SubmitForfeitTxs when the batch finalizes.
+	SubmitForfeitTxs(ctx context.Context, in *SubmitForfeitTxsRequest, opts ...grpc.CallOption) (*SubmitForfeitTxsResponse, error)
 	// SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
 	// on each input whose tapscript contains the emulator's tweaked key.
 	SubmitOnchainTx(ctx context.Context, in *SubmitOnchainTxRequest, opts ...grpc.CallOption) (*SubmitOnchainTxResponse, error)
@@ -70,30 +68,30 @@ func (c *emulatorServiceClient) GetInfo(ctx context.Context, in *GetInfoRequest,
 	return out, nil
 }
 
-func (c *emulatorServiceClient) SubmitTx(ctx context.Context, in *SubmitTxRequest, opts ...grpc.CallOption) (*SubmitTxResponse, error) {
+func (c *emulatorServiceClient) SubmitOffchainTx(ctx context.Context, in *SubmitOffchainTxRequest, opts ...grpc.CallOption) (*SubmitOffchainTxResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SubmitTxResponse)
-	err := c.cc.Invoke(ctx, EmulatorService_SubmitTx_FullMethodName, in, out, cOpts...)
+	out := new(SubmitOffchainTxResponse)
+	err := c.cc.Invoke(ctx, EmulatorService_SubmitOffchainTx_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *emulatorServiceClient) SubmitIntent(ctx context.Context, in *SubmitIntentRequest, opts ...grpc.CallOption) (*SubmitIntentResponse, error) {
+func (c *emulatorServiceClient) SubmitProof(ctx context.Context, in *SubmitProofRequest, opts ...grpc.CallOption) (*SubmitProofResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SubmitIntentResponse)
-	err := c.cc.Invoke(ctx, EmulatorService_SubmitIntent_FullMethodName, in, out, cOpts...)
+	out := new(SubmitProofResponse)
+	err := c.cc.Invoke(ctx, EmulatorService_SubmitProof_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *emulatorServiceClient) SubmitFinalization(ctx context.Context, in *SubmitFinalizationRequest, opts ...grpc.CallOption) (*SubmitFinalizationResponse, error) {
+func (c *emulatorServiceClient) SubmitForfeitTxs(ctx context.Context, in *SubmitForfeitTxsRequest, opts ...grpc.CallOption) (*SubmitForfeitTxsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SubmitFinalizationResponse)
-	err := c.cc.Invoke(ctx, EmulatorService_SubmitFinalization_FullMethodName, in, out, cOpts...)
+	out := new(SubmitForfeitTxsResponse)
+	err := c.cc.Invoke(ctx, EmulatorService_SubmitForfeitTxs_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,23 +112,21 @@ func (c *emulatorServiceClient) SubmitOnchainTx(ctx context.Context, in *SubmitO
 // All implementations should embed UnimplementedEmulatorServiceServer
 // for forward compatibility.
 type EmulatorServiceServer interface {
-	// GetInfo returns service metadata including the base signer's public key.
-	// the public key should be tweaked with the arkade script hash before being used as forfeit.
+	// GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the
+	// Arkade script hash before using it in a tapscript.
 	GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error)
-	// SubmitTx signs an Ark transaction and its associated checkpoint
-	// transactions by executing Arkade scripts on each input.
-	// the script is executed only on the ark transaction, not on checkpoints.
-	SubmitTx(context.Context, *SubmitTxRequest) (*SubmitTxResponse, error)
-	// SubmitIntent signs an intent proof after validating the register message
-	// and executing Arkade Script on the intent proof transaction.
-	SubmitIntent(context.Context, *SubmitIntentRequest) (*SubmitIntentResponse, error)
-	// SubmitFinalization conditionally signs forfeit and/or boarding inputs.
-	// It only signs if the signer's signature is found in the intent proof.
-	// connector tree is used to verify the forfeits are part of a real batch session.
-	// SubmitFinalization works in sequence with SubmitIntent.
-	// 1. SubmitIntent before intent registration.
-	// 2. SubmitFinalization during batch finalization.
-	SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error)
+	// SubmitOffchainTx signs an Arkade transaction and its checkpoint transactions by executing
+	// Arkade scripts on each input. The script runs only on the Arkade transaction, not on
+	// checkpoints.
+	SubmitOffchainTx(context.Context, *SubmitOffchainTxRequest) (*SubmitOffchainTxResponse, error)
+	// SubmitProof signs a BIP322 proof after validating its message and executing Arkade Script on
+	// the proof transaction. The message may be any batch message type.
+	SubmitProof(context.Context, *SubmitProofRequest) (*SubmitProofResponse, error)
+	// SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.
+	// It signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree
+	// verifies the forfeits belong to the batch. Call SubmitProof before registering the proof with
+	// arkd, then SubmitForfeitTxs when the batch finalizes.
+	SubmitForfeitTxs(context.Context, *SubmitForfeitTxsRequest) (*SubmitForfeitTxsResponse, error)
 	// SubmitOnchainTx signs a Bitcoin transaction by executing Arkade scripts
 	// on each input whose tapscript contains the emulator's tweaked key.
 	SubmitOnchainTx(context.Context, *SubmitOnchainTxRequest) (*SubmitOnchainTxResponse, error)
@@ -146,14 +142,14 @@ type UnimplementedEmulatorServiceServer struct{}
 func (UnimplementedEmulatorServiceServer) GetInfo(context.Context, *GetInfoRequest) (*GetInfoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetInfo not implemented")
 }
-func (UnimplementedEmulatorServiceServer) SubmitTx(context.Context, *SubmitTxRequest) (*SubmitTxResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SubmitTx not implemented")
+func (UnimplementedEmulatorServiceServer) SubmitOffchainTx(context.Context, *SubmitOffchainTxRequest) (*SubmitOffchainTxResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitOffchainTx not implemented")
 }
-func (UnimplementedEmulatorServiceServer) SubmitIntent(context.Context, *SubmitIntentRequest) (*SubmitIntentResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SubmitIntent not implemented")
+func (UnimplementedEmulatorServiceServer) SubmitProof(context.Context, *SubmitProofRequest) (*SubmitProofResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitProof not implemented")
 }
-func (UnimplementedEmulatorServiceServer) SubmitFinalization(context.Context, *SubmitFinalizationRequest) (*SubmitFinalizationResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SubmitFinalization not implemented")
+func (UnimplementedEmulatorServiceServer) SubmitForfeitTxs(context.Context, *SubmitForfeitTxsRequest) (*SubmitForfeitTxsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitForfeitTxs not implemented")
 }
 func (UnimplementedEmulatorServiceServer) SubmitOnchainTx(context.Context, *SubmitOnchainTxRequest) (*SubmitOnchainTxResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitOnchainTx not implemented")
@@ -196,56 +192,56 @@ func _EmulatorService_GetInfo_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EmulatorService_SubmitTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SubmitTxRequest)
+func _EmulatorService_SubmitOffchainTx_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitOffchainTxRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EmulatorServiceServer).SubmitTx(ctx, in)
+		return srv.(EmulatorServiceServer).SubmitOffchainTx(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EmulatorService_SubmitTx_FullMethodName,
+		FullMethod: EmulatorService_SubmitOffchainTx_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EmulatorServiceServer).SubmitTx(ctx, req.(*SubmitTxRequest))
+		return srv.(EmulatorServiceServer).SubmitOffchainTx(ctx, req.(*SubmitOffchainTxRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EmulatorService_SubmitIntent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SubmitIntentRequest)
+func _EmulatorService_SubmitProof_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitProofRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EmulatorServiceServer).SubmitIntent(ctx, in)
+		return srv.(EmulatorServiceServer).SubmitProof(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EmulatorService_SubmitIntent_FullMethodName,
+		FullMethod: EmulatorService_SubmitProof_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EmulatorServiceServer).SubmitIntent(ctx, req.(*SubmitIntentRequest))
+		return srv.(EmulatorServiceServer).SubmitProof(ctx, req.(*SubmitProofRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EmulatorService_SubmitFinalization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SubmitFinalizationRequest)
+func _EmulatorService_SubmitForfeitTxs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitForfeitTxsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EmulatorServiceServer).SubmitFinalization(ctx, in)
+		return srv.(EmulatorServiceServer).SubmitForfeitTxs(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: EmulatorService_SubmitFinalization_FullMethodName,
+		FullMethod: EmulatorService_SubmitForfeitTxs_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EmulatorServiceServer).SubmitFinalization(ctx, req.(*SubmitFinalizationRequest))
+		return srv.(EmulatorServiceServer).SubmitForfeitTxs(ctx, req.(*SubmitForfeitTxsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -280,16 +276,16 @@ var EmulatorService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _EmulatorService_GetInfo_Handler,
 		},
 		{
-			MethodName: "SubmitTx",
-			Handler:    _EmulatorService_SubmitTx_Handler,
+			MethodName: "SubmitOffchainTx",
+			Handler:    _EmulatorService_SubmitOffchainTx_Handler,
 		},
 		{
-			MethodName: "SubmitIntent",
-			Handler:    _EmulatorService_SubmitIntent_Handler,
+			MethodName: "SubmitProof",
+			Handler:    _EmulatorService_SubmitProof_Handler,
 		},
 		{
-			MethodName: "SubmitFinalization",
-			Handler:    _EmulatorService_SubmitFinalization_Handler,
+			MethodName: "SubmitForfeitTxs",
+			Handler:    _EmulatorService_SubmitForfeitTxs_Handler,
 		},
 		{
 			MethodName: "SubmitOnchainTx",

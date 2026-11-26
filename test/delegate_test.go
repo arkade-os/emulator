@@ -57,7 +57,7 @@ const (
 // available if the emulator or arkd refuse to cooperate.
 //
 // The intent-message gate blocks off-chain Ark txs: without it a solver
-// could spend the delegate VTXO via SubmitTx in a self-send loop, burning
+// could spend the delegate VTXO via SubmitOffchainTx in a self-send loop, burning
 // fees without ever refreshing the VTXO through a batch.
 //
 // Under the hood, the VTXO closures are :
@@ -231,7 +231,7 @@ func TestCovenantDelegate(t *testing.T) {
 		encoded, err := ptx.B64Encode()
 		require.NoError(t, err)
 
-		_, err = emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
+		_, err = emulatorClient.SubmitProof(ctx, emulatorclient.Bip322Proof{
 			Proof:   encoded,
 			Message: msg,
 		})
@@ -266,7 +266,7 @@ func TestCovenantDelegate(t *testing.T) {
 
 	encodedOffchain, err := offchainPtx.B64Encode()
 	require.NoError(t, err)
-	_, _, err = emulatorClient.SubmitTx(
+	_, _, err = emulatorClient.SubmitOffchainTx(
 		ctx, encodedOffchain, encodeCheckpoints(t, offchainCheckpoints),
 	)
 	require.Error(t, err)
@@ -278,13 +278,13 @@ func TestCovenantDelegate(t *testing.T) {
 	encodedValidProof, err := validPtx.B64Encode()
 	require.NoError(t, err)
 
-	approvedProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
+	approvedProof, err := emulatorClient.SubmitProof(ctx, emulatorclient.Bip322Proof{
 		Proof:   encodedValidProof,
 		Message: validMessage,
 	})
 	require.NoError(t, err)
 
-	signedIntent := emulatorclient.Intent{
+	signedIntent := emulatorclient.Bip322Proof{
 		Proof:   approvedProof,
 		Message: validMessage,
 	}

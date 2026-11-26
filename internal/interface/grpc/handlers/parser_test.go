@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseIntent(t *testing.T) {
+func TestParseBip322Proof(t *testing.T) {
 	proof := newProofB64(t)
 	future := time.Now().Add(time.Hour).Unix()
 
@@ -77,13 +77,13 @@ func TestParseIntent(t *testing.T) {
 			name:    "unsupported type",
 			proof:   proof,
 			message: `{"type":"bogus"}`,
-			wantErr: "unsupported intent message type",
+			wantErr: "unsupported message type",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := parseIntent(&emulatorv1.Intent{Proof: tc.proof, Message: tc.message})
+			result, err := parseBip322Proof(&emulatorv1.Bip322Proof{Proof: tc.proof, Message: tc.message})
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				require.Nil(t, result)

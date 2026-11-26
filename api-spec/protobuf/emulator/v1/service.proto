@@ -5,42 +5,40 @@ package emulator.v1;
 import "meshapi/gateway/annotations.proto";
 
 service EmulatorService {
-  // GetInfo returns service metadata including the base signer's public key.
-  // the public key should be tweaked with the arkade script hash before being used as forfeit.
+  // GetInfo returns the Arkade signer's public key. The key is untweaked: tweak it with the
+  // Arkade script hash before using it in a tapscript.
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse) {
     option (meshapi.gateway.http) = {
       get: "/v1/info"
     };
   }
 
-  // SubmitTx signs an Ark transaction and its associated checkpoint
-  // transactions by executing Arkade scripts on each input.
-  // the script is executed only on the ark transaction, not on checkpoints.
-  rpc SubmitTx(SubmitTxRequest) returns (SubmitTxResponse) {
+  // SubmitOffchainTx signs an Arkade transaction and its checkpoint transactions by executing
+  // Arkade scripts on each input. The script runs only on the Arkade transaction, not on
+  // checkpoints.
+  rpc SubmitOffchainTx(SubmitOffchainTxRequest) returns (SubmitOffchainTxResponse) {
     option (meshapi.gateway.http) = {
-      post: "/v1/tx"
+      post: "/v1/offchain-tx"
       body: "*"
     };
   }
 
-  // SubmitIntent signs an intent proof (any arkd intent message type) after
-  // validating the message and executing Arkade Script on the proof transaction.
-  rpc SubmitIntent(SubmitIntentRequest) returns (SubmitIntentResponse) {
+  // SubmitProof signs a BIP322 proof after validating its message and executing Arkade Script on
+  // the proof transaction. The message may be any batch message type.
+  rpc SubmitProof(SubmitProofRequest) returns (SubmitProofResponse) {
     option (meshapi.gateway.http) = {
-      post: "/v1/intent"
+      post: "/v1/proof"
       body: "*"
     };
   }
 
-  // SubmitFinalization conditionally signs forfeit and/or boarding inputs.
-  // It only signs if the signer's signature is found in the intent proof.
-  // connector tree is used to verify the forfeits are part of a real batch session.
-  // SubmitFinalization works in sequence with SubmitIntent.
-  // 1. SubmitIntent before intent registration.
-  // 2. SubmitFinalization during batch finalization.
-  rpc SubmitFinalization(SubmitFinalizationRequest) returns (SubmitFinalizationResponse) {
+  // SubmitForfeitTxs signs forfeit transactions and boarding inputs on the commitment transaction.
+  // It signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree
+  // verifies the forfeits belong to the batch. Call SubmitProof before registering the proof with
+  // arkd, then SubmitForfeitTxs when the batch finalizes.
+  rpc SubmitForfeitTxs(SubmitForfeitTxsRequest) returns (SubmitForfeitTxsResponse) {
     option (meshapi.gateway.http) = {
-      post: "/v1/finalization"
+      post: "/v1/forfeit-txs"
       body: "*"
     };
   }
@@ -58,37 +56,38 @@ service EmulatorService {
 message GetInfoRequest {}
 message GetInfoResponse {
   string version = 1;
-  // hex-encoded compressed public key of the signer.
-  string signer_pubkey = 2;
-  // hex-encoded compressed public keys of deprecated signers accepted for signing.
-  repeated string deprecated_signer_pubkeys = 3;
+  // hex-encoded compressed public key of the Arkade signer, untweaked.
+  string arkade_signer_pubkey = 2;
+  // hex-encoded compressed public keys of deprecated Arkade signers still accepted for signing.
+  repeated string deprecated_arkade_signer_pubkeys = 3;
 }
 
-message SubmitTxRequest {
-  // base64 psbt
-  string ark_tx = 1;
-  // base64 psbts
+message SubmitOffchainTxRequest {
+  // base64 psbt of the Arkade transaction.
+  string arkade_tx = 1;
+  // base64 psbts.
   repeated string checkpoint_txs = 2;
 }
-message SubmitTxResponse {
-  string signed_ark_tx = 1;
+message SubmitOffchainTxResponse {
+  string signed_arkade_tx = 1;
   repeated string signed_checkpoint_txs = 2;
 }
 
-message SubmitIntentRequest {
-  Intent intent = 1;
+message SubmitProofRequest {
+  Bip322Proof bip322_proof = 1;
 }
-message SubmitIntentResponse {
+message SubmitProofResponse {
+  // base64 psbt of the proof with this Arkade signer's signature.
   string signed_proof = 1;
 }
 
-message SubmitFinalizationRequest {
-  Intent signed_intent = 1;
+message SubmitForfeitTxsRequest {
+  Bip322Proof signed_bip322_proof = 1;
   repeated string forfeits = 2;
   repeated TxTreeNode connector_tree = 3;
   string commitment_tx = 4;
 }
-message SubmitFinalizationResponse {
+message SubmitForfeitTxsResponse {
   repeated string signed_forfeits = 1;
   string signed_commitment_tx = 2;
 }
@@ -99,7 +98,9 @@ message TxTreeNode {
   map<uint32, string> children = 3;
 }
 
-message Intent {
+// Bip322Proof is a BIP322 proof. proof is the base64 PSBT and message is the canonical message
+// the proof signs.
+message Bip322Proof {
   string proof = 1;
   string message = 2;
 }

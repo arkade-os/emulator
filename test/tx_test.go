@@ -217,7 +217,7 @@ func TestSubmitOffchain(t *testing.T) {
 			signedInvalidCheckpoints = append(signedInvalidCheckpoints, signed)
 		}
 
-		_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidTx, signedInvalidCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedInvalidTx, signedInvalidCheckpoints)
 		assertSubmitError(t, err)
 	})
 
@@ -273,7 +273,7 @@ func TestSubmitOffchain(t *testing.T) {
 			require.NoError(t, err)
 			encodedValidCheckpoints = append(encodedValidCheckpoints, encoded)
 		}
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, encodedValidCheckpoints)
 		assertSubmitError(t, err)
 	})
 
@@ -331,7 +331,7 @@ func TestSubmitOffchain(t *testing.T) {
 			signedValidCheckpoints = append(signedValidCheckpoints, signed)
 		}
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedValidCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedValidCheckpoints)
 		require.NoError(t, err)
 		waitForVtxos()
 	})
@@ -387,7 +387,7 @@ func TestSubmitOffchain(t *testing.T) {
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0)
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 		waitForVtxos()
 	})
@@ -440,7 +440,7 @@ func TestSubmitOffchain(t *testing.T) {
 			require.NoError(t, err)
 			signedCheckpoints = append(signedCheckpoints, signed)
 		}
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		assertSubmitError(t, err)
 	})
 
@@ -500,7 +500,7 @@ func TestSubmitOffchain(t *testing.T) {
 				signedCheckpoints = append(signedCheckpoints, encoded)
 			}
 		}
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		assertSubmitError(t, err)
 	})
 
@@ -561,7 +561,7 @@ func TestSubmitOffchain(t *testing.T) {
 		signedTx, err = altIntroWallet.SignTransaction(ctx, signedTx, nil)
 		require.NoError(t, err)
 		waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, candidateTx, 0)
-		_, _, err = emulatorClient.SubmitTx(ctx, signedTx, signedCheckpoints)
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, signedCheckpoints)
 		require.NoError(t, err)
 		waitForVtxos()
 	})
@@ -728,15 +728,15 @@ func TestSettlement(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
-	// SubmitIntent make the emulator execute the arkade script on the intent tx
+	// SubmitProof makes the emulator execute the Arkade script on the proof transaction.
 	// if valid, it will sign the intent and return it
-	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
+	approvedIntentProof, err := emulatorClient.SubmitProof(ctx, emulatorclient.Bip322Proof{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	signedIntent := emulatorclient.Intent{
+	signedIntent := emulatorclient.Bip322Proof{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}
@@ -828,7 +828,7 @@ func TestBoarding(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, emulatorInfo)
 
-	publicKeyBytes, err := hex.DecodeString(emulatorInfo.SignerPublicKey)
+	publicKeyBytes, err := hex.DecodeString(emulatorInfo.ArkadeSignerPublicKey)
 	require.NoError(t, err)
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	require.NoError(t, err)
@@ -987,15 +987,15 @@ func TestBoarding(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, signedIntentProof, encodedIntentProof)
 
-	// SubmitIntent make the emulator execute the arkade script on the intent tx
+	// SubmitProof makes the emulator execute the Arkade script on the proof transaction.
 	// if valid, it will sign the intent and return it
-	approvedIntentProof, err := emulatorClient.SubmitIntent(ctx, emulatorclient.Intent{
+	approvedIntentProof, err := emulatorClient.SubmitProof(ctx, emulatorclient.Bip322Proof{
 		Proof:   signedIntentProof,
 		Message: message,
 	})
 	require.NoError(t, err)
 
-	signedIntent := emulatorclient.Intent{
+	signedIntent := emulatorclient.Bip322Proof{
 		Proof:   approvedIntentProof,
 		Message: message,
 	}
@@ -1268,7 +1268,7 @@ func TestEmulatorRejectsInvalidArkadeScript(t *testing.T) {
 				encodedInvalidCheckpoints = append(encodedInvalidCheckpoints, encoded)
 			}
 
-			_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidTx, encodedInvalidCheckpoints)
+			_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedInvalidTx, encodedInvalidCheckpoints)
 			require.Error(t, err)
 		})
 	}

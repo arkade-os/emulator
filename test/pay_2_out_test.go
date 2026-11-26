@@ -127,7 +127,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, emulatorInfo)
 
-	publicKeyBytes, err := hex.DecodeString(emulatorInfo.SignerPublicKey)
+	publicKeyBytes, err := hex.DecodeString(emulatorInfo.ArkadeSignerPublicKey)
 	require.NoError(t, err)
 	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 		encodedInvalidAddrCheckpoints = append(encodedInvalidAddrCheckpoints, signed)
 	}
 
-	_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidAddrTx, encodedInvalidAddrCheckpoints)
+	_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedInvalidAddrTx, encodedInvalidAddrCheckpoints)
 	require.Error(t, err)
 
 	// ========================================
@@ -291,7 +291,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 		encodedInvalidAmtCheckpoints = append(encodedInvalidAmtCheckpoints, signed)
 	}
 
-	_, _, err = emulatorClient.SubmitTx(ctx, signedInvalidAmtTx, encodedInvalidAmtCheckpoints)
+	_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedInvalidAmtTx, encodedInvalidAmtCheckpoints)
 	require.Error(t, err)
 
 	// ========================================
@@ -328,7 +328,7 @@ func TestPayToTwoOutputs(t *testing.T) {
 
 	waitForVtxos := watchForPreconfirmedVtxos(t, indexerSvc, validTx, 0, 1)
 
-	_, _, err = emulatorClient.SubmitTx(ctx, signedTx, encodedValidCheckpoints)
+	_, _, err = emulatorClient.SubmitOffchainTx(ctx, signedTx, encodedValidCheckpoints)
 	require.NoError(t, err)
 
 	waitForVtxos()

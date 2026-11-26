@@ -32,20 +32,20 @@ func (h *handler) GetInfo(
 	}
 
 	return &emulatorv1.GetInfoResponse{
-		SignerPubkey:            info.SignerPublicKey,
-		DeprecatedSignerPubkeys: append([]string(nil), info.DeprecatedSignerPublicKeys...),
-		Version:                 h.version,
+		ArkadeSignerPubkey:            info.SignerPublicKey,
+		DeprecatedArkadeSignerPubkeys: append([]string(nil), info.DeprecatedSignerPublicKeys...),
+		Version:                       h.version,
 	}, nil
 }
 
-func (h *handler) SubmitTx(
-	ctx context.Context, req *emulatorv1.SubmitTxRequest,
-) (*emulatorv1.SubmitTxResponse, error) {
-	arkTx := req.GetArkTx()
+func (h *handler) SubmitOffchainTx(
+	ctx context.Context, req *emulatorv1.SubmitOffchainTxRequest,
+) (*emulatorv1.SubmitOffchainTxResponse, error) {
+	arkTx := req.GetArkadeTx()
 	checkpoints := req.GetCheckpointTxs()
 
 	if len(arkTx) <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "missing ark tx")
+		return nil, status.Error(codes.InvalidArgument, "missing arkade tx")
 	}
 
 	if len(checkpoints) <= 0 {
@@ -54,7 +54,7 @@ func (h *handler) SubmitTx(
 
 	arkPtx, err := parsePsbt(arkTx)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid ark tx: %v", err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid arkade tx: %v", err)
 	}
 
 	checkpointPsbt := make([]*psbt.Packet, 0, len(checkpoints))
@@ -78,7 +78,7 @@ func (h *handler) SubmitTx(
 
 	encodedArkTx, err := approvedTx.ArkTx.B64Encode()
 	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to encode ark tx")
+		return nil, status.Error(codes.Internal, "failed to encode arkade tx")
 	}
 
 	encodedCheckpointTxs := make([]string, 0, len(approvedTx.Checkpoints))
@@ -90,57 +90,57 @@ func (h *handler) SubmitTx(
 		encodedCheckpointTxs = append(encodedCheckpointTxs, encodedCheckpointTx)
 	}
 
-	return &emulatorv1.SubmitTxResponse{
-		SignedArkTx:         encodedArkTx,
+	return &emulatorv1.SubmitOffchainTxResponse{
+		SignedArkadeTx:      encodedArkTx,
 		SignedCheckpointTxs: encodedCheckpointTxs,
 	}, nil
 }
 
-func (h *handler) SubmitIntent(
-	ctx context.Context, req *emulatorv1.SubmitIntentRequest,
-) (*emulatorv1.SubmitIntentResponse, error) {
-	unsignedIntent := req.GetIntent()
+func (h *handler) SubmitProof(
+	ctx context.Context, req *emulatorv1.SubmitProofRequest,
+) (*emulatorv1.SubmitProofResponse, error) {
+	unsignedProof := req.GetBip322Proof()
 
-	if unsignedIntent == nil {
-		return nil, status.Error(codes.InvalidArgument, "missing intent")
+	if unsignedProof == nil {
+		return nil, status.Error(codes.InvalidArgument, "missing bip322 proof")
 	}
 
-	intent, err := parseIntent(unsignedIntent)
+	proof, err := parseBip322Proof(unsignedProof)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid intent: %v", err))
+		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid bip322 proof: %v", err))
 	}
 
-	signedIntentProof, err := h.svc.SubmitIntent(ctx, *intent)
+	signedProof, err := h.svc.SubmitIntent(ctx, *proof)
 	if err != nil {
-		return nil, serviceError(err, "failed to process intent")
+		return nil, serviceError(err, "failed to process bip322 proof")
 	}
 
-	encodedProof, err := signedIntentProof.B64Encode()
+	encodedProof, err := signedProof.B64Encode()
 	if err != nil {
-		log.WithError(err).Error("failed to encode intent proof")
+		log.WithError(err).Error("failed to encode bip322 proof")
 		return nil, status.Error(codes.Internal, internalErrMsg)
 	}
 
-	return &emulatorv1.SubmitIntentResponse{
+	return &emulatorv1.SubmitProofResponse{
 		SignedProof: encodedProof,
 	}, nil
 }
 
-func (h *handler) SubmitFinalization(
-	ctx context.Context, req *emulatorv1.SubmitFinalizationRequest,
-) (*emulatorv1.SubmitFinalizationResponse, error) {
-	signedIntent := req.GetSignedIntent()
+func (h *handler) SubmitForfeitTxs(
+	ctx context.Context, req *emulatorv1.SubmitForfeitTxsRequest,
+) (*emulatorv1.SubmitForfeitTxsResponse, error) {
+	signedProof := req.GetSignedBip322Proof()
 	forfeitTxs := req.GetForfeits()
 	connectorTree := req.GetConnectorTree()
 	commitmentTx := req.GetCommitmentTx()
 
-	if signedIntent == nil {
-		return nil, status.Error(codes.InvalidArgument, "missing signed intent")
+	if signedProof == nil {
+		return nil, status.Error(codes.InvalidArgument, "missing signed bip322 proof")
 	}
 
-	intent, err := parseIntent(signedIntent)
+	proof, err := parseBip322Proof(signedProof)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid signed intent: %v", err))
+		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid signed bip322 proof: %v", err))
 	}
 
 	if len(commitmentTx) <= 0 {
@@ -162,7 +162,7 @@ func (h *handler) SubmitFinalization(
 	}
 
 	batchFinalization := emulator.BatchFinalization{
-		Proofs:       []emulator.Proof{*intent},
+		Proofs:       []emulator.Proof{*proof},
 		Forfeits:     forfeitPsbt,
 		CommitmentTx: commitmentPtx,
 	}
@@ -186,7 +186,7 @@ func (h *handler) SubmitFinalization(
 
 	signedBatchFinalization, err := h.svc.SubmitFinalization(ctx, batchFinalization, connectorTxTree)
 	if err != nil {
-		return nil, serviceError(err, "failed to process finalization")
+		return nil, serviceError(err, "failed to process forfeit txs")
 	}
 
 	encodedForfeits := make([]string, 0, len(signedBatchFinalization.Forfeits))
@@ -198,7 +198,7 @@ func (h *handler) SubmitFinalization(
 		encodedForfeits = append(encodedForfeits, encodedForfeit)
 	}
 
-	resp := &emulatorv1.SubmitFinalizationResponse{
+	resp := &emulatorv1.SubmitForfeitTxsResponse{
 		SignedForfeits: encodedForfeits,
 	}
 

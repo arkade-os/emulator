@@ -61,12 +61,12 @@ func (*GetInfoRequest) Descriptor() ([]byte, []int) {
 type GetInfoResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
-	// hex-encoded compressed public key of the signer.
-	SignerPubkey string `protobuf:"bytes,2,opt,name=signer_pubkey,json=signerPubkey,proto3" json:"signer_pubkey,omitempty"`
-	// hex-encoded compressed public keys of deprecated signers accepted for signing.
-	DeprecatedSignerPubkeys []string `protobuf:"bytes,3,rep,name=deprecated_signer_pubkeys,json=deprecatedSignerPubkeys,proto3" json:"deprecated_signer_pubkeys,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// hex-encoded compressed public key of the Arkade signer, untweaked.
+	ArkadeSignerPubkey string `protobuf:"bytes,2,opt,name=arkade_signer_pubkey,json=arkadeSignerPubkey,proto3" json:"arkade_signer_pubkey,omitempty"`
+	// hex-encoded compressed public keys of deprecated Arkade signers still accepted for signing.
+	DeprecatedArkadeSignerPubkeys []string `protobuf:"bytes,3,rep,name=deprecated_arkade_signer_pubkeys,json=deprecatedArkadeSignerPubkeys,proto3" json:"deprecated_arkade_signer_pubkeys,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *GetInfoResponse) Reset() {
@@ -106,44 +106,44 @@ func (x *GetInfoResponse) GetVersion() string {
 	return ""
 }
 
-func (x *GetInfoResponse) GetSignerPubkey() string {
+func (x *GetInfoResponse) GetArkadeSignerPubkey() string {
 	if x != nil {
-		return x.SignerPubkey
+		return x.ArkadeSignerPubkey
 	}
 	return ""
 }
 
-func (x *GetInfoResponse) GetDeprecatedSignerPubkeys() []string {
+func (x *GetInfoResponse) GetDeprecatedArkadeSignerPubkeys() []string {
 	if x != nil {
-		return x.DeprecatedSignerPubkeys
+		return x.DeprecatedArkadeSignerPubkeys
 	}
 	return nil
 }
 
-type SubmitTxRequest struct {
+type SubmitOffchainTxRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// base64 psbt
-	ArkTx string `protobuf:"bytes,1,opt,name=ark_tx,json=arkTx,proto3" json:"ark_tx,omitempty"`
-	// base64 psbts
+	// base64 psbt of the Arkade transaction.
+	ArkadeTx string `protobuf:"bytes,1,opt,name=arkade_tx,json=arkadeTx,proto3" json:"arkade_tx,omitempty"`
+	// base64 psbts.
 	CheckpointTxs []string `protobuf:"bytes,2,rep,name=checkpoint_txs,json=checkpointTxs,proto3" json:"checkpoint_txs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SubmitTxRequest) Reset() {
-	*x = SubmitTxRequest{}
+func (x *SubmitOffchainTxRequest) Reset() {
+	*x = SubmitOffchainTxRequest{}
 	mi := &file_emulator_v1_service_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SubmitTxRequest) String() string {
+func (x *SubmitOffchainTxRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SubmitTxRequest) ProtoMessage() {}
+func (*SubmitOffchainTxRequest) ProtoMessage() {}
 
-func (x *SubmitTxRequest) ProtoReflect() protoreflect.Message {
+func (x *SubmitOffchainTxRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_emulator_v1_service_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -155,47 +155,47 @@ func (x *SubmitTxRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SubmitTxRequest.ProtoReflect.Descriptor instead.
-func (*SubmitTxRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitOffchainTxRequest.ProtoReflect.Descriptor instead.
+func (*SubmitOffchainTxRequest) Descriptor() ([]byte, []int) {
 	return file_emulator_v1_service_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *SubmitTxRequest) GetArkTx() string {
+func (x *SubmitOffchainTxRequest) GetArkadeTx() string {
 	if x != nil {
-		return x.ArkTx
+		return x.ArkadeTx
 	}
 	return ""
 }
 
-func (x *SubmitTxRequest) GetCheckpointTxs() []string {
+func (x *SubmitOffchainTxRequest) GetCheckpointTxs() []string {
 	if x != nil {
 		return x.CheckpointTxs
 	}
 	return nil
 }
 
-type SubmitTxResponse struct {
+type SubmitOffchainTxResponse struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
-	SignedArkTx         string                 `protobuf:"bytes,1,opt,name=signed_ark_tx,json=signedArkTx,proto3" json:"signed_ark_tx,omitempty"`
+	SignedArkadeTx      string                 `protobuf:"bytes,1,opt,name=signed_arkade_tx,json=signedArkadeTx,proto3" json:"signed_arkade_tx,omitempty"`
 	SignedCheckpointTxs []string               `protobuf:"bytes,2,rep,name=signed_checkpoint_txs,json=signedCheckpointTxs,proto3" json:"signed_checkpoint_txs,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
 
-func (x *SubmitTxResponse) Reset() {
-	*x = SubmitTxResponse{}
+func (x *SubmitOffchainTxResponse) Reset() {
+	*x = SubmitOffchainTxResponse{}
 	mi := &file_emulator_v1_service_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SubmitTxResponse) String() string {
+func (x *SubmitOffchainTxResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SubmitTxResponse) ProtoMessage() {}
+func (*SubmitOffchainTxResponse) ProtoMessage() {}
 
-func (x *SubmitTxResponse) ProtoReflect() protoreflect.Message {
+func (x *SubmitOffchainTxResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_emulator_v1_service_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -207,46 +207,46 @@ func (x *SubmitTxResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SubmitTxResponse.ProtoReflect.Descriptor instead.
-func (*SubmitTxResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitOffchainTxResponse.ProtoReflect.Descriptor instead.
+func (*SubmitOffchainTxResponse) Descriptor() ([]byte, []int) {
 	return file_emulator_v1_service_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *SubmitTxResponse) GetSignedArkTx() string {
+func (x *SubmitOffchainTxResponse) GetSignedArkadeTx() string {
 	if x != nil {
-		return x.SignedArkTx
+		return x.SignedArkadeTx
 	}
 	return ""
 }
 
-func (x *SubmitTxResponse) GetSignedCheckpointTxs() []string {
+func (x *SubmitOffchainTxResponse) GetSignedCheckpointTxs() []string {
 	if x != nil {
 		return x.SignedCheckpointTxs
 	}
 	return nil
 }
 
-type SubmitIntentRequest struct {
+type SubmitProofRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Intent        *Intent                `protobuf:"bytes,1,opt,name=intent,proto3" json:"intent,omitempty"`
+	Bip322Proof   *Bip322Proof           `protobuf:"bytes,1,opt,name=bip322_proof,json=bip322Proof,proto3" json:"bip322_proof,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SubmitIntentRequest) Reset() {
-	*x = SubmitIntentRequest{}
+func (x *SubmitProofRequest) Reset() {
+	*x = SubmitProofRequest{}
 	mi := &file_emulator_v1_service_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SubmitIntentRequest) String() string {
+func (x *SubmitProofRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SubmitIntentRequest) ProtoMessage() {}
+func (*SubmitProofRequest) ProtoMessage() {}
 
-func (x *SubmitIntentRequest) ProtoReflect() protoreflect.Message {
+func (x *SubmitProofRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_emulator_v1_service_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -258,39 +258,40 @@ func (x *SubmitIntentRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SubmitIntentRequest.ProtoReflect.Descriptor instead.
-func (*SubmitIntentRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitProofRequest.ProtoReflect.Descriptor instead.
+func (*SubmitProofRequest) Descriptor() ([]byte, []int) {
 	return file_emulator_v1_service_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *SubmitIntentRequest) GetIntent() *Intent {
+func (x *SubmitProofRequest) GetBip322Proof() *Bip322Proof {
 	if x != nil {
-		return x.Intent
+		return x.Bip322Proof
 	}
 	return nil
 }
 
-type SubmitIntentResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SignedProof   string                 `protobuf:"bytes,1,opt,name=signed_proof,json=signedProof,proto3" json:"signed_proof,omitempty"`
+type SubmitProofResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// base64 psbt of the proof with this Arkade signer's signature.
+	SignedProof   string `protobuf:"bytes,1,opt,name=signed_proof,json=signedProof,proto3" json:"signed_proof,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SubmitIntentResponse) Reset() {
-	*x = SubmitIntentResponse{}
+func (x *SubmitProofResponse) Reset() {
+	*x = SubmitProofResponse{}
 	mi := &file_emulator_v1_service_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SubmitIntentResponse) String() string {
+func (x *SubmitProofResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SubmitIntentResponse) ProtoMessage() {}
+func (*SubmitProofResponse) ProtoMessage() {}
 
-func (x *SubmitIntentResponse) ProtoReflect() protoreflect.Message {
+func (x *SubmitProofResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_emulator_v1_service_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -302,42 +303,42 @@ func (x *SubmitIntentResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SubmitIntentResponse.ProtoReflect.Descriptor instead.
-func (*SubmitIntentResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitProofResponse.ProtoReflect.Descriptor instead.
+func (*SubmitProofResponse) Descriptor() ([]byte, []int) {
 	return file_emulator_v1_service_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *SubmitIntentResponse) GetSignedProof() string {
+func (x *SubmitProofResponse) GetSignedProof() string {
 	if x != nil {
 		return x.SignedProof
 	}
 	return ""
 }
 
-type SubmitFinalizationRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SignedIntent  *Intent                `protobuf:"bytes,1,opt,name=signed_intent,json=signedIntent,proto3" json:"signed_intent,omitempty"`
-	Forfeits      []string               `protobuf:"bytes,2,rep,name=forfeits,proto3" json:"forfeits,omitempty"`
-	ConnectorTree []*TxTreeNode          `protobuf:"bytes,3,rep,name=connector_tree,json=connectorTree,proto3" json:"connector_tree,omitempty"`
-	CommitmentTx  string                 `protobuf:"bytes,4,opt,name=commitment_tx,json=commitmentTx,proto3" json:"commitment_tx,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type SubmitForfeitTxsRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SignedBip322Proof *Bip322Proof           `protobuf:"bytes,1,opt,name=signed_bip322_proof,json=signedBip322Proof,proto3" json:"signed_bip322_proof,omitempty"`
+	Forfeits          []string               `protobuf:"bytes,2,rep,name=forfeits,proto3" json:"forfeits,omitempty"`
+	ConnectorTree     []*TxTreeNode          `protobuf:"bytes,3,rep,name=connector_tree,json=connectorTree,proto3" json:"connector_tree,omitempty"`
+	CommitmentTx      string                 `protobuf:"bytes,4,opt,name=commitment_tx,json=commitmentTx,proto3" json:"commitment_tx,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
-func (x *SubmitFinalizationRequest) Reset() {
-	*x = SubmitFinalizationRequest{}
+func (x *SubmitForfeitTxsRequest) Reset() {
+	*x = SubmitForfeitTxsRequest{}
 	mi := &file_emulator_v1_service_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SubmitFinalizationRequest) String() string {
+func (x *SubmitForfeitTxsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SubmitFinalizationRequest) ProtoMessage() {}
+func (*SubmitForfeitTxsRequest) ProtoMessage() {}
 
-func (x *SubmitFinalizationRequest) ProtoReflect() protoreflect.Message {
+func (x *SubmitForfeitTxsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_emulator_v1_service_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -349,40 +350,40 @@ func (x *SubmitFinalizationRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SubmitFinalizationRequest.ProtoReflect.Descriptor instead.
-func (*SubmitFinalizationRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitForfeitTxsRequest.ProtoReflect.Descriptor instead.
+func (*SubmitForfeitTxsRequest) Descriptor() ([]byte, []int) {
 	return file_emulator_v1_service_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *SubmitFinalizationRequest) GetSignedIntent() *Intent {
+func (x *SubmitForfeitTxsRequest) GetSignedBip322Proof() *Bip322Proof {
 	if x != nil {
-		return x.SignedIntent
+		return x.SignedBip322Proof
 	}
 	return nil
 }
 
-func (x *SubmitFinalizationRequest) GetForfeits() []string {
+func (x *SubmitForfeitTxsRequest) GetForfeits() []string {
 	if x != nil {
 		return x.Forfeits
 	}
 	return nil
 }
 
-func (x *SubmitFinalizationRequest) GetConnectorTree() []*TxTreeNode {
+func (x *SubmitForfeitTxsRequest) GetConnectorTree() []*TxTreeNode {
 	if x != nil {
 		return x.ConnectorTree
 	}
 	return nil
 }
 
-func (x *SubmitFinalizationRequest) GetCommitmentTx() string {
+func (x *SubmitForfeitTxsRequest) GetCommitmentTx() string {
 	if x != nil {
 		return x.CommitmentTx
 	}
 	return ""
 }
 
-type SubmitFinalizationResponse struct {
+type SubmitForfeitTxsResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	SignedForfeits     []string               `protobuf:"bytes,1,rep,name=signed_forfeits,json=signedForfeits,proto3" json:"signed_forfeits,omitempty"`
 	SignedCommitmentTx string                 `protobuf:"bytes,2,opt,name=signed_commitment_tx,json=signedCommitmentTx,proto3" json:"signed_commitment_tx,omitempty"`
@@ -390,20 +391,20 @@ type SubmitFinalizationResponse struct {
 	sizeCache          protoimpl.SizeCache
 }
 
-func (x *SubmitFinalizationResponse) Reset() {
-	*x = SubmitFinalizationResponse{}
+func (x *SubmitForfeitTxsResponse) Reset() {
+	*x = SubmitForfeitTxsResponse{}
 	mi := &file_emulator_v1_service_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SubmitFinalizationResponse) String() string {
+func (x *SubmitForfeitTxsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SubmitFinalizationResponse) ProtoMessage() {}
+func (*SubmitForfeitTxsResponse) ProtoMessage() {}
 
-func (x *SubmitFinalizationResponse) ProtoReflect() protoreflect.Message {
+func (x *SubmitForfeitTxsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_emulator_v1_service_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -415,19 +416,19 @@ func (x *SubmitFinalizationResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SubmitFinalizationResponse.ProtoReflect.Descriptor instead.
-func (*SubmitFinalizationResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubmitForfeitTxsResponse.ProtoReflect.Descriptor instead.
+func (*SubmitForfeitTxsResponse) Descriptor() ([]byte, []int) {
 	return file_emulator_v1_service_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *SubmitFinalizationResponse) GetSignedForfeits() []string {
+func (x *SubmitForfeitTxsResponse) GetSignedForfeits() []string {
 	if x != nil {
 		return x.SignedForfeits
 	}
 	return nil
 }
 
-func (x *SubmitFinalizationResponse) GetSignedCommitmentTx() string {
+func (x *SubmitForfeitTxsResponse) GetSignedCommitmentTx() string {
 	if x != nil {
 		return x.SignedCommitmentTx
 	}
@@ -494,7 +495,9 @@ func (x *TxTreeNode) GetChildren() map[uint32]string {
 	return nil
 }
 
-type Intent struct {
+// Bip322Proof is a BIP322 proof. proof is the base64 PSBT and message is the canonical message
+// the proof signs.
+type Bip322Proof struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Proof         string                 `protobuf:"bytes,1,opt,name=proof,proto3" json:"proof,omitempty"`
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
@@ -502,20 +505,20 @@ type Intent struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *Intent) Reset() {
-	*x = Intent{}
+func (x *Bip322Proof) Reset() {
+	*x = Bip322Proof{}
 	mi := &file_emulator_v1_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *Intent) String() string {
+func (x *Bip322Proof) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Intent) ProtoMessage() {}
+func (*Bip322Proof) ProtoMessage() {}
 
-func (x *Intent) ProtoReflect() protoreflect.Message {
+func (x *Bip322Proof) ProtoReflect() protoreflect.Message {
 	mi := &file_emulator_v1_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -527,19 +530,19 @@ func (x *Intent) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Intent.ProtoReflect.Descriptor instead.
-func (*Intent) Descriptor() ([]byte, []int) {
+// Deprecated: Use Bip322Proof.ProtoReflect.Descriptor instead.
+func (*Bip322Proof) Descriptor() ([]byte, []int) {
 	return file_emulator_v1_service_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *Intent) GetProof() string {
+func (x *Bip322Proof) GetProof() string {
 	if x != nil {
 		return x.Proof
 	}
 	return ""
 }
 
-func (x *Intent) GetMessage() string {
+func (x *Bip322Proof) GetMessage() string {
 	if x != nil {
 		return x.Message
 	}
@@ -640,27 +643,27 @@ var File_emulator_v1_service_proto protoreflect.FileDescriptor
 const file_emulator_v1_service_proto_rawDesc = "" +
 	"\n" +
 	"\x19emulator/v1/service.proto\x12\vemulator.v1\x1a!meshapi/gateway/annotations.proto\"\x10\n" +
-	"\x0eGetInfoRequest\"\x8c\x01\n" +
+	"\x0eGetInfoRequest\"\xa6\x01\n" +
 	"\x0fGetInfoResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\tR\aversion\x12#\n" +
-	"\rsigner_pubkey\x18\x02 \x01(\tR\fsignerPubkey\x12:\n" +
-	"\x19deprecated_signer_pubkeys\x18\x03 \x03(\tR\x17deprecatedSignerPubkeys\"O\n" +
-	"\x0fSubmitTxRequest\x12\x15\n" +
-	"\x06ark_tx\x18\x01 \x01(\tR\x05arkTx\x12%\n" +
-	"\x0echeckpoint_txs\x18\x02 \x03(\tR\rcheckpointTxs\"j\n" +
-	"\x10SubmitTxResponse\x12\"\n" +
-	"\rsigned_ark_tx\x18\x01 \x01(\tR\vsignedArkTx\x122\n" +
-	"\x15signed_checkpoint_txs\x18\x02 \x03(\tR\x13signedCheckpointTxs\"B\n" +
-	"\x13SubmitIntentRequest\x12+\n" +
-	"\x06intent\x18\x01 \x01(\v2\x13.emulator.v1.IntentR\x06intent\"9\n" +
-	"\x14SubmitIntentResponse\x12!\n" +
-	"\fsigned_proof\x18\x01 \x01(\tR\vsignedProof\"\xd6\x01\n" +
-	"\x19SubmitFinalizationRequest\x128\n" +
-	"\rsigned_intent\x18\x01 \x01(\v2\x13.emulator.v1.IntentR\fsignedIntent\x12\x1a\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x120\n" +
+	"\x14arkade_signer_pubkey\x18\x02 \x01(\tR\x12arkadeSignerPubkey\x12G\n" +
+	" deprecated_arkade_signer_pubkeys\x18\x03 \x03(\tR\x1ddeprecatedArkadeSignerPubkeys\"]\n" +
+	"\x17SubmitOffchainTxRequest\x12\x1b\n" +
+	"\tarkade_tx\x18\x01 \x01(\tR\barkadeTx\x12%\n" +
+	"\x0echeckpoint_txs\x18\x02 \x03(\tR\rcheckpointTxs\"x\n" +
+	"\x18SubmitOffchainTxResponse\x12(\n" +
+	"\x10signed_arkade_tx\x18\x01 \x01(\tR\x0esignedArkadeTx\x122\n" +
+	"\x15signed_checkpoint_txs\x18\x02 \x03(\tR\x13signedCheckpointTxs\"Q\n" +
+	"\x12SubmitProofRequest\x12;\n" +
+	"\fbip322_proof\x18\x01 \x01(\v2\x18.emulator.v1.Bip322ProofR\vbip322Proof\"8\n" +
+	"\x13SubmitProofResponse\x12!\n" +
+	"\fsigned_proof\x18\x01 \x01(\tR\vsignedProof\"\xe4\x01\n" +
+	"\x17SubmitForfeitTxsRequest\x12H\n" +
+	"\x13signed_bip322_proof\x18\x01 \x01(\v2\x18.emulator.v1.Bip322ProofR\x11signedBip322Proof\x12\x1a\n" +
 	"\bforfeits\x18\x02 \x03(\tR\bforfeits\x12>\n" +
 	"\x0econnector_tree\x18\x03 \x03(\v2\x17.emulator.v1.TxTreeNodeR\rconnectorTree\x12#\n" +
-	"\rcommitment_tx\x18\x04 \x01(\tR\fcommitmentTx\"w\n" +
-	"\x1aSubmitFinalizationResponse\x12'\n" +
+	"\rcommitment_tx\x18\x04 \x01(\tR\fcommitmentTx\"u\n" +
+	"\x18SubmitForfeitTxsResponse\x12'\n" +
 	"\x0fsigned_forfeits\x18\x01 \x03(\tR\x0esignedForfeits\x120\n" +
 	"\x14signed_commitment_tx\x18\x02 \x01(\tR\x12signedCommitmentTx\"\xb0\x01\n" +
 	"\n" +
@@ -670,21 +673,20 @@ const file_emulator_v1_service_proto_rawDesc = "" +
 	"\bchildren\x18\x03 \x03(\v2%.emulator.v1.TxTreeNode.ChildrenEntryR\bchildren\x1a;\n" +
 	"\rChildrenEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"8\n" +
-	"\x06Intent\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"=\n" +
+	"\vBip322Proof\x12\x14\n" +
 	"\x05proof\x18\x01 \x01(\tR\x05proof\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"(\n" +
 	"\x16SubmitOnchainTxRequest\x12\x0e\n" +
 	"\x02tx\x18\x01 \x01(\tR\x02tx\"6\n" +
 	"\x17SubmitOnchainTxResponse\x12\x1b\n" +
-	"\tsigned_tx\x18\x01 \x01(\tR\bsignedTx2\x9f\x04\n" +
+	"\tsigned_tx\x18\x01 \x01(\tR\bsignedTx2\xb5\x04\n" +
 	"\x0fEmulatorService\x12S\n" +
 	"\aGetInfo\x12\x1b.emulator.v1.GetInfoRequest\x1a\x1c.emulator.v1.GetInfoResponse\"\r\xb2J\n" +
-	"\x12\b/v1/info\x12W\n" +
-	"\bSubmitTx\x12\x1c.emulator.v1.SubmitTxRequest\x1a\x1d.emulator.v1.SubmitTxResponse\"\x0e\xb2J\vB\x01*\"\x06/v1/tx\x12g\n" +
-	"\fSubmitIntent\x12 .emulator.v1.SubmitIntentRequest\x1a!.emulator.v1.SubmitIntentResponse\"\x12\xb2J\x0fB\x01*\"\n" +
-	"/v1/intent\x12\x7f\n" +
-	"\x12SubmitFinalization\x12&.emulator.v1.SubmitFinalizationRequest\x1a'.emulator.v1.SubmitFinalizationResponse\"\x18\xb2J\x15B\x01*\"\x10/v1/finalization\x12t\n" +
+	"\x12\b/v1/info\x12x\n" +
+	"\x10SubmitOffchainTx\x12$.emulator.v1.SubmitOffchainTxRequest\x1a%.emulator.v1.SubmitOffchainTxResponse\"\x17\xb2J\x14B\x01*\"\x0f/v1/offchain-tx\x12c\n" +
+	"\vSubmitProof\x12\x1f.emulator.v1.SubmitProofRequest\x1a .emulator.v1.SubmitProofResponse\"\x11\xb2J\x0eB\x01*\"\t/v1/proof\x12x\n" +
+	"\x10SubmitForfeitTxs\x12$.emulator.v1.SubmitForfeitTxsRequest\x1a%.emulator.v1.SubmitForfeitTxsResponse\"\x17\xb2J\x14B\x01*\"\x0f/v1/forfeit-txs\x12t\n" +
 	"\x0fSubmitOnchainTx\x12#.emulator.v1.SubmitOnchainTxRequest\x1a$.emulator.v1.SubmitOnchainTxResponse\"\x16\xb2J\x13B\x01*\"\x0e/v1/onchain-txB\xa2\x01\n" +
 	"\x0fcom.emulator.v1B\fServiceProtoP\x01Z4github.com/arkade-os/emulator/emulator/v1;emulatorv1\xa2\x02\x03EXX\xaa\x02\vEmulator.V1\xca\x02\vEmulator\\V1\xe2\x02\x17Emulator\\V1\\GPBMetadata\xea\x02\fEmulator::V1b\x06proto3"
 
@@ -702,34 +704,34 @@ func file_emulator_v1_service_proto_rawDescGZIP() []byte {
 
 var file_emulator_v1_service_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_emulator_v1_service_proto_goTypes = []any{
-	(*GetInfoRequest)(nil),             // 0: emulator.v1.GetInfoRequest
-	(*GetInfoResponse)(nil),            // 1: emulator.v1.GetInfoResponse
-	(*SubmitTxRequest)(nil),            // 2: emulator.v1.SubmitTxRequest
-	(*SubmitTxResponse)(nil),           // 3: emulator.v1.SubmitTxResponse
-	(*SubmitIntentRequest)(nil),        // 4: emulator.v1.SubmitIntentRequest
-	(*SubmitIntentResponse)(nil),       // 5: emulator.v1.SubmitIntentResponse
-	(*SubmitFinalizationRequest)(nil),  // 6: emulator.v1.SubmitFinalizationRequest
-	(*SubmitFinalizationResponse)(nil), // 7: emulator.v1.SubmitFinalizationResponse
-	(*TxTreeNode)(nil),                 // 8: emulator.v1.TxTreeNode
-	(*Intent)(nil),                     // 9: emulator.v1.Intent
-	(*SubmitOnchainTxRequest)(nil),     // 10: emulator.v1.SubmitOnchainTxRequest
-	(*SubmitOnchainTxResponse)(nil),    // 11: emulator.v1.SubmitOnchainTxResponse
-	nil,                                // 12: emulator.v1.TxTreeNode.ChildrenEntry
+	(*GetInfoRequest)(nil),           // 0: emulator.v1.GetInfoRequest
+	(*GetInfoResponse)(nil),          // 1: emulator.v1.GetInfoResponse
+	(*SubmitOffchainTxRequest)(nil),  // 2: emulator.v1.SubmitOffchainTxRequest
+	(*SubmitOffchainTxResponse)(nil), // 3: emulator.v1.SubmitOffchainTxResponse
+	(*SubmitProofRequest)(nil),       // 4: emulator.v1.SubmitProofRequest
+	(*SubmitProofResponse)(nil),      // 5: emulator.v1.SubmitProofResponse
+	(*SubmitForfeitTxsRequest)(nil),  // 6: emulator.v1.SubmitForfeitTxsRequest
+	(*SubmitForfeitTxsResponse)(nil), // 7: emulator.v1.SubmitForfeitTxsResponse
+	(*TxTreeNode)(nil),               // 8: emulator.v1.TxTreeNode
+	(*Bip322Proof)(nil),              // 9: emulator.v1.Bip322Proof
+	(*SubmitOnchainTxRequest)(nil),   // 10: emulator.v1.SubmitOnchainTxRequest
+	(*SubmitOnchainTxResponse)(nil),  // 11: emulator.v1.SubmitOnchainTxResponse
+	nil,                              // 12: emulator.v1.TxTreeNode.ChildrenEntry
 }
 var file_emulator_v1_service_proto_depIdxs = []int32{
-	9,  // 0: emulator.v1.SubmitIntentRequest.intent:type_name -> emulator.v1.Intent
-	9,  // 1: emulator.v1.SubmitFinalizationRequest.signed_intent:type_name -> emulator.v1.Intent
-	8,  // 2: emulator.v1.SubmitFinalizationRequest.connector_tree:type_name -> emulator.v1.TxTreeNode
+	9,  // 0: emulator.v1.SubmitProofRequest.bip322_proof:type_name -> emulator.v1.Bip322Proof
+	9,  // 1: emulator.v1.SubmitForfeitTxsRequest.signed_bip322_proof:type_name -> emulator.v1.Bip322Proof
+	8,  // 2: emulator.v1.SubmitForfeitTxsRequest.connector_tree:type_name -> emulator.v1.TxTreeNode
 	12, // 3: emulator.v1.TxTreeNode.children:type_name -> emulator.v1.TxTreeNode.ChildrenEntry
 	0,  // 4: emulator.v1.EmulatorService.GetInfo:input_type -> emulator.v1.GetInfoRequest
-	2,  // 5: emulator.v1.EmulatorService.SubmitTx:input_type -> emulator.v1.SubmitTxRequest
-	4,  // 6: emulator.v1.EmulatorService.SubmitIntent:input_type -> emulator.v1.SubmitIntentRequest
-	6,  // 7: emulator.v1.EmulatorService.SubmitFinalization:input_type -> emulator.v1.SubmitFinalizationRequest
+	2,  // 5: emulator.v1.EmulatorService.SubmitOffchainTx:input_type -> emulator.v1.SubmitOffchainTxRequest
+	4,  // 6: emulator.v1.EmulatorService.SubmitProof:input_type -> emulator.v1.SubmitProofRequest
+	6,  // 7: emulator.v1.EmulatorService.SubmitForfeitTxs:input_type -> emulator.v1.SubmitForfeitTxsRequest
 	10, // 8: emulator.v1.EmulatorService.SubmitOnchainTx:input_type -> emulator.v1.SubmitOnchainTxRequest
 	1,  // 9: emulator.v1.EmulatorService.GetInfo:output_type -> emulator.v1.GetInfoResponse
-	3,  // 10: emulator.v1.EmulatorService.SubmitTx:output_type -> emulator.v1.SubmitTxResponse
-	5,  // 11: emulator.v1.EmulatorService.SubmitIntent:output_type -> emulator.v1.SubmitIntentResponse
-	7,  // 12: emulator.v1.EmulatorService.SubmitFinalization:output_type -> emulator.v1.SubmitFinalizationResponse
+	3,  // 10: emulator.v1.EmulatorService.SubmitOffchainTx:output_type -> emulator.v1.SubmitOffchainTxResponse
+	5,  // 11: emulator.v1.EmulatorService.SubmitProof:output_type -> emulator.v1.SubmitProofResponse
+	7,  // 12: emulator.v1.EmulatorService.SubmitForfeitTxs:output_type -> emulator.v1.SubmitForfeitTxsResponse
 	11, // 13: emulator.v1.EmulatorService.SubmitOnchainTx:output_type -> emulator.v1.SubmitOnchainTxResponse
 	9,  // [9:14] is the sub-list for method output_type
 	4,  // [4:9] is the sub-list for method input_type

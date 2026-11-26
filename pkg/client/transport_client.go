@@ -3,31 +3,33 @@ package client
 import (
 	"context"
 
-	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"github.com/arkade-os/arkd/pkg/ark-lib/tree"
+	emulatorv1 "github.com/arkade-os/emulator/api-spec/protobuf/gen/emulator/v1"
 	"google.golang.org/grpc"
 )
 
 type Info struct {
-	Version                    string
-	SignerPublicKey            string
-	DeprecatedSignerPublicKeys []string
+	Version                          string
+	ArkadeSignerPublicKey            string
+	DeprecatedArkadeSignerPublicKeys []string
 }
 
-type Intent struct {
+// Bip322Proof is a BIP322 proof. Proof is the base64 PSBT and Message is the canonical message
+// the proof signs.
+type Bip322Proof struct {
 	Proof   string
 	Message string
 }
 
 type TransportClient interface {
 	GetInfo(ctx context.Context) (*Info, error)
-	SubmitTx(ctx context.Context, tx string, checkpoints []string) (
+	SubmitOffchainTx(ctx context.Context, tx string, checkpoints []string) (
 		signedTx string, signedCheckpoints []string, err error,
 	)
-	SubmitIntent(ctx context.Context, intent Intent) (signedProof string, err error)
-	SubmitFinalization(
+	SubmitProof(ctx context.Context, proof Bip322Proof) (signedProof string, err error)
+	SubmitForfeitTxs(
 		ctx context.Context,
-		intent Intent,
+		proof Bip322Proof,
 		forfeits []string,
 		connectorTree tree.FlatTxTree, commitmentTx string,
 	) (signedForfeits []string, signedCommitmentTx string, err error)
@@ -54,35 +56,37 @@ func (c *grpcClient) GetInfo(ctx context.Context) (*Info, error) {
 	}
 
 	return &Info{
-		Version:                    resp.GetVersion(),
-		SignerPublicKey:            resp.GetSignerPubkey(),
-		DeprecatedSignerPublicKeys: append([]string(nil), resp.GetDeprecatedSignerPubkeys()...),
+		Version:                          resp.GetVersion(),
+		ArkadeSignerPublicKey:            resp.GetArkadeSignerPubkey(),
+		DeprecatedArkadeSignerPublicKeys: append([]string(nil), resp.GetDeprecatedArkadeSignerPubkeys()...),
 	}, nil
 }
 
-func (c *grpcClient) SubmitTx(ctx context.Context, tx string, checkpoints []string) (signedTx string, signedCheckpoints []string, err error) {
-	req := &emulatorv1.SubmitTxRequest{
-		ArkTx:         tx,
+func (c *grpcClient) SubmitOffchainTx(
+	ctx context.Context, tx string, checkpoints []string,
+) (signedTx string, signedCheckpoints []string, err error) {
+	req := &emulatorv1.SubmitOffchainTxRequest{
+		ArkadeTx:      tx,
 		CheckpointTxs: checkpoints,
 	}
 
-	resp, err := c.client.SubmitTx(ctx, req)
+	resp, err := c.client.SubmitOffchainTx(ctx, req)
 	if err != nil {
 		return "", nil, err
 	}
 
-	return resp.GetSignedArkTx(), resp.GetSignedCheckpointTxs(), nil
+	return resp.GetSignedArkadeTx(), resp.GetSignedCheckpointTxs(), nil
 }
 
-func (c *grpcClient) SubmitIntent(ctx context.Context, intent Intent) (string, error) {
-	req := &emulatorv1.SubmitIntentRequest{
-		Intent: &emulatorv1.Intent{
-			Proof:   intent.Proof,
-			Message: intent.Message,
+func (c *grpcClient) SubmitProof(ctx context.Context, proof Bip322Proof) (string, error) {
+	req := &emulatorv1.SubmitProofRequest{
+		Bip322Proof: &emulatorv1.Bip322Proof{
+			Proof:   proof.Proof,
+			Message: proof.Message,
 		},
 	}
 
-	resp, err := c.client.SubmitIntent(ctx, req)
+	resp, err := c.client.SubmitProof(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -90,24 +94,24 @@ func (c *grpcClient) SubmitIntent(ctx context.Context, intent Intent) (string, e
 	return resp.GetSignedProof(), nil
 }
 
-func (c *grpcClient) SubmitFinalization(
+func (c *grpcClient) SubmitForfeitTxs(
 	ctx context.Context,
-	intent Intent, forfeits []string,
+	proof Bip322Proof, forfeits []string,
 	connectorTree tree.FlatTxTree, commitmentTx string,
 ) (signedForfeits []string, signedCommitmentTx string, err error) {
 	connectorTreeNodes := castTxTree(connectorTree)
 
-	req := &emulatorv1.SubmitFinalizationRequest{
-		SignedIntent: &emulatorv1.Intent{
-			Proof:   intent.Proof,
-			Message: intent.Message,
+	req := &emulatorv1.SubmitForfeitTxsRequest{
+		SignedBip322Proof: &emulatorv1.Bip322Proof{
+			Proof:   proof.Proof,
+			Message: proof.Message,
 		},
 		Forfeits:      forfeits,
 		ConnectorTree: connectorTreeNodes,
 		CommitmentTx:  commitmentTx,
 	}
 
-	resp, err := c.client.SubmitFinalization(ctx, req)
+	resp, err := c.client.SubmitForfeitTxs(ctx, req)
 	if err != nil {
 		return nil, "", err
 	}

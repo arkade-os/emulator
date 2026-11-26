@@ -60,7 +60,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(
+		_, _, err = emulatorClient.SubmitOffchainTx(
 			ctx, encodedTx, encodeCheckpoints(t, checkpoints),
 		)
 		require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestCounterContractWithPacketIntrospection(t *testing.T) {
 		encodedTx, err := candidateTx.B64Encode()
 		require.NoError(t, err)
 
-		_, _, err = emulatorClient.SubmitTx(ctx, encodedTx, encodeCheckpoints(t, checkpoints))
+		_, _, err = emulatorClient.SubmitOffchainTx(ctx, encodedTx, encodeCheckpoints(t, checkpoints))
 		require.Error(t, err)
 	}
 

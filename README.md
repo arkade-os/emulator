@@ -80,7 +80,7 @@ Renewing a VTXO through every Arkade batch settlement without the owner — perm
 ### Arkade Script examples
 
 - [`test/htlc_test.go`](test/htlc_test.go) — **Non-interactive HTLC.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO with a claim path gated by HASH160(preimage) and a refund path gated by absolute timelock. Neither the receiver nor the sender ever signs — an arkade covenant enforcing destination + amount replaces both their signatures.
-- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant uses `OP_TUNNEL` to preserve the input's scriptPubKey + value on the output paired with its input index (output i-1, so equal VTXOs cannot share one output) and is gated to intent-proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
+- [`test/delegate_test.go`](test/delegate_test.go) — **Non-interactive delegate.** A 2-of-2 (`arkd` + emulator-tweaked) VTXO refreshed through batch settlement by any solver, with a CSV exit leaf reserved for the user. The arkade covenant uses `OP_TUNNEL` to preserve the input's scriptPubKey + value on the output paired with its input index (output i-1, so equal VTXOs cannot share one output) and is gated to BIP322 proof transactions (`OP_INSPECTVERSION` == 2) so it cannot be drained via off-chain self-send loops.
 
 ---
 
@@ -88,7 +88,7 @@ Renewing a VTXO through every Arkade batch settlement without the owner — perm
 
 ### GetInfo
 
-Returns service metadata including the signer's public key. The public key must be tweaked with the Arkade script hash before being used in a VTXO tapscript.
+Returns service metadata including the Arkade signer's public key. The key is untweaked: tweak it with the Arkade script hash before using it in a VTXO tapscript.
 
 **Endpoint**: `GET /v1/info`
 
@@ -96,25 +96,25 @@ Returns service metadata including the signer's public key. The public key must 
 ```json
 {
   "version": "0.0.1",
-  "signerPubkey": "compressed_current_public_key",
-  "deprecatedSignerPubkeys": ["compressed_deprecated_public_key"]
+  "arkadeSignerPubkey": "compressed_current_public_key",
+  "deprecatedArkadeSignerPubkeys": ["compressed_deprecated_public_key"]
 }
 ```
 
 ---
 
-### SubmitTx
+### SubmitOffchainTx
 
 Validates and signs the Arkade transaction inputs owned by this emulator, and signs their matching checkpoint transactions. Arkade scripts are executed only on the Arkade transaction, not on checkpoints.
 
 If this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet, each checkpoint PSBT must already include any other required non-`arkd` signatures; otherwise the request fails. In that case, the emulator submits the signed transaction set to `arkd`, merges `arkd`'s checkpoint signatures, finalizes the transaction, and returns the finalized Arkade PSBT plus updated checkpoint PSBTs. Otherwise it returns only this emulator's added signatures without calling `arkd`.
 
-**Endpoint**: `POST /v1/tx`
+**Endpoint**: `POST /v1/offchain-tx`
 
 **Request**:
 ```json
 {
-  "arkTx": "base64_encoded_psbt",
+  "arkadeTx": "base64_encoded_psbt",
   "checkpointTxs": ["base64_encoded_checkpoint_psbt1", "..."]
 }
 ```
@@ -122,30 +122,32 @@ If this emulator is the last required non-`arkd` signer for all owned inputs mat
 **Response**:
 ```json
 {
-  "signedArkTx": "base64_encoded_signed_psbt",
+  "signedArkadeTx": "base64_encoded_signed_psbt",
   "signedCheckpointTxs": ["base64_encoded_signed_checkpoint_psbt1", "..."]
 }
 ```
 
-`signedArkTx` may be either partially signed or finalized, depending on whether this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet.
+`signedArkadeTx` may be either partially signed or finalized, depending on whether this emulator is the last required non-`arkd` signer for all owned inputs matched by the emulator packet.
 
 ---
 
-### SubmitIntent
+### SubmitProof
 
-Signs an intent proof after validating the intent message and executing Arkade scripts on the proof transaction. Accepts any arkd intent message type (`register`, `delete`, `get-pending-tx`, `estimate-intent-fee`, `get-intent`, `get-data`), so contract VTXOs can authenticate every intent-based operation, not just registration.
+Signs a BIP322 proof after validating its message and executing Arkade scripts on the proof transaction. Accepts any message type arkd accepts on its batch endpoints (`register`, `delete`, `get-pending-tx`, `estimate-intent-fee`, `get-intent`, `get-data`), so contract VTXOs can authenticate every one of those operations, not just registration.
 
-**Endpoint**: `POST /v1/intent`
+**Endpoint**: `POST /v1/proof`
 
 **Request**:
 ```json
 {
-  "intent": {
+  "bip322Proof": {
     "proof": "base64_encoded_psbt",
-    "message": "base64_encoded_intent_message"
+    "message": "canonical_message"
   }
 }
 ```
+
+`proof` is the base64 PSBT and `message` is the canonical message the proof signs.
 
 **Response**:
 ```json
@@ -156,18 +158,18 @@ Signs an intent proof after validating the intent message and executing Arkade s
 
 ---
 
-### SubmitFinalization
+### SubmitForfeitTxs
 
-Conditionally signs forfeit and/or boarding inputs during batch finalization. Only signs if the signer's signature is found in the intent proof. The connector tree is used to verify the forfeits are part of a real batch session.
+Signs forfeit transactions and boarding inputs on the commitment transaction. Signs only when this Arkade signer's signature is in the BIP322 proof. The connector tree verifies the forfeits belong to the batch. Call `SubmitProof` before registering the proof with arkd, then `SubmitForfeitTxs` when the batch finalizes.
 
-**Endpoint**: `POST /v1/finalization`
+**Endpoint**: `POST /v1/forfeit-txs`
 
 **Request**:
 ```json
 {
-  "signedIntent": {
+  "signedBip322Proof": {
     "proof": "base64_encoded_signed_psbt",
-    "message": "base64_encoded_intent_message"
+    "message": "canonical_message"
   },
   "forfeits": ["base64_encoded_forfeit_psbt1", "..."],
   "connectorTree": [
@@ -267,8 +269,8 @@ The service can be configured using environment variables:
 | `EMULATOR_DEPRECATED_KEYS_VALID_UNTIL` | RFC3339 timestamp after which `EMULATOR_DEPRECATED_KEYS` stop being accepted for both fresh signing and finalization. Empty means deprecated keys remain valid indefinitely. | Empty |
 | `EMULATOR_PORT` | Server port (gRPC + HTTP REST gateway) | 7073 |
 | `EMULATOR_LOG_LEVEL` | Log level (0-6) | 4 (Debug) |
-| `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitTx`](#submittx) | Required |
-| `EMULATOR_ARKD_INDEXER_URL` | URL of the `arkd` indexer used to verify commitment txs in [`SubmitFinalization`](#submitfinalization) | `EMULATOR_ARKD_URL` |
+| `EMULATOR_ARKD_URL` | URL of the `arkd` instance used for attempted finalization in [`SubmitOffchainTx`](#submitoffchaintx) | Required |
+| `EMULATOR_ARKD_INDEXER_URL` | URL of the `arkd` indexer used to verify commitment txs in [`SubmitForfeitTxs`](#submitforfeittxs) | `EMULATOR_ARKD_URL` |
 | `EMULATOR_COMPUTE_LIMITS` | Comma-separated `OPCODE=limit` overrides for per-input opcode execution caps, for example `OP_ECPAIRING=8,OP_MODEXP=128`. Overrides are applied on top of defaults; use an empty value such as `OP_ECADD=` to remove a default cap. | Default compute limits |
 
 ---
@@ -364,7 +366,7 @@ The Bitcoin-level signatures that the emulator itself produces on PSBT `TaprootS
 
 | Word | Opcode | Hex | Input | Output | Description |
 |------|--------|-----|-------|--------|-------------|
-| OP_PUSHEXPIRY | 219 | 0xdb | Nothing | expiry | Pushes the current input VTXO's Unix expiry timestamp. The service obtains it from the indexer for `SubmitTx` and `SubmitIntent`. Fails when expiry is unavailable, including in `SubmitOnchainTx`. |
+| OP_PUSHEXPIRY | 219 | 0xdb | Nothing | expiry | Pushes the current input VTXO's Unix expiry timestamp. The service obtains it from the indexer for `SubmitOffchainTx` and `SubmitProof`. Fails when expiry is unavailable, including in `SubmitOnchainTx`. |
 | OP_CHECKTIME | 220 | 0xdc | timestamp | bool | Pops a minimally encoded BigNum Unix timestamp and pushes whether it is less than or equal to the emulator's current Unix time. Negative timestamps fail. A future timestamp pushes false. |
 
 Use `<timestamp> OP_CHECKTIME OP_VERIFY` to enforce a time threshold, or combine the boolean with other conditions. These are emulator-time checks, not Bitcoin block-time checks. For example, `OP_PUSHEXPIRY <seconds> OP_SUB OP_CHECKTIME OP_VERIFY` permits execution starting that many seconds before expiry. `OP_CHECKTIME` replaces the former `OP_CHECKTIMEVERIFY` name and has a boolean result rather than failing on a future timestamp.
@@ -375,7 +377,7 @@ Use `<timestamp> OP_CHECKTIME OP_VERIFY` to enforce a time threshold, or combine
 |------|--------|-----|-------|--------|-------------|
 | OP_INSPECTPACKET | 244 | 0xf4 | packet_type | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the current transaction's extension. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. |
 | OP_INSPECTINPUTPACKET | 245 | 0xf5 | packet_type input_index | content 1 (or `<empty>` 0) | Looks up the packet with the given type in the ARK extension of the previous Arkade transaction spent by the input at `input_index`. On hit: pushes the raw packet content and 1. Not found: pushes an empty byte array and 0. Fails on negative / out-of-range `input_index`. |
-| OP_INSPECTINTENTMESSAGE | 248 | 0xf8 | path | value 1 (or `<empty>` 0) | Reads a field of the canonical intent message bound to the current execution (only set while validating a `SubmitIntent` proof; pushes `<empty>` 0 otherwise). `path` is a dot-separated sequence of lowercase `[a-z_][a-z0-9_]*` keys and non-padded array indexes, e.g. `outpoints.0`; any other syntax (GJSON operators, wildcards) fails. Strings push their raw bytes, integers push a minimally-encoded BigNum, `true` pushes `0x01`, `false` pushes `<empty>`, and objects / arrays push their raw JSON. Missing fields, `null`, and non-integer numbers push `<empty>` 0. Fails if the value exceeds 520 bytes or the number exceeds the BigNum range. |
+| OP_INSPECTINTENTMESSAGE | 248 | 0xf8 | path | value 1 (or `<empty>` 0) | Reads a field of the canonical message bound to the current execution (only set while validating a `SubmitProof` BIP322 proof; pushes `<empty>` 0 otherwise). `path` is a dot-separated sequence of lowercase `[a-z_][a-z0-9_]*` keys and non-padded array indexes, e.g. `outpoints.0`; any other syntax (GJSON operators, wildcards) fails. Strings push their raw bytes, integers push a minimally-encoded BigNum, `true` pushes `0x01`, `false` pushes `<empty>`, and objects / arrays push their raw JSON. Missing fields, `null`, and non-integer numbers push `<empty>` 0. Fails if the value exceeds 520 bytes or the number exceeds the BigNum range. |
 
 ### Data Manipulation
 
